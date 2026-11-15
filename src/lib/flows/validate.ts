@@ -355,14 +355,14 @@ function validateNode(
 
     case "send_media": {
       const cfg = node.config as {
-        media_type?: "image" | "video" | "document";
+        media_type?: "image" | "video" | "document" | "audio";
         media_url?: string;
         caption?: string;
         next_node_key?: string;
       };
       if (
         !cfg.media_type ||
-        !["image", "video", "document"].includes(cfg.media_type)
+        !["image", "video", "document", "audio"].includes(cfg.media_type)
       ) {
         issues.push({
           severity: "error",

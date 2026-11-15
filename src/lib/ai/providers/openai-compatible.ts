@@ -123,7 +123,9 @@ export async function generateOpenAiCompatible(
       body: JSON.stringify({
         model,
         messages: [{ role: 'system', content: systemPrompt }, ...mergeConsecutive(messages)],
-        max_tokens: MAX_OUTPUT_TOKENS,
+        // Los modelos que «piensan» (DeepSeek) gastan tokens en razonar: con 1024 a veces
+        // no les alcanza para la respuesta y llega vacía. AI_MAX_OUTPUT_TOKENS lo amplía.
+        max_tokens: Number(process.env.AI_MAX_OUTPUT_TOKENS) > 0 ? Number(process.env.AI_MAX_OUTPUT_TOKENS) : MAX_OUTPUT_TOKENS,
       }),
       signal: AbortSignal.timeout(timeoutMs),
     })

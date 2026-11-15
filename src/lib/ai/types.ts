@@ -31,6 +31,14 @@ export interface AiConfig {
    *  knowledge base is embedded and semantic retrieval turns on; when
    *  null, retrieval falls back to lexical full-text search. */
   embeddingsApiKey: string | null
+  /** Modelo con visión para leer imágenes (Etapa 2). Null = usa `model`. */
+  visionModel: string | null
+  /** Modelo/endpoint de transcripción (Etapa 3). Null = adaptador por defecto. */
+  asrModel: string | null
+  /** Interruptor del orquestador multimodal (Etapas 1-3). */
+  orquestador: boolean
+  /** Prohíbe en el prompt decir precios que no estén en el catálogo. */
+  catalogStrict: boolean
 }
 
 /** A single conversation turn in the shape both providers accept. */

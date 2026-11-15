@@ -84,6 +84,15 @@ describe("phonesMatch", () => {
     expect(phonesMatch("+37063949836", "+37063949837")).toBe(false);
   });
 
+  it("matches a Mexican mobile with and without the 1 after 52", () => {
+    expect(phonesMatch("+525620714773", "5215620714773")).toBe(true);
+    expect(phonesMatch("5215620714773", "525620714773")).toBe(true);
+    // Different national digits must still differ.
+    expect(phonesMatch("525620714773", "5215620714774")).toBe(false);
+    // Only Mexico (52) gets this rule.
+    expect(phonesMatch("545620714773", "5415620714773")).toBe(false);
+  });
+
   it("rejects very short inputs that would false-positive on tail match", () => {
     // Only 7 digits — the last-8 fallback is gated to len>=8 on both
     // sides to avoid declaring "12345" and "67890-12345" a match.
@@ -218,6 +227,12 @@ describe("phoneVariants", () => {
   it("deduplicates variants that collapse to the same digits", () => {
     const out = phoneVariants("37063949836");
     expect(new Set(out).size).toBe(out.length);
+  });
+
+  it("adds the Mexican mobile 52 ↔ 521 variant", () => {
+    expect(phoneVariants("5215620714773")).toContain("525620714773");
+    expect(phoneVariants("525620714773")).toContain("5215620714773");
+    expect(phoneVariants("5215620714773")[0]).toBe("5215620714773");
   });
 
   it("returns just the original when the number is too short for any CC slice", () => {

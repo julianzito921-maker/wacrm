@@ -22,3 +22,11 @@ shadow_port = 54320
 # one failure mode this whole check exists to prevent. 17 is the CLI's
 # current default, not a reading of the live project.
 major_version = 17
+
+# Catálogo de productos (precios y condiciones comerciales del agente IA).
+# Idempotente: resuelve la cuenta por número de WhatsApp y hace ON CONFLICT.
+# Se aplica con `supabase db push --remote --include-seed`, y el CI puede
+# rejugarlo igual que las migraciones porque no depende de datos locales.
+[db.seed]
+enabled = true
+sql_paths = ["./seeds/*.sql"]

@@ -3,14 +3,20 @@ import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
-import { buildSystemPrompt } from './defaults'
+import { buildSystemPrompt, agenteSiempreActivo, RESPALDO_SIEMPRE_ACTIVO } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import {
+  engineSendMedia,
   engineSendText,
   loadAccountMetaCredentials,
 } from '@/lib/flows/meta-send'
+import { mapaDeArchivos, separarArchivos } from './archivos'
+import { cargarCatalogo, catalogoParaPrompt, importesFueraDeCatalogo } from './catalogo'
+import { ETIQUETAS_PROHIBIDAS, separarAcciones } from './acciones'
+import { addContactTagAndDispatch } from '@/lib/contacts/tag-events'
+import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
@@ -47,9 +53,27 @@ interface DispatchArgs {
  * reacting to a customer message that just landed — so no separate
  * window check is needed.
  */
+// Fila por conversación: si la clienta manda dos mensajes seguidos («Claro» y «Gracias»),
+// las dos respuestas ya no corren a la vez (antes se intercalaban sus partes y salían
+// dos encabezados de SPEI, la CLABE bajo el de OXXO, la tarjeta dos veces…). La segunda
+// espera a que la primera termine de mandar todas sus partes. Railway corre un solo proceso.
+const filas = new Map<string, Promise<void>>()
+
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
+  const clave = args.conversationId
+  const previa = filas.get(clave) ?? Promise.resolve()
+  const actual = previa.then(() => responder(args)) // responder nunca lanza
+  filas.set(clave, actual)
+  try {
+    await actual
+  } finally {
+    if (filas.get(clave) === actual) filas.delete(clave)
+  }
+}
+
+async function responder(args: DispatchArgs): Promise<void> {
   const {
     accountId,
     conversationId,
@@ -91,7 +115,26 @@ export async function dispatchInboundToAiReply(
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    const siempre = agenteSiempreActivo()
+    // Siempre activo: el tope por conversación no aplica (la base solo admite hasta 20).
+    const maxReplies = siempre ? 1_000_000 : config.autoReplyMaxPerConversation
+    if (conv.ai_reply_count >= maxReplies) return
+
+    // Si esperó en la fila: si ya llegó otro mensaje de la clienta, contesta ese (con todo
+    // el contexto); y si el suyo era solo un acuse («ok», «gracias», «claro») y ya se le
+    // respondió después, no vuelve a contestar (evita repetir el cierre o los datos de pago).
+    if (inboundMessageId) {
+      const recientes = await mensajesRecientes(db, conversationId)
+      if (hayEntranteMasNuevo(recientes, inboundMessageId)) return
+      const propio = recientes.find((m) => m.message_id === inboundMessageId)
+      if (
+        propio &&
+        yaRespondido(recientes, inboundMessageId) &&
+        esAcuseCorto(propio.content_type, propio.content_text)
+      ) {
+        return
+      }
+    }
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
@@ -118,6 +161,7 @@ export async function dispatchInboundToAiReply(
     // 25 s or when our reply lands, whichever is first, so there's
     // nothing to undo on the handoff / no-text path. Strictly
     // best-effort: a failed indicator must never cost us the reply.
+    const inicio = Date.now()
     if (inboundMessageId) {
       await showTypingIndicator(db, accountId, inboundMessageId)
     }
@@ -130,17 +174,41 @@ export async function dispatchInboundToAiReply(
       latestUserMessage(messages),
     )
 
+    // Catálogo estructurado (Etapa 1): precios exactos inyectados literales
+    // para que el agente no tenga que adivinarlos desde el texto libre de la
+    // base de conocimiento. Best-effort: sin catálogo se responde como antes.
+    const productos = await cargarCatalogo(db, accountId)
+    const catalogo = catalogoParaPrompt(productos, { estricto: config.catalogStrict })
+    if (productos.length > 0 && catalogo) {
+      console.log(`[orquestador] catálogo inyectado: ${productos.length} productos`)
+    }
+
     const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
+      userPrompt: [config.systemPrompt, catalogo].filter(Boolean).join('\n\n') || null,
       mode: 'auto_reply',
       knowledge,
     })
 
-    const { text, handoff, usage } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    })
+    // Si el modelo devuelve una respuesta vacía, se reintenta una vez; con el agente
+    // siempre activo, si vuelve a fallar se contesta con el respaldo (nunca se queda callado).
+    const generar = () => generateReply({ config, systemPrompt, messages })
+    const esVacia = (e: unknown) => (e as { code?: string })?.code === 'empty_response'
+    let resultado: Awaited<ReturnType<typeof generateReply>>
+    const t0 = Date.now()
+    try {
+      resultado = await generar()
+    } catch (e1) {
+      if (!esVacia(e1)) throw e1
+      try {
+        resultado = await generar()
+      } catch (e2) {
+        if (!siempre || !esVacia(e2)) throw e2
+        console.warn('[ai auto-reply] respuesta vacía dos veces: se manda el respaldo')
+        resultado = { text: '', handoff: false, usage: null } as unknown as Awaited<ReturnType<typeof generateReply>>
+      }
+    }
+    const latenciaMs = Date.now() - t0
+    const { text: textoModelo, handoff: traspaso, usage } = resultado
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`
@@ -154,8 +222,26 @@ export async function dispatchInboundToAiReply(
       provider: config.provider,
       model: config.model,
       usage,
+      origen: 'texto',
+      latencyMs: latenciaMs,
     })
 
+    // Auditoría anti-alucinación: si el modelo dijo un precio que no está en el
+    // catálogo, se registra (no se bloquea el envío; la persona lo ve en la bandeja).
+    if (productos.length > 0) {
+      const fuera = importesFueraDeCatalogo(textoModelo ?? '', productos)
+      if (fuera.length > 0) {
+        console.warn(
+          `[orquestador] precio fuera de catálogo en la respuesta: ${fuera.join(', ')} (cuenta ${accountId})`,
+        )
+      }
+    }
+
+    // Siempre activo: si el modelo igual pide traspaso o no escribe nada, se contesta
+    // con un respaldo amable y la conversación NO se apaga.
+    const respaldo = siempre && (traspaso || !textoModelo)
+    const text = respaldo ? RESPALDO_SIEMPRE_ACTIVO : textoModelo
+    const handoff = respaldo ? false : traspaso
     if (handoff || !text) {
       // The model can't (or shouldn't) answer — stop auto-replying on
       // this thread and hand it to a human. We (a) pause the bot here
@@ -200,7 +286,7 @@ export async function dispatchInboundToAiReply(
       'claim_ai_reply_slot',
       {
         conversation_id: conversationId,
-        max_replies: config.autoReplyMaxPerConversation,
+        max_replies: maxReplies,
       },
     )
     if (claimErr) {
@@ -213,17 +299,173 @@ export async function dispatchInboundToAiReply(
     }
     if (claimed !== true) return
 
-    await engineSendText({
-      accountId,
-      userId: configOwnerUserId,
-      conversationId,
-      contactId,
-      text,
-      aiGenerated: true,
-    })
+    // La respuesta puede venir partida con [[CORTE]] (por ejemplo, la CLABE y la
+    // tarjeta en mensajes sueltos para copiarlas): cada parte sale como un mensaje
+    // aparte y en orden.
+    // Ritmo humano: antes de cada mensaje se muestra «escribiendo…» y se espera según lo
+    // largo del texto (lo que ya tardó el modelo cuenta para el primero). AI_ESCRIBIENDO=off lo quita.
+    // [[ETIQUETA:x]] / [[BOTON:x]]: acciones internas; se quitan del texto y se ejecutan al final.
+    const acciones = separarAcciones(text)
+    const partes = splitReplyParts(acciones.texto)
+    // [[ARCHIVO:clave]] → el archivo sale como adjunto (PDF/audio), nunca como enlace ni como texto.
+    const archivos = acciones.texto.toUpperCase().includes('ARCHIVO') ? await cargarArchivos(db, accountId) : {}
+    for (let i = 0; i < partes.length; i++) {
+      const { texto: textoParte, claves } = separarArchivos(partes[i])
+      if (process.env.AI_ESCRIBIENDO !== 'off') {
+        if (i > 0 && inboundMessageId) await showTypingIndicator(db, accountId, inboundMessageId)
+        const espera = tiempoEscribiendo(textoParte || 'archivo') - (i === 0 ? Date.now() - inicio : 0)
+        if (espera > 0) await new Promise((r) => setTimeout(r, espera))
+      } else if (i > 0) {
+        await new Promise((r) => setTimeout(r, 700))
+      }
+      if (textoParte) {
+        await engineSendText({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId,
+          contactId,
+          text: textoParte,
+          aiGenerated: true,
+        })
+      }
+      for (const clave of claves) {
+        const a = archivos[clave]
+        if (!a) {
+          console.warn(`[ai auto-reply] la IA pidió el archivo «${clave}», que no está en ai_configs.archivos`)
+          continue
+        }
+        try {
+          await engineSendMedia({
+            accountId,
+            userId: configOwnerUserId,
+            conversationId,
+            contactId,
+            kind: a.tipo ?? 'document',
+            link: a.url,
+            filename: a.tipo === 'document' || !a.tipo ? a.nombre : undefined,
+            caption: a.tipo === 'audio' ? undefined : (a.pie ?? (a.nombre ? `📎 ${a.nombre}` : undefined)),
+          } as Parameters<typeof engineSendMedia>[0])
+        } catch (err) {
+          console.error(`[ai auto-reply] no se pudo mandar el archivo «${clave}»:`, err)
+        }
+      }
+    }
+    await ejecutarAcciones(db, accountId, contactId, conversationId, acciones.etiquetas, acciones.botones)
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
+}
+
+/** Ejecuta lo que la IA pidió con [[ETIQUETA:x]] y [[BOTON:x]], DESPUÉS de mandar sus mensajes. Nunca lanza. */
+async function ejecutarAcciones(
+  db: ReturnType<typeof supabaseAdmin>,
+  accountId: string,
+  contactId: string,
+  conversationId: string,
+  etiquetas: string[],
+  botones: string[],
+) {
+  for (const nombre of etiquetas) {
+    if (ETIQUETAS_PROHIBIDAS.has(nombre)) {
+      console.warn(`[ai acciones] la IA intentó poner «${nombre}»: no permitido`)
+      continue
+    }
+    try {
+      const { data: tag } = await db.from('tags').select('id').eq('account_id', accountId).eq('name', nombre).maybeSingle()
+      if (!tag) {
+        console.warn(`[ai acciones] la etiqueta «${nombre}» no existe en la cuenta`)
+        continue
+      }
+      await addContactTagAndDispatch({ db, accountId, contactId, tagId: (tag as { id: string }).id, context: { conversation_id: conversationId } })
+    } catch (err) {
+      console.error(`[ai acciones] no se pudo poner «${nombre}»:`, err)
+    }
+  }
+  for (const id of botones) {
+    // Mismo disparo que un toque de botón real (webhook): automatizaciones interactive_reply con ese id.
+    await runAutomationsForTrigger({
+      accountId,
+      triggerType: 'interactive_reply',
+      contactId,
+      context: { conversation_id: conversationId, interactive_reply_id: id, message_text: '' },
+    }).catch((err) => console.error(`[ai acciones] no se pudo disparar el botón «${id}»:`, err))
+  }
+}
+
+/** Mapa clave → archivo de la cuenta (ai_configs.archivos). Si falla, la IA solo manda texto. */
+async function cargarArchivos(db: ReturnType<typeof supabaseAdmin>, accountId: string) {
+  const { data, error } = await db.from('ai_configs').select('archivos').eq('account_id', accountId).maybeSingle()
+  if (error) {
+    console.error('[ai auto-reply] no se pudo leer ai_configs.archivos:', error)
+    return {}
+  }
+  return mapaDeArchivos((data as { archivos?: unknown } | null)?.archivos)
+}
+
+/** Cuánto «tarda en escribir» un mensaje: ~30 letras por segundo, entre 1.5 y 7 segundos. */
+export function tiempoEscribiendo(texto: string): number {
+  return Math.min(7000, Math.max(1500, 800 + texto.length * 33))
+}
+
+/** Máximo de mensajes por respuesta (el resto va junto en el último). */
+const MAX_PARTES = 8
+
+/**
+ * Parte una respuesta en mensajes de WhatsApp: en cada [[CORTE]] y también en cada renglón en
+ * blanco (cada párrafo sale como un mensaje corto aparte, como escribe una persona: 13-nov-2026).
+ */
+export function splitReplyParts(text: string): string[] {
+  const partes = text
+    .split(/\[\[\s*CORTE\s*\]\]/i)
+    .flatMap((p) => p.split(/\n[ \t]*\n/))
+    .map((p) => p.trim())
+    .filter(Boolean)
+  if (partes.length === 0) return [text.trim()]
+  if (partes.length <= MAX_PARTES) return partes
+  return [...partes.slice(0, MAX_PARTES - 1), partes.slice(MAX_PARTES - 1).join('\n')]
+}
+
+interface MensajeReciente {
+  message_id: string | null
+  sender_type?: string | null
+  content_type?: string | null
+  content_text?: string | null
+}
+
+/** Últimos mensajes de la conversación, del más nuevo al más viejo. */
+async function mensajesRecientes(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+): Promise<MensajeReciente[]> {
+  const { data, error } = await db
+    .from('messages')
+    .select('message_id, sender_type, content_type, content_text')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: false })
+    .limit(15)
+  if (error || !data) return []
+  return data as MensajeReciente[]
+}
+
+/** ¿Hay un mensaje de la clienta más nuevo que el que se iba a contestar? (lista: más nuevo primero) */
+export function hayEntranteMasNuevo(recientes: MensajeReciente[], inboundId: string): boolean {
+  const ult = recientes.find((m) => (m.sender_type ?? 'customer') === 'customer')
+  return !!ult && !!ult.message_id && ult.message_id !== inboundId
+}
+
+/** ¿Ya salió algún mensaje nuestro (IA, embudo o persona) después de ese mensaje de la clienta? */
+export function yaRespondido(recientes: MensajeReciente[], inboundId: string): boolean {
+  const i = recientes.findIndex((m) => m.message_id === inboundId)
+  if (i <= 0) return false
+  return recientes.slice(0, i).some((m) => m.sender_type && m.sender_type !== 'customer')
+}
+
+/** Acuse corto que no necesita respuesta propia: texto de hasta 4 palabras y sin pregunta. */
+export function esAcuseCorto(tipo?: string | null, texto?: string | null): boolean {
+  if (tipo && tipo !== 'text') return false
+  const t = (texto ?? '').trim()
+  if (!t || /[?¿]/.test(t)) return false
+  return t.split(/\s+/).length <= 4
 }
 
 async function hasNewerInbound(

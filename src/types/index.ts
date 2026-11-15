@@ -492,6 +492,7 @@ export type AutomationTriggerType =
 
 export type AutomationStepType =
   | 'send_message'
+  | 'send_media'
   | 'send_buttons'
   | 'send_list'
   | 'send_template'
@@ -546,6 +547,14 @@ export type AutomationTriggerConfig =
 
 export interface SendMessageStepConfig {
   text: string;
+}
+
+/** Imagen, video, documento o audio desde una URL pública (Meta la descarga al enviar). */
+export interface SendMediaStepConfig {
+  media_type: 'image' | 'video' | 'document' | 'audio';
+  media_url: string;
+  caption?: string;
+  filename?: string;
 }
 
 /**
@@ -627,6 +636,7 @@ export interface SendWebhookStepConfig {
 
 export type AutomationStepConfig =
   | SendMessageStepConfig
+  | SendMediaStepConfig
   | SendButtonsStepConfig
   | SendListStepConfig
   | SendTemplateStepConfig

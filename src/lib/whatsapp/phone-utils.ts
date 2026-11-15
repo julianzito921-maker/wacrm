@@ -25,7 +25,19 @@ export function phonesMatch(phone1: string, phone2: string): boolean {
   const n1 = normalizePhone(phone1)
   const n2 = normalizePhone(phone2)
   if (n1 === n2) return true
-  return isTrunkZeroVariant(n1, n2)
+  return isTrunkZeroVariant(n1, n2) || mexicoMobileVariant(n1) === n2
+}
+
+/**
+ * Mexico: WhatsApp reports mobile numbers as "521" + 10 digits, while
+ * people (and the sandbox allowed list) usually write "52" + 10 digits.
+ * Both reach the same phone, so each form maps to the other.
+ * Returns null for anything that is not a Mexican number of that shape.
+ */
+function mexicoMobileVariant(n: string): string | null {
+  if (/^521\d{10}$/.test(n)) return '52' + n.slice(3)
+  if (/^52\d{10}$/.test(n)) return '521' + n.slice(2)
+  return null
 }
 
 const MIN_TRUNK_MATCH_DIGITS = 8
@@ -135,6 +147,10 @@ export function phoneVariants(sanitized: string): string[] {
       push(cc + rest.slice(1))
     }
   }
+
+  // 4. Mexico: "52" + 10 digits ↔ "521" + 10 digits
+  const mx = mexicoMobileVariant(sanitized)
+  if (mx) push(mx)
 
   return [...seen]
 }

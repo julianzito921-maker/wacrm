@@ -22,6 +22,12 @@ import { readCappedBody } from '@/lib/whatsapp/webhook-body'
 import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import { transcribirNotaDeVoz } from '@/lib/ai/transcribe'
+import { procesarComprobante } from '@/lib/ventas/comprobante'
+import { marcarPagaManana } from '@/lib/ventas/paga-manana'
+import { agendarRecordatorioPago } from '@/lib/ventas/paga-en'
+import { textoConExtra } from '@/lib/ventas/mensaje-extra'
+import { guardarReferenciaAnuncio, type ReferenciaAnuncio } from '@/lib/ventas/conversiones'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   applyBroadcastRecipientStatus,
@@ -50,6 +56,24 @@ function supabaseAdmin() {
     )
   }
   return _adminClient
+}
+
+/** ¿Alguna automatización activa de la cuenta escucha este id de botón? (si no, contesta la IA) */
+async function botonDeAutomatizacion(accountId: string, replyId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from('automations')
+      .select('trigger_config')
+      .eq('account_id', accountId)
+      .eq('is_active', true)
+      .eq('trigger_type', 'interactive_reply')
+    if (error) return true // ante la duda, no contestar doble
+    return ((data ?? []) as { trigger_config: { reply_ids?: string[] } | null }[]).some(
+      (a) => Array.isArray(a.trigger_config?.reply_ids) && a.trigger_config!.reply_ids!.includes(replyId),
+    )
+  } catch {
+    return true
+  }
 }
 
 interface WhatsAppMessage {
@@ -98,6 +122,8 @@ interface WhatsAppMessage {
   button?: { text?: string; payload?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  /** Present on the first message after a click-to-WhatsApp ad (ctwa_clid = the click). */
+  referral?: ReferenciaAnuncio
 }
 
 /** One entry of a failed status's `errors` array, as Meta sends it. */
@@ -615,6 +641,12 @@ async function processMessage(
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
 
+  // Anuncio de origen (clic a WhatsApp): se guarda el ctwa_clid para el evento
+  // de compra que luego se manda a Meta. Nunca lanza.
+  if (message.referral?.ctwa_clid) {
+    await guardarReferenciaAnuncio({ accountId, userId: configOwnerUserId, contactId: contactRecord.id, referral: message.referral })
+  }
+
   // Find or create conversation
   const convResult = await findOrCreateConversation(
     accountId,
@@ -904,7 +936,23 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
-  if (!contentConsumed && !interactiveReplyId && inboundText.trim()) {
+  // Botones: si ni el embudo ni una automatización atienden el toque (por ejemplo, un botón
+  // viejo de un embudo que ya avanzó), contesta la IA al momento. Antes se quedaban sin
+  // respuesta hasta el barrido de cada 2 h.
+  const botonSinDueno =
+    !contentConsumed &&
+    !!interactiveReplyId &&
+    !(await botonDeAutomatizacion(accountId, interactiveReplyId))
+  // Texto que el embudo tomó pero que trae algo más (datos, enfermedades, preguntas): el
+  // embudo sigue Y la IA contesta esa parte (caso Graciela, 13-nov-2026).
+  const extraParaIa =
+    flowConsumed &&
+    !interactiveReplyId &&
+    textoConExtra(inboundText, flowResult.outcome === 'started')
+  if (
+    ((!contentConsumed && (!interactiveReplyId || botonSinDueno)) || extraParaIa) &&
+    inboundText.trim()
+  ) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
@@ -913,6 +961,28 @@ async function processMessage(
       // Lets the bot show "typing…" (and mark the message read) while
       // the reply is generated.
       inboundMessageId: message.id,
+    })
+  }
+
+  // «Mañana pago»: etiqueta «paga-manana» → recordatorio al día siguiente dentro
+  // de las 24 h (automatización de cada producto). Nunca lanza.
+  if (!interactiveReplyId && inboundText.trim()) {
+    await marcarPagaManana({ accountId, userId: configOwnerUserId, contactId: contactRecord.id, texto: inboundText })
+    // «Pago en 3 horas» / «a las 5 pago»: recordatorio a esa hora exacta (hoy).
+    await agendarRecordatorioPago({ accountId, userId: configOwnerUserId, contactId: contactRecord.id, texto: inboundText })
+  }
+
+  // Comprobantes de pago: si la clienta tiene un pago pendiente y manda una
+  // imagen o documento, la IA lo lee, le contesta y deja nota + etiquetas.
+  // Nunca lanza (ver @/lib/ventas/comprobante).
+  if (!contentConsumed && (message.type === 'image' || message.type === 'document')) {
+    await procesarComprobante({
+      accountId,
+      userId: configOwnerUserId,
+      contactId: contactRecord.id,
+      conversationId: conversation.id,
+      message,
+      accessToken,
     })
   }
 
@@ -1055,9 +1125,12 @@ async function parseMessageContent(
 
     case 'audio':
       if (message.audio?.id) {
+        const audioUrl = await verifyAndBuildUrl(message.audio.id)
         return {
           ...empty,
-          mediaUrl: await verifyAndBuildUrl(message.audio.id),
+          // La nota de voz se transcribe para que el agente IA la lea y conteste.
+          contentText: await transcribirNotaDeVoz(audioUrl, message.audio.mime_type),
+          mediaUrl: audioUrl,
           mediaType: message.audio.mime_type,
         }
       }

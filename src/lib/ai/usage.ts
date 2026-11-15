@@ -6,11 +6,15 @@ export interface LogAiUsageArgs {
   /** Null for a draft not tied to one thread, or when the row was
    *  deleted between generation and logging. */
   conversationId: string | null
-  mode: 'auto_reply' | 'draft'
+  mode: 'auto_reply' | 'draft' | 'vision' | 'asr'
   provider: AiProvider
   model: string
   /** Provider usage; a no-op when null (nothing worth recording). */
   usage: AiUsage | null
+  /** Etapa del orquestador que gastó los tokens: texto | vision | asr. */
+  origen?: string
+  /** Duración de la llamada al proveedor, para medir latencia por etapa. */
+  latencyMs?: number
 }
 
 /**
@@ -32,7 +36,7 @@ export async function logAiUsage(
 ): Promise<void> {
   if (!args.usage) return
   try {
-    const { error } = await db.from('ai_usage_log').insert({
+    const fila: Record<string, unknown> = {
       account_id: args.accountId,
       conversation_id: args.conversationId,
       mode: args.mode,
@@ -41,8 +45,33 @@ export async function logAiUsage(
       prompt_tokens: args.usage.promptTokens,
       completion_tokens: args.usage.completionTokens,
       total_tokens: args.usage.totalTokens,
-    })
+    }
+    // Solo se envían cuando existen, para no cambiar el payload histórico
+    // de las llamadas de texto ya en producción.
+    if (args.origen !== undefined) fila.origen = args.origen
+    if (args.latencyMs !== undefined) fila.latency_ms = Math.round(args.latencyMs)
+
+    const { error } = await db.from('ai_usage_log').insert(fila)
     if (error) {
+      // Si la migración 062 todavía no está aplicada, `origen` / `latency_ms`
+      // no existen como columnas y el insert completo fallaría. En ese caso se
+      // reintenta con el payload de siempre para no perder el registro de uso.
+      if (args.origen !== undefined || args.latencyMs !== undefined) {
+        const legado = {
+          account_id: args.accountId,
+          conversation_id: args.conversationId,
+          mode: args.mode,
+          provider: args.provider,
+          model: args.model,
+          prompt_tokens: args.usage.promptTokens,
+          completion_tokens: args.usage.completionTokens,
+          total_tokens: args.usage.totalTokens,
+        }
+        const { error: errorLegado } = await db.from('ai_usage_log').insert(legado)
+        if (!errorLegado) return
+        console.error('[ai usage] log insert failed (reintento sin métricas):', errorLegado)
+        return
+      }
       console.error('[ai usage] log insert failed:', error)
     }
   } catch (err) {

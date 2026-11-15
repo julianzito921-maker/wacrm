@@ -5,6 +5,7 @@ import {
   type AutomationContext,
 } from '@/lib/automations/engine';
 import { addContactTagIfAbsent } from './tag-write';
+import { enviarCompraMeta } from '@/lib/ventas/conversiones';
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from './tag-chain';
 
 export { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from './tag-chain';
@@ -37,6 +38,16 @@ export async function addContactTagAndDispatch(
   });
 
   if (!added) return { added: false, dispatched: false, reason: 'duplicate' };
+
+  // Venta confirmada → evento de compra para Meta (API de conversiones; nunca lanza).
+  try {
+    const { data: tag } = await input.db.from('tags').select('name').eq('id', input.tagId).maybeSingle();
+    if (tag && (tag.name === 'pagado' || tag.name === 'extra-pagado')) {
+      await enviarCompraMeta({ accountId: input.accountId, contactId: input.contactId, etiqueta: tag.name });
+    }
+  } catch (err) {
+    console.warn('[conversiones] no se pudo revisar la etiqueta:', err instanceof Error ? err.message : err);
+  }
 
   const depth = getTagChainDepth(input.context);
   if (depth >= MAX_TAG_CHAIN_DEPTH) {

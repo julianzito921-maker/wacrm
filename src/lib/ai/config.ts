@@ -13,9 +13,21 @@ interface AiConfigRow {
   auto_reply_max_per_conversation: number
   handoff_agent_id: string | null
   embeddings_api_key: string | null
+  vision_model: string | null
+  asr_model: string | null
+  orquestador: boolean | null
+  catalog_strict: boolean | null
 }
 
 const CONFIG_COLUMNS =
+  'provider, model, base_url, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key, vision_model, asr_model, orquestador, catalog_strict'
+
+/**
+ * Columnas de antes de la migración 062. Si la consulta con las columnas nuevas
+ * falla (migración sin aplicar), se reintenta con esta lista para que el agente
+ * siga respondiendo en vez de caerse.
+ */
+const CONFIG_COLUMNS_LEGADO =
   'provider, model, base_url, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
 
 /**
@@ -35,16 +47,34 @@ export async function loadAiConfig(
   opts: { requireActive?: boolean } = {},
 ): Promise<AiConfig | null> {
   const { requireActive = true } = opts
-  const { data, error } = await db
+  const primera = await db
     .from('ai_configs')
     .select(CONFIG_COLUMNS)
     .eq('account_id', accountId)
     .maybeSingle()
 
-  if (error) throw error
+  // Migración 062 sin aplicar: se reintenta con las columnas de siempre y los
+  // campos nuevos quedan en su valor neutro. Así el agente nunca se cae por
+  // desplegar el código antes que el SQL.
+  let data: unknown = primera.data
+  if (primera.error) {
+    const reintento = await db
+      .from('ai_configs')
+      .select(CONFIG_COLUMNS_LEGADO)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (reintento.error) throw primera.error
+    data = reintento.data
+    console.warn(
+      '[ai config] columnas del orquestador todavía no existen (falta la migración 062): se usa la configuración de siempre.',
+    )
+  }
   if (!data) return null
 
-  const row = data as AiConfigRow
+  // `data` puede venir de cualquiera de las dos consultas (con o sin columnas
+  // del orquestador), así que se normaliza aquí; los campos ausentes quedan
+  // como undefined y se resuelven con sus valores por defecto más abajo.
+  const row = data as unknown as AiConfigRow
   // The Playground passes requireActive:false so an admin can test the
   // agent before flipping the master switch on.
   if (requireActive && !row.is_active) return null
@@ -81,6 +111,11 @@ export async function loadAiConfig(
     autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,
     handoffAgentId: row.handoff_agent_id,
     embeddingsApiKey,
+    visionModel: row.vision_model ?? null,
+    asrModel: row.asr_model ?? null,
+    orquestador: row.orquestador === true,
+    // Estricto por defecto: es la opción segura cuando hay precios.
+    catalogStrict: row.catalog_strict !== false,
   }
 }
 

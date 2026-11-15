@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateReply, parseGeneration } from './generate'
 import { AiError, type AiConfig } from './types'
 
@@ -14,6 +14,10 @@ function config(overrides: Partial<AiConfig> = {}): AiConfig {
     autoReplyMaxPerConversation: 3,
     handoffAgentId: null,
     embeddingsApiKey: null,
+    visionModel: null,
+    asrModel: null,
+    orquestador: false,
+    catalogStrict: true,
     ...overrides,
   }
 }

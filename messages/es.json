@@ -17,7 +17,7 @@
     "linkInvalid": "No se pudo iniciar sesión con ese enlace. Si estabas confirmando tu correo, es posible que ya esté verificado; inicia sesión abajo. Para restablecer la contraseña, pide un enlace nuevo y ábrelo en el mismo navegador desde el que lo solicitaste."
   },
   "Sidebar": {
-    "title": "Plantilla de CRM para WhatsApp",
+    "title": "SCALE WHATSAPP",
     "primaryNav": "Principal",
     "dashboard": "Panel",
     "inbox": "Bandeja de entrada",
@@ -1481,6 +1481,7 @@
         "mediaTypeLabel": "Tipo de archivo",
         "imageLabel": "Imagen (PNG, JPEG, WebP)",
         "videoLabel": "Video (MP4, 3GP)",
+        "audioLabel": "Audio / nota de voz (OGG, MP3, M4A)",
         "documentLabel": "Documento (PDF, Word, Excel, PowerPoint, TXT)",
         "fileLabel": "Archivo",
         "removeFile": "Quitar archivo",
@@ -2238,7 +2239,7 @@
     "titleJoin": "Crear cuenta y unirse",
     "title": "Crear cuenta",
     "descJoin": "Verifica tu correo y luego acepta la invitación para unirte a tu equipo.",
-    "desc": "Empieza a usar la Plantilla de CRM para WhatsApp",
+    "desc": "Empieza a usar SCALE WHATSAPP",
     "fullNameLabel": "Nombre completo",
     "fullNamePlaceholder": "Juan Pérez",
     "emailLabel": "Correo electrónico",
@@ -2412,7 +2413,7 @@
     }
   },
   "Metadata": {
-    "description": "Plantilla de CRM para WhatsApp que puedes alojar tú mismo."
+    "description": "SCALE WHATSAPP: tu CRM para WhatsApp."
   },
   "Currency": {
     "USD": "Dólar estadounidense",

@@ -4,6 +4,7 @@ import { aiContextMessageLimit } from './defaults'
 
 interface DbMessage {
   sender_type: 'customer' | 'agent' | 'bot'
+  content_type?: string
   content_text: string | null
 }
 
@@ -23,9 +24,13 @@ export async function buildConversationContext(
 ): Promise<ChatMessage[]> {
   const { data, error } = await db
     .from('messages')
-    .select('sender_type, content_text')
+    .select('sender_type, content_type, content_text')
     .eq('conversation_id', conversationId)
-    .eq('content_type', 'text')
+    // Las notas de voz de la clienta llegan transcritas en content_text.
+    // Los botones también: el texto del mensaje con botones (preguntas y ofertas del
+    // embudo) y el botón que tocó la clienta.
+    // Y los PDF que ya mandamos (su pie de texto), para que la IA no los repita.
+    .in('content_type', ['text', 'audio', 'interactive', 'document'])
     .order('created_at', { ascending: false })
     .limit(limit)
 
@@ -34,8 +39,17 @@ export async function buildConversationContext(
   const rows = ((data ?? []) as DbMessage[]).reverse()
   return rows
     .filter((m) => m.content_text && m.content_text.trim())
+    .filter((m) => m.content_type !== 'audio' || m.sender_type === 'customer')
+    .filter((m) => m.content_type !== 'document' || m.sender_type !== 'customer')
     .map((m) => ({
       role: m.sender_type === 'customer' ? 'user' : 'assistant',
-      content: m.content_text!.trim(),
+      content:
+        m.content_type === 'audio'
+          ? `[Nota de voz] ${m.content_text!.trim()}`
+          : m.content_type === 'document'
+            ? `[Archivo PDF enviado] ${m.content_text!.trim()}`
+          : m.content_type === 'interactive' && m.sender_type === 'customer'
+            ? `[Tocó el botón] ${m.content_text!.trim()}`
+            : m.content_text!.trim(),
     }))
 }

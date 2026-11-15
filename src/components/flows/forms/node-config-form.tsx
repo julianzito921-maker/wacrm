@@ -868,7 +868,7 @@ function useUserTags(): UserTag[] {
 // ============================================================
 
 interface SendMediaCfg {
-  media_type?: "image" | "video" | "document";
+  media_type?: "image" | "video" | "document" | "audio";
   media_url?: string;
   caption?: string;
   filename?: string;
@@ -882,6 +882,8 @@ interface SendMediaCfg {
 const MEDIA_ACCEPT: Record<NonNullable<SendMediaCfg["media_type"]>, string> = {
   image: "image/png,image/jpeg,image/webp",
   video: "video/mp4,video/3gpp",
+  // OGG/Opus se muestra en WhatsApp como nota de voz.
+  audio: "audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr",
   document:
     "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain",
 };
@@ -967,6 +969,7 @@ function SendMediaForm({
           <SelectContent>
             <SelectItem value="image">{t("imageLabel")}</SelectItem>
             <SelectItem value="video">{t("videoLabel")}</SelectItem>
+            <SelectItem value="audio">{t("audioLabel")}</SelectItem>
             <SelectItem value="document">
               {t("documentLabel")}
             </SelectItem>

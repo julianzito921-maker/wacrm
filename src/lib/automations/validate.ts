@@ -63,6 +63,14 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
         issues.push({ path: `${path}.text`, message: t('messageTextRequired') })
       }
       break
+    case 'send_media':
+      if (!nonEmpty(c.media_url) || !/^https:\/\//i.test(String(c.media_url))) {
+        issues.push({ path: `${path}.media_url`, message: 'media_url (https) is required' })
+      }
+      if (!['image', 'video', 'document', 'audio'].includes(String(c.media_type))) {
+        issues.push({ path: `${path}.media_type`, message: 'media_type must be image, video, document or audio' })
+      }
+      break
     case 'send_buttons':
     case 'send_list': {
       // The whole step_config IS the interactive payload; validate it
