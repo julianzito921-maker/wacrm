@@ -17,6 +17,14 @@ import { transcribirNota } from './comprension/asr'
 const MODELO = process.env.AI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe'
 const MAX_BYTES = 20 * 1024 * 1024
 
+/**
+ * Texto que se guarda cuando una nota de voz no se pudo entender (otro idioma
+ * o audio ininteligible). Va al `content_text` del mensaje, así que lo ven
+ * tanto el agente como quien atienda la bandeja: el agente sabe que hubo una
+ * nota de voz y pide que se la escriban, en vez de quedarse callado.
+ */
+export const MARCA_SIN_ENTENDER = '(nota de voz que no se pudo entender)'
+
 /** Versión con cuenta: intenta DeepSeek y, si no aplica, cae al respaldo. */
 export async function transcribirNotaDeVozDeCuenta(args: {
   db: SupabaseClient
@@ -43,7 +51,9 @@ export async function transcribirNotaDeVozDeCuenta(args: {
       }
       // Con el orquestador encendido no se cae a OpenAI: si DeepSeek no pudo,
       // se deja el audio sin transcribir a propósito (una cuenta, un proveedor).
-      return null
+      // Pero tampoco se deja a la clienta sin respuesta: se marca el mensaje para
+      // que el agente le pida amablemente que lo escriba.
+      return MARCA_SIN_ENTENDER
     }
   } catch (err) {
     console.warn('[nota de voz] no se pudo resolver la configuración:', err instanceof Error ? err.message : err)

@@ -32,6 +32,14 @@ interface DispatchArgs {
    *  a typing indicator (which also marks it read) is shown while the
    *  reply is generated. Optional so older callers keep working. */
   inboundMessageId?: string
+  /**
+   * Cuántas automatizaciones atendieron este mismo mensaje (el webhook lo sabe
+   * porque las ejecuta antes que a la IA). Con 0 o undefined, la IA contesta;
+   * con más de 0, se retira para no escribir dos veces. Si no se pasa nada, se
+   * conserva el comportamiento antiguo (retirarse si hay automatizaciones
+   * activas de mensaje), por si otro llamador depende de él.
+   */
+  atendidaPorAutomatizacion?: boolean
 }
 
 /**
@@ -89,21 +97,26 @@ async function responder(args: DispatchArgs): Promise<void> {
     if (!config || !config.autoReplyEnabled) return
 
     // Deterministic, user-configured responders win over the LLM — the
-    // caller already excludes messages a Flow consumed. Message-level
-    // automations (`new_message_received` / `keyword_match`) are
-    // dispatched independently for this same inbound and may send their
-    // own reply, so if the account has any active one we stand down to
-    // avoid double-texting the customer. (Relationship triggers like
-    // `first_inbound_message` don't count — they're not per-message
-    // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
-      .limit(1)
-    if (autoResponders && autoResponders.length > 0) return
+    // caller already excludes messages a Flow consumed.
+    //
+    // Ojo con no pasarse: antes bastaba con que la cuenta tuviera UNA
+    // automatización de `keyword_match` o `new_message_received` activa para
+    // que la IA no contestara nunca — y eso dejaba sin respuesta las fotos, las
+    // notas de voz y cualquier texto que no casara con las palabras clave (era
+    // el motivo de «no contesta nada»). Ahora el webhook nos dice cuántas
+    // automatizaciones atendieron ESTE mensaje y solo se retira si hubo alguna.
+    if (args.atendidaPorAutomatizacion !== undefined) {
+      if (args.atendidaPorAutomatizacion) return
+    } else {
+      const { data: autoResponders } = await db
+        .from('automations')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('is_active', true)
+        .in('trigger_type', ['new_message_received', 'keyword_match'])
+        .limit(1)
+      if (autoResponders && autoResponders.length > 0) return
+    }
 
     const { data: conv, error: convErr } = await db
       .from('conversations')

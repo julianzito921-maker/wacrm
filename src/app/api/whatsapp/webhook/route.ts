@@ -970,19 +970,25 @@ async function processMessage(
   // logging zero steps. `runAutomationsForTrigger` owns its own try/catch
   // and never throws; the `.catch` is belt-and-braces so one trigger
   // type's failure can't skip the rest of the loop.
+  let automatizacionesAtendieron = 0
   for (const triggerType of automationTriggers) {
-    await runAutomationsForTrigger({
+    automatizacionesAtendieron += await runAutomationsForTrigger({
       accountId,
       triggerType,
       contactId: contactRecord.id,
       context: {
         message_text: inboundText,
         conversation_id: conversation.id,
+        // Meta message id: lo usa el indicador «escribiendo…» del embudo.
+        message_id: message.id,
         // Only set on interactive taps; drives the interactive_reply
         // trigger's exact-id match.
         interactive_reply_id: interactiveReplyId ?? undefined,
       },
-    }).catch((err) => console.error('[automations] dispatch failed:', err))
+    }).catch((err) => {
+      console.error('[automations] dispatch failed:', err)
+      return 0
+    })
   }
 
   // Etapa 2: si la clienta manda una foto (y no es un comprobante en curso),
@@ -1044,6 +1050,9 @@ async function processMessage(
       // Lets the bot show "typing…" (and mark the message read) while
       // the reply is generated.
       inboundMessageId: message.id,
+      // Solo se retira si alguna automatización contestó este mensaje. Si no,
+      // contesta la IA: es lo que faltaba para las fotos y las notas de voz.
+      atendidaPorAutomatizacion: automatizacionesAtendieron > 0,
     })
   }
 

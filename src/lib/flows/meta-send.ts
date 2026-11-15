@@ -3,6 +3,7 @@ import {
   sendInteractiveList,
   sendMediaMessage,
   sendTextMessage,
+  sendTypingIndicator,
   type InteractiveButton,
   type InteractiveListSection,
   type MediaKind,
@@ -56,6 +57,42 @@ export async function loadAccountMetaCredentials(
   return {
     phoneNumberId: config.phone_number_id,
     accessToken: decrypt(config.access_token),
+  }
+}
+
+/**
+ * Marca el mensaje entrante como leído y muestra «escribiendo…» antes de que
+ * el embudo conteste, para que la clienta vea a alguien del otro lado y la
+ * ráfaga de mensajes no salga de golpe. Cosmético: cualquier fallo se avisa y
+ * se sigue (nunca impide el envío).
+ *
+ * Devuelve cuánto conviene esperar (ms) para que el «escribiendo…» se vea:
+ * proporcional al largo del texto, con un mínimo y un máximo humanos.
+ */
+export function pausaHumana(texto: string): number {
+  const caracteres = (texto ?? '').length
+  return Math.min(2_600, Math.max(900, caracteres * 18))
+}
+
+export async function mostrarEscribiendo(args: {
+  accountId: string
+  /** Meta message id del mensaje entrante (lo exige la API de indicadores). */
+  messageId?: string | null
+  /** Texto que se va a enviar, para calcular la pausa. */
+  texto?: string
+  /** false = solo marca leído sin esperar (para imágenes y documentos). */
+  esperar?: boolean
+}): Promise<void> {
+  if (!args.messageId) return
+  try {
+    const db = supabaseAdmin()
+    const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(db, args.accountId)
+    await sendTypingIndicator({ phoneNumberId, accessToken, messageId: args.messageId })
+    if (args.esperar !== false) {
+      await new Promise((resolve) => setTimeout(resolve, pausaHumana(args.texto ?? '')))
+    }
+  } catch (err) {
+    console.warn('[envío] no se pudo mostrar «escribiendo…»:', err instanceof Error ? err.message : err)
   }
 }
 

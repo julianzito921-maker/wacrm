@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   Automation,
   AutomationLogStepResult,
   AutomationStep,
@@ -23,6 +23,7 @@ import { supabaseAdmin } from './admin-client'
 import { addContactTagIfAbsent } from '@/lib/contacts/tag-write'
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
 import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
+import { mostrarEscribiendo } from '@/lib/flows/meta-send'
 import { engineSendMedia } from '@/lib/flows/meta-send'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
@@ -49,6 +50,8 @@ export interface AutomationContext {
   agent_id?: string
   /** Button / list-row id the customer tapped, for interactive_reply. */
   interactive_reply_id?: string
+  /** Meta message id del mensaje entrante: lo usa el indicador «escribiendo…». */
+  message_id?: string
 }
 
 export interface DispatchInput {
@@ -71,7 +74,7 @@ export interface DispatchInput {
  * All errors are caught and logged; per-automation failures are
  * recorded into automation_logs with status='failed'.
  */
-export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
+export async function runAutomationsForTrigger(input: DispatchInput): Promise<number> {
   try {
     const db = supabaseAdmin()
 
@@ -91,11 +94,11 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         .maybeSingle()
       if (ownErr) {
         console.error('[automations] contact ownership check failed:', ownErr)
-        return
+        return 0
       }
       if (!owned) {
         console.warn('[automations] contact not in account, refusing dispatch', input.contactId)
-        return
+        return 0
       }
     }
 
@@ -114,14 +117,14 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         .maybeSingle()
       if (convErr) {
         console.error('[automations] conversation ownership check failed:', convErr)
-        return
+        return 0
       }
       if (!conv) {
         console.warn(
           '[automations] conversation not in account, refusing dispatch',
           input.context.conversation_id,
         )
-        return
+        return 0
       }
     }
 
@@ -134,20 +137,27 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
 
     if (error) {
       console.error('[automations] fetch failed:', error)
-      return
+      return 0
     }
-    if (!automations || automations.length === 0) return
+    if (!automations || automations.length === 0) return 0
 
+    // Cuántas automatizaciones atendieron este mensaje. Se devuelve al llamador
+    // para que la IA solo se retire cuando de verdad hubo alguien que contestó
+    // (antes bastaba con que existiera una automatización de palabra clave).
+    let atendidas = 0
     for (const automation of automations as Automation[]) {
       if (!triggerMatches(automation, input.context)) continue
       try {
         await executeAutomation(automation, input)
+        atendidas++
       } catch (err) {
         console.error('[automations] execute failed:', automation.id, err)
       }
     }
+    return atendidas
   } catch (err) {
     console.error('[automations] dispatch failed:', err)
+    return 0
   }
 }
 
@@ -744,6 +754,13 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const text = interpolate(cfg.text, args)
       if (!text.trim()) throw new Error(tErr('emptyText'))
       const conversationId = await resolveConversationId(args)
+      // «Escribiendo…» + pausa humana antes de mandar, para que la clienta vea
+      // a alguien escribiendo en vez de una ráfaga instantánea.
+      await mostrarEscribiendo({
+        accountId: args.automation.account_id,
+        messageId: args.context?.message_id ?? null,
+        texto: text,
+      })
       const { whatsapp_message_id } = await engineSendText({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -759,6 +776,12 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error(tErr('needsContact', { step: 'send_media' }))
       if (!cfg.media_url || !/^https:\/\//i.test(cfg.media_url)) throw new Error('send_media: media_url must be https')
       const conversationId = await resolveConversationId(args)
+      // Las imágenes/PDF también se anuncian escribiendo, pero sin pausa larga.
+      await mostrarEscribiendo({
+        accountId: args.automation.account_id,
+        messageId: args.context?.message_id ?? null,
+        esperar: false,
+      })
       const { whatsapp_message_id } = await engineSendMedia({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
