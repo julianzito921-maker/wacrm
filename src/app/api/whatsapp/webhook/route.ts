@@ -1,4 +1,4 @@
-import { NextResponse, after } from 'next/server'
+﻿import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
@@ -22,7 +22,10 @@ import { readCappedBody } from '@/lib/whatsapp/webhook-body'
 import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
-import { transcribirNotaDeVoz } from '@/lib/ai/transcribe'
+import { loadAiConfig } from '@/lib/ai/config'
+import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
+import { tienePagoPendiente } from '@/lib/ventas/comprobante'
+import { transcribirNotaDeVozDeCuenta } from '@/lib/ai/transcribe'
 import { procesarComprobante } from '@/lib/ventas/comprobante'
 import { marcarPagaManana } from '@/lib/ventas/paga-manana'
 import { agendarRecordatorioPago } from '@/lib/ventas/paga-en'
@@ -56,6 +59,46 @@ function supabaseAdmin() {
     )
   }
   return _adminClient
+}
+
+/**
+ * Etapa 2 del orquestador: mira la foto que mandó la clienta y devuelve una
+ * frase con lo que se ve, para que el agente (y quien atienda la bandeja)
+ * puedan responder sobre ella. Se apaga sola cuando el pago está pendiente
+ * —ese caso lo cubre el lector de comprobantes— y cuando el interruptor
+ * `orquestador` está apagado. Nunca lanza.
+ */
+async function entenderFotoEntrante(args: {
+  accountId: string
+  conversationId: string
+  contactId: string
+  messageId: string
+  mediaUrl: string | null
+  mediaId: string | null
+  accessToken: string
+  caption: string | null
+}) {
+  try {
+    const db = supabaseAdmin()
+    const config = await loadAiConfig(db, args.accountId).catch(() => null)
+    if (!orquestadorActivo(config)) return null
+    if (await tienePagoPendiente(db, args.contactId)) return null
+
+    return await leerImagen({
+      db,
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      messageId: args.messageId,
+      config,
+      mediaUrl: args.mediaUrl,
+      mediaId: args.mediaId,
+      accessToken: args.accessToken,
+      caption: args.caption,
+    })
+  } catch (err) {
+    console.warn('[vision] no se pudo entender la foto:', err instanceof Error ? err.message : err)
+    return null
+  }
 }
 
 /** ¿Alguna automatización activa de la cuenta escucha este id de botón? (si no, contesta la IA) */
@@ -680,7 +723,18 @@ async function processMessage(
     await parseMessageContent(
       message,
       accessToken,
-      mirrorMedia ? { accountId } : null
+      mirrorMedia ? { accountId } : null,
+      // Etapa 3: las notas de voz se transcriben con DeepSeek ASR (solo español)
+      // usando la clave de la cuenta; si el orquestador está apagado, dentro de
+      // `transcribirNotaDeVozDeCuenta` se usa el respaldo de siempre.
+      async (url, mimeType) =>
+        transcribirNotaDeVozDeCuenta({
+          db: supabaseAdmin(),
+          accountId,
+          mediaUrl: url,
+          accessToken,
+          mimeType,
+        })
     )
 
   // Resolve swipe-reply context if present. A missing parent is fine —
@@ -931,6 +985,35 @@ async function processMessage(
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
 
+  // Etapa 2: si la clienta manda una foto (y no es un comprobante en curso),
+  // se entiende con visión y su resumen queda en el mensaje: así lo ve el
+  // agente de IA y también quien atienda la bandeja a mano.
+  let textoParaIa = inboundText
+  if (
+    !contentConsumed &&
+    !interactiveReplyId &&
+    message.type === 'image' &&
+    (message.image?.mime_type ?? '').startsWith('image/')
+  ) {
+    const lectura = await entenderFotoEntrante({
+      accountId,
+      conversationId: conversation.id,
+      contactId: contactRecord.id,
+      messageId: message.id,
+      mediaUrl,
+      mediaId: message.image?.id ?? null,
+      accessToken,
+      caption: inboundText.trim() || null,
+    })
+    if (lectura?.resumen) {
+      textoParaIa = `${inboundText.trim() ? `${inboundText.trim()} ` : ''}[imagen: ${lectura.resumen}]`
+      await supabaseAdmin().from('messages').update({ content_text: textoParaIa }).eq('id', message.id)
+      console.log(
+        `[orquestador] imagen entendida (${lectura.clase}${lectura.cacheada ? ', de caché' : ''}) en ${lectura.latencyMs} ms`,
+      )
+    }
+  }
+
   // AI auto-reply. Runs only for plain-text inbound the deterministic
   // flow runner did NOT consume (flows win over the LLM), and only when
   // the account has enabled it. Awaited inside `after()` (same reason as
@@ -951,7 +1034,7 @@ async function processMessage(
     textoConExtra(inboundText, flowResult.outcome === 'started')
   if (
     ((!contentConsumed && (!interactiveReplyId || botonSinDueno)) || extraParaIa) &&
-    inboundText.trim()
+    textoParaIa.trim()
   ) {
     await dispatchInboundToAiReply({
       accountId,
@@ -1007,7 +1090,10 @@ async function parseMessageContent(
   accessToken: string,
   // Tenancy + opt-out for the media mirror. Null disables mirroring
   // entirely, which is what the account-level toggle does.
-  mirror: { accountId: string } | null
+  mirror: { accountId: string } | null,
+  // Cómo transcribir una nota de voz. Se inyecta desde el llamador para que
+  // este parser no tenga que saber nada de la configuración de la cuenta.
+  transcribir?: (url: string | null, mimeType: string | null) => Promise<string | null>
 ): Promise<{
   contentText: string | null
   mediaUrl: string | null
@@ -1128,8 +1214,16 @@ async function parseMessageContent(
         const audioUrl = await verifyAndBuildUrl(message.audio.id)
         return {
           ...empty,
-          // La nota de voz se transcribe para que el agente IA la lea y conteste.
-          contentText: await transcribirNotaDeVoz(audioUrl, message.audio.mime_type),
+        // La nota de voz se transcribe para que el agente IA la lea y conteste.
+        contentText: transcribir
+          ? await transcribir(audioUrl, message.audio.mime_type ?? null)
+          : await transcribirNotaDeVozDeCuenta({
+              db: supabaseAdmin(),
+              accountId: mirror?.accountId ?? '',
+              mediaUrl: audioUrl,
+              accessToken,
+              mimeType: message.audio.mime_type,
+            }),
           mediaUrl: audioUrl,
           mediaType: message.audio.mime_type,
         }

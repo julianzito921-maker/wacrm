@@ -1,10 +1,55 @@
 /**
  * Notas de voz → texto, para que el agente IA las lea y conteste.
- * Usa la API de transcripción de OpenAI (OPENAI_API_KEY). Sin clave, o si algo
- * falla, devuelve null y el mensaje sigue como audio normal. Nunca lanza.
+ *
+ * Dos caminos, en este orden:
+ *   1. DeepSeek ASR (`/v1/tools/asr`) con la clave de la cuenta — es el que se
+ *      usa cuando el orquestador está encendido, y solo acepta español.
+ *   2. Respaldo histórico con la API de OpenAI (OPENAI_API_KEY), para no romper
+ *      nada si la cuenta todavía no tiene orquestador.
+ *
+ * Sin clave, o si algo falla, devuelve null y el mensaje sigue como audio
+ * normal. Nunca lanza.
  */
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { loadAiConfig } from './config'
+import { transcribirNota } from './comprension/asr'
+
 const MODELO = process.env.AI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe'
 const MAX_BYTES = 20 * 1024 * 1024
+
+/** Versión con cuenta: intenta DeepSeek y, si no aplica, cae al respaldo. */
+export async function transcribirNotaDeVozDeCuenta(args: {
+  db: SupabaseClient
+  accountId: string
+  mediaUrl: string | null
+  accessToken?: string | null
+  mimeType?: string | null
+}): Promise<string | null> {
+  try {
+    const config = await loadAiConfig(args.db, args.accountId).catch(() => null)
+    if (config?.orquestador) {
+      const resultado = await transcribirNota({
+        config,
+        mediaUrl: args.mediaUrl,
+        accessToken: args.accessToken,
+        mimeType: args.mimeType,
+      })
+      if (resultado?.texto) {
+        const segundos = resultado.durationMs ? Math.round(resultado.durationMs / 1000) : null
+        console.log(
+          `[orquestador] nota de voz transcrita (${resultado.modelo}) en ${resultado.latencyMs} ms${segundos ? ` · ${segundos}s de audio` : ''}`,
+        )
+        return resultado.texto
+      }
+      // Con el orquestador encendido no se cae a OpenAI: si DeepSeek no pudo,
+      // se deja el audio sin transcribir a propósito (una cuenta, un proveedor).
+      return null
+    }
+  } catch (err) {
+    console.warn('[nota de voz] no se pudo resolver la configuración:', err instanceof Error ? err.message : err)
+  }
+  return transcribirNotaDeVoz(args.mediaUrl, args.mimeType)
+}
 
 export async function transcribirNotaDeVoz(mediaUrl: string | null, mimeType?: string | null): Promise<string | null> {
   const clave = process.env.OPENAI_API_KEY

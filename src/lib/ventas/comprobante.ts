@@ -16,6 +16,7 @@
 // Nunca lanza: un fallo aquí no debe afectar la respuesta del webhook a Meta.
 // ============================================================
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { loadAiConfig } from '@/lib/ai/config'
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events'
@@ -99,6 +100,24 @@ async function etiquetar(accountId: string, userId: string, contactId: string, n
   if (tag) await addContactTagAndDispatch({ db, accountId, contactId, tagId: tag.id })
 }
 
+/** Nombres de las etiquetas del contacto (una consulta). */
+export async function etiquetasDelContacto(db: SupabaseClient, contactId: string): Promise<string[]> {
+  const { data: filas } = await db.from('contact_tags').select('tags(name)').eq('contact_id', contactId)
+  return (filas ?? [])
+    .map((f) => (f as unknown as { tags: { name: string } | null }).tags?.name)
+    .filter(Boolean) as string[]
+}
+
+/**
+ * ¿Este contacto tiene un pago pendiente de verificar? Es la condición que
+ * dispara el lector de comprobantes y la que apaga la lectura genérica de
+ * imágenes (para no pagar dos veces por la misma foto).
+ */
+export async function tienePagoPendiente(db: SupabaseClient, contactId: string): Promise<boolean> {
+  const nombres = await etiquetasDelContacto(db, contactId)
+  return nombres.some((n) => ETIQUETAS_PENDIENTE.includes(n))
+}
+
 export async function procesarComprobante(args: {
   accountId: string
   userId: string
@@ -112,8 +131,7 @@ export async function procesarComprobante(args: {
     if (!media) return
     const db = supabaseAdmin()
 
-    const { data: filas } = await db.from('contact_tags').select('tags(name)').eq('contact_id', args.contactId)
-    const nombres = (filas ?? []).map((f) => (f as unknown as { tags: { name: string } | null }).tags?.name).filter(Boolean) as string[]
+    const nombres = await etiquetasDelContacto(db, args.contactId)
     if (!nombres.some((n) => ETIQUETAS_PENDIENTE.includes(n))) return
 
     const enviar = (text: string) =>

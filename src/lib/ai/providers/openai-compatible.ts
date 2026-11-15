@@ -18,6 +18,23 @@ function normalizeHost(host: string): string {
   return host.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
 }
 
+/**
+ * ¿Hay que pedirle a este proveedor que NO razone antes de contestar?
+ *
+ * DeepSeek activa el modo pensamiento por defecto (esfuerzo «high»), y en un chat
+ * de ventas eso es pagar tokens de razonamiento y varios segundos extra por una
+ * respuesta de dos renglones. Con AI_DEEPSEEK_SIN_PENSAR=on se manda
+ * `thinking: {type:"disabled"}`; por defecto no se manda y nada cambia.
+ */
+export function pensamientoApagado(baseUrl: string): boolean {
+  if (process.env.AI_DEEPSEEK_SIN_PENSAR !== 'on') return false
+  try {
+    return new URL(baseUrl).hostname.endsWith('deepseek.com')
+  } catch {
+    return false
+  }
+}
+
 function allowedPrivateHosts(): Set<string> {
   return new Set(
     (process.env[PRIVATE_HOST_ALLOWLIST_ENV] ?? '')
@@ -120,13 +137,17 @@ export async function generateOpenAiCompatible(
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'system', content: systemPrompt }, ...mergeConsecutive(messages)],
-        // Los modelos que «piensan» (DeepSeek) gastan tokens en razonar: con 1024 a veces
-        // no les alcanza para la respuesta y llega vacía. AI_MAX_OUTPUT_TOKENS lo amplía.
-        max_tokens: Number(process.env.AI_MAX_OUTPUT_TOKENS) > 0 ? Number(process.env.AI_MAX_OUTPUT_TOKENS) : MAX_OUTPUT_TOKENS,
-      }),
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'system', content: systemPrompt }, ...mergeConsecutive(messages)],
+          // Los modelos que «piensan» (DeepSeek) gastan tokens en razonar: con 1024 a veces
+          // no les alcanza para la respuesta y llega vacía. AI_MAX_OUTPUT_TOKENS lo amplía.
+          max_tokens: Number(process.env.AI_MAX_OUTPUT_TOKENS) > 0 ? Number(process.env.AI_MAX_OUTPUT_TOKENS) : MAX_OUTPUT_TOKENS,
+          // DeepSeek razona por defecto y eso cuesta tokens y segundos en cada respuesta
+          // de venta, donde solo hacen falta dos renglones. Se apaga con
+          // AI_DEEPSEEK_SIN_PENSAR=on (el valor por defecto no cambia el comportamiento).
+          ...(pensamientoApagado(baseUrl ?? '') ? { thinking: { type: 'disabled' } } : {}),
+        }),
       signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (err) {

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { generateOpenAiCompatible, normalizeOpenAiCompatibleBaseUrl } from './openai-compatible'
+﻿import { describe, expect, it, vi } from 'vitest'
+import { generateOpenAiCompatible, normalizeOpenAiCompatibleBaseUrl, pensamientoApagado } from './openai-compatible'
 
 describe('normalizeOpenAiCompatibleBaseUrl', () => {
   it('appends /chat/completions to a base URL', () => {
@@ -153,5 +153,40 @@ describe('generateOpenAiCompatible', () => {
     ).rejects.toMatchObject({ code: 'provider_error' })
 
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual')
+  })
+})
+
+describe('pensamientoApagado', () => {
+  const antes = process.env.AI_DEEPSEEK_SIN_PENSAR
+
+  const restaurar = () => {
+    if (antes === undefined) delete process.env.AI_DEEPSEEK_SIN_PENSAR
+    else process.env.AI_DEEPSEEK_SIN_PENSAR = antes
+  }
+
+  it('no apaga nada por defecto', () => {
+    delete process.env.AI_DEEPSEEK_SIN_PENSAR
+    expect(pensamientoApagado('https://api.deepseek.com')).toBe(false)
+    restaurar()
+  })
+
+  it('apaga el razonamiento en DeepSeek cuando la variable está en on', () => {
+    process.env.AI_DEEPSEEK_SIN_PENSAR = 'on'
+    expect(pensamientoApagado('https://api.deepseek.com')).toBe(true)
+    expect(pensamientoApagado('https://api.deepseek.com/v1')).toBe(true)
+    restaurar()
+  })
+
+  it('no manda el campo a otros proveedores compatibles', () => {
+    process.env.AI_DEEPSEEK_SIN_PENSAR = 'on'
+    expect(pensamientoApagado('https://api.openai.com/v1')).toBe(false)
+    expect(pensamientoApagado('https://mi-servidor.local/v1')).toBe(false)
+    restaurar()
+  })
+
+  it('con una URL inválida no revienta', () => {
+    process.env.AI_DEEPSEEK_SIN_PENSAR = 'on'
+    expect(pensamientoApagado('no-es-una-url')).toBe(false)
+    restaurar()
   })
 })
