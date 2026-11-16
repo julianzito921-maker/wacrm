@@ -1430,6 +1430,8 @@
       "noNodesYet": "Nenhum nó ainda.",
       "deleteNode": "Excluir nó",
       "canvasView": "Canvas",
+      "maximize": "Maximizar",
+      "minimize": "Sair da tela cheia",
       "paletteTitle": "Adicionar ao fluxo",
       "paletteAll": "Todos os passos",
       "paletteText": "Texto",

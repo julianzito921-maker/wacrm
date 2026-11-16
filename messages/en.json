@@ -1430,6 +1430,8 @@
       "noNodesYet": "No nodes yet.",
       "deleteNode": "Delete node",
       "canvasView": "Canvas",
+      "maximize": "Maximize",
+      "minimize": "Exit full screen",
       "paletteTitle": "Add to flow",
       "paletteAll": "All steps",
       "paletteText": "Text",

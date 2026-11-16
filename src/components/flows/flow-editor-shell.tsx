@@ -18,8 +18,8 @@
  * View choice persists per-browser via localStorage.
  */
 
-import { useEffect, useState } from "react";
-import { GitFork, List, MessageSquare } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { GitFork, List, Maximize2, MessageSquare, Minimize2 } from "lucide-react";
 
 import { FlowBuilder } from "./flow-builder";
 import { FlowCanvas } from "./flow-canvas";
@@ -70,6 +70,31 @@ function ShellBody() {
   const t = useTranslations("Flows.builder");
   const { requestFlash } = useFlowEditor();
 
+  // Pantalla completa: el editor ocupa toda la ventana (el navegador
+  // esconde la barra lateral y la cabecera), que es lo que hacía falta
+  // para ver el flujo entero sin recortarlo.
+  const contenedor = useRef<HTMLDivElement>(null);
+  const [pantallaCompleta, setPantallaCompleta] = useState(false);
+
+  useEffect(() => {
+    const alCambiar = () => setPantallaCompleta(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", alCambiar);
+    return () => document.removeEventListener("fullscreenchange", alCambiar);
+  }, []);
+
+  const alternarPantallaCompleta = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await contenedor.current?.requestFullscreen();
+      }
+    } catch {
+      // Algún navegador puede negarse (permisos); se ignora y el
+      // editor sigue funcionando en su tamaño normal.
+    }
+  };
+
   // Read the persisted choice in the useState initializer. Safe even
   // though this is a client component because the parent page only
   // mounts us AFTER a client-side fetch resolves — there's no SSR
@@ -107,7 +132,18 @@ function ShellBody() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      ref={contenedor}
+      className={cn(
+        // Sangrado negativo: el editor se come el relleno del panel y
+        // usa todo el ancho y todo el alto disponibles en vez de quedar
+        // como una tarjeta encajada dentro.
+        "flex min-h-0 flex-col -mx-4 -my-4 h-[calc(100%+2rem)] sm:-mx-6 sm:-my-6 sm:h-[calc(100%+3rem)]",
+        // En pantalla completa el navegador nos da la ventana entera y
+        // ya no se hereda el fondo del panel.
+        pantallaCompleta && "bg-background",
+      )}
+    >
       <EditorHeader />
 
       {/* ---- mode row: view toggle + node-type legend ----
@@ -140,6 +176,18 @@ function ShellBody() {
             label={t("previewView")}
           />
         </div>
+        <button
+          type="button"
+          onClick={alternarPantallaCompleta}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground transition-colors hover:text-foreground lg:ml-0 lg:order-last"
+        >
+          {pantallaCompleta ? (
+            <Minimize2 className="h-3.5 w-3.5" />
+          ) : (
+            <Maximize2 className="h-3.5 w-3.5" />
+          )}
+          {pantallaCompleta ? t("minimize") : t("maximize")}
+        </button>
         <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
           {LEGEND_TYPES.map((tipo) => (
             <span
@@ -158,7 +206,7 @@ function ShellBody() {
 
       {/* ---- cuerpo: barra de herramientas a la izquierda + vista ---- */}
       <div className="mx-6 flex min-h-0 flex-1 gap-4">
-        <FlowPalette className="hidden w-[200px] shrink-0 lg:flex" />
+        <FlowPalette className="hidden w-[190px] shrink-0 md:flex" />
 
         {/* ---- stage: the active view, owning its own overflow ---- */}
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2">

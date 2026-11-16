@@ -1430,6 +1430,8 @@
       "noNodesYet": "아직 노드가 없습니다.",
       "deleteNode": "노드 삭제",
       "canvasView": "캔버스",
+      "maximize": "전체 화면",
+      "minimize": "전체 화면 종료",
       "paletteTitle": "흐름에 추가",
       "paletteAll": "모든 단계",
       "paletteText": "텍스트",
