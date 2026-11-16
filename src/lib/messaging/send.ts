@@ -20,6 +20,7 @@
 // ============================================================
 
 import { supabaseAdmin } from "@/lib/flows/admin-client";
+import { decidirSalida } from "./politica";
 import {
   sendInteractiveButtons,
   sendInteractiveList,
@@ -115,15 +116,27 @@ export function extraerErrorMeta(err: unknown): {
  * Escribe la fila de auditoría. Nunca lanza: si el registro falla, el
  * envío no puede caerse por eso.
  */
+/** Error tipado de un envío frenado por la capa de seguridad. */
+export class EnvioBloqueadoError extends Error {
+  readonly motivo: string;
+  constructor(motivo: string, detalle: string) {
+    super(`Envío bloqueado por la capa de seguridad (${motivo}): ${detalle}`);
+    this.name = "EnvioBloqueadoError";
+    this.motivo = motivo;
+  }
+}
+
 async function registrar(fila: {
   ctx: ContextoSalida;
   tipo: TipoSalida;
   contenido?: string | null;
-  status: "sent" | "failed";
+  status: "sent" | "failed" | "blocked";
   whatsappMessageId?: string | null;
   apiResponse?: unknown;
   errorCode?: string | null;
   errorMessage?: string | null;
+  blockedReason?: string | null;
+  dryRun?: boolean;
   latencyMs: number;
 }): Promise<void> {
   try {
@@ -147,6 +160,8 @@ async function registrar(fila: {
       api_response: (fila.apiResponse ?? null) as never,
       error_code: fila.errorCode ?? null,
       error_message: fila.errorMessage ?? null,
+      blocked_reason: fila.blockedReason ?? null,
+      dry_run: fila.dryRun ?? false,
       latency_ms: Math.round(fila.latencyMs),
       created_by_user_id: fila.ctx.userId ?? null,
       sent_at: fila.status === "sent" ? new Date().toISOString() : null,
@@ -172,6 +187,32 @@ export async function enviarSaliente(
   envio: EnvioSaliente,
 ): Promise<{ messageId: string; response?: unknown }> {
   const inicio = Date.now();
+
+  // Fase 2: la política decide antes de tocar Meta. Si frena, queda la
+  // huella en el registro (con la regla exacta) y no se envía nada.
+  const decision = await decidirSalida({
+    ctx,
+    tipo: envio.tipo,
+    contenido: envio.contenido,
+    hash: envio.contenido ? hashContenido(envio.contenido) : null,
+  });
+  if (!decision.permitido) {
+    await registrar({
+      ctx,
+      tipo: envio.tipo,
+      contenido: envio.contenido,
+      status: "blocked",
+      blockedReason: decision.motivo,
+      errorMessage: decision.detalle ?? null,
+      latencyMs: Date.now() - inicio,
+    });
+    throw new EnvioBloqueadoError(decision.motivo ?? "blocked", decision.detalle ?? "");
+  }
+  // Modo observación: la regla habría frenado, pero el mensaje sale. Se
+  // deja constancia en la MISMA fila del envío (una fila por mensaje),
+  // para poder medir los topes antes de activarlos.
+  const aviso = decision.motivo ? decision : null;
+
   try {
     const r = await envio.enviar();
     await registrar({
@@ -181,6 +222,9 @@ export async function enviarSaliente(
       status: "sent",
       whatsappMessageId: r.messageId,
       apiResponse: r.response ?? null,
+      blockedReason: aviso?.motivo ?? null,
+      errorMessage: aviso?.detalle ?? null,
+      dryRun: Boolean(aviso),
       latencyMs: Date.now() - inicio,
     });
     return r;
