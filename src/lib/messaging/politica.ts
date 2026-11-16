@@ -22,6 +22,7 @@
 // ============================================================
 
 import { supabaseAdmin } from "@/lib/flows/admin-client";
+import { admiteAutomatico, estaEnBaja, leerEstado } from "./estado";
 import type { ContextoSalida, TipoSalida } from "./send";
 
 export interface Decision {
@@ -104,6 +105,33 @@ export async function decidirSalida(args: {
 
   // Sin conversación no hay nada que evaluar (no debería pasar).
   if (!ctx.conversationId) return { permitido: true, motivo: null };
+
+  const avisoPrev = !TOPES.enforce();
+  const frenarAntes = (motivo: string, detalle: string): Decision =>
+    avisoPrev
+      ? { permitido: true, motivo, detalle, soloAviso: true }
+      : { permitido: false, motivo, detalle };
+
+  // Fase 3: estado de la conversación y baja voluntaria. Una persona al
+  // mando o una clienta que pidió que no le escribamos son las dos
+  // razones por las que la automatización tiene que callarse.
+  if (automatico) {
+    const estado = await leerEstado(ctx.conversationId);
+    if (!admiteAutomatico(estado)) {
+      return frenarAntes(
+        estado === "OPT_OUT" ? "opt_out" : "state_blocked",
+        estado === "OPT_OUT"
+          ? "La clienta pidió que no se le escriba."
+          : `La conversación está en «${estado}»: la lleva una persona o está en pausa.`,
+      );
+    }
+    if (ctx.contactId && (await estaEnBaja(ctx.contactId))) {
+      return frenarAntes(
+        "opt_out",
+        "El contacto tiene baja voluntaria registrada (no me escribas).",
+      );
+    }
+  }
 
   let filas: Fila[] = [];
   let ultimoEntrante: string | null = null;

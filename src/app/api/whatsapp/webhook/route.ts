@@ -24,6 +24,7 @@ import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
+import { estadoPorEntrante } from '@/lib/messaging/estado'
 import { tienePagoPendiente } from '@/lib/ventas/comprobante'
 import { transcribirNotaDeVozDeCuenta } from '@/lib/ai/transcribe'
 import { procesarComprobante } from '@/lib/ventas/comprobante'
@@ -828,6 +829,28 @@ async function processMessage(
       message.id
     )
     return
+  }
+
+  // Fase 3: estado de la conversación. Detecta «no me escribas» y «quiero
+  // hablar con una persona», y deja la conversación esperando respuesta.
+  // Se hace aquí (y no en cada motor) para que valga para todos por igual.
+  try {
+    const estado = await estadoPorEntrante({
+      accountId: conversation.account_id,
+      conversationId: conversation.id,
+      contactId: conversation.contact_id,
+      texto: contentText ?? '',
+    })
+    if (estado.bajo) {
+      console.info('[webhook] baja voluntaria registrada:', conversation.contact_id)
+    } else if (estado.humano) {
+      console.info('[webhook] traspaso a humano pedido:', conversation.contact_id)
+    }
+  } catch (err) {
+    console.error(
+      '[webhook] no se pudo actualizar el estado de la conversación:',
+      err instanceof Error ? err.message : err
+    )
   }
 
   const isFirstInboundMessage = await claimFirstInboundMessage(

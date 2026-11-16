@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   lastInboundAt: null as string | null,
+  estado: 'ACTIVE' as string,
+  optOut: null as string | null,
   previos: [] as Array<{ created_at: string; content_hash: string | null }>,
   inserts: [] as Record<string, unknown>[],
   enviar: vi.fn(async () => ({ messageId: 'wamid.ok' })),
@@ -28,11 +30,24 @@ vi.mock('@/lib/flows/admin-client', () => ({
     Object.assign(convBuilder, {
       select: () => convBuilder,
       eq: () => convBuilder,
-      maybeSingle: async () => ({ data: { last_inbound_at: h.lastInboundAt }, error: null }),
+      maybeSingle: async () => ({
+        data: { last_inbound_at: h.lastInboundAt, state: h.estado },
+        error: null,
+      }),
+    })
+    const contactBuilder: Record<string, unknown> = {}
+    Object.assign(contactBuilder, {
+      select: () => contactBuilder,
+      eq: () => contactBuilder,
+      maybeSingle: async () => ({ data: { opt_out_at: h.optOut }, error: null }),
     })
     return {
       from: (tabla: string) => ({
-        ...(tabla === 'conversations' ? convBuilder : logBuilder),
+        ...(tabla === 'conversations'
+          ? convBuilder
+          : tabla === 'contacts'
+            ? contactBuilder
+            : logBuilder),
         insert: async (fila: Record<string, unknown>) => {
           h.inserts.push(fila)
           return { error: null }
@@ -62,6 +77,8 @@ const haceMin = (m: number) => new Date(Date.now() - m * 60_000).toISOString()
 
 beforeEach(() => {
   h.lastInboundAt = new Date().toISOString()
+  h.estado = 'ACTIVE'
+  h.optOut = null
   h.previos = []
   h.inserts = []
   h.enviar.mockReset()
@@ -196,5 +213,36 @@ describe('envío bloqueado de verdad', () => {
     expect(TOPES.maxSeguidos()).toBe(8)
     expect(TOPES.ventanaHoras()).toBe(23.5)
     expect(TOPES.dupMinutos()).toBe(10)
+  })
+})
+
+describe('estado de la conversación y baja voluntaria', () => {
+  it('no automatiza si la conversación está en manos de una persona', async () => {
+    h.estado = 'HUMAN_HANDOFF'
+    const d = await decidirSalida({ ctx, tipo: 'text', contenido: 'Hola' })
+    expect(d.permitido).toBe(false)
+    expect(d.motivo).toBe('state_blocked')
+  })
+
+  it('no automatiza si la clienta pidió que no le escribamos', async () => {
+    h.estado = 'OPT_OUT'
+    const d = await decidirSalida({ ctx, tipo: 'text', contenido: 'Hola' })
+    expect(d.motivo).toBe('opt_out')
+  })
+
+  it('también frena si la baja está anotada en el contacto', async () => {
+    h.optOut = new Date().toISOString()
+    const d = await decidirSalida({ ctx, tipo: 'text', contenido: 'Hola' })
+    expect(d.motivo).toBe('opt_out')
+  })
+
+  it('una persona puede escribir aunque la conversación esté en traspaso', async () => {
+    h.estado = 'HUMAN_HANDOFF'
+    const d = await decidirSalida({
+      ctx: { ...ctx, source: 'manual' },
+      tipo: 'text',
+      contenido: 'Hola, te atiendo yo',
+    })
+    expect(d.permitido).toBe(true)
   })
 })

@@ -21,6 +21,7 @@
 
 import { supabaseAdmin } from "@/lib/flows/admin-client";
 import { decidirSalida } from "./politica";
+import { estadoPorSaliente } from "./estado";
 import {
   sendInteractiveButtons,
   sendInteractiveList,
@@ -227,6 +228,15 @@ export async function enviarSaliente(
       dryRun: Boolean(aviso),
       latencyMs: Date.now() - inicio,
     });
+    // Fase 3: el estado sigue a los mensajes. Un envío de una persona
+    // deja la conversación en traspaso (la automatización se aparta); un
+    // automático la deja esperando a la clienta.
+    if (ctx.conversationId) {
+      await estadoPorSaliente({
+        conversationId: ctx.conversationId,
+        automatico: !["manual"].includes(ctx.source),
+      });
+    }
     return r;
   } catch (err) {
     const { code, message } = extraerErrorMeta(err);
