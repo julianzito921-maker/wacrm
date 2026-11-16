@@ -776,11 +776,11 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error(tErr('needsContact', { step: 'send_media' }))
       if (!cfg.media_url || !/^https:\/\//i.test(cfg.media_url)) throw new Error('send_media: media_url must be https')
       const conversationId = await resolveConversationId(args)
-      // Las imágenes/PDF también se anuncian escribiendo, pero sin pausa larga.
+      // Las imágenes/PDF también se anuncian escribiendo y guardan la pausa
+      // humana, para que no lleguen pegadas al mensaje anterior.
       await mostrarEscribiendo({
         accountId: args.automation.account_id,
         messageId: args.context?.message_id ?? null,
-        esperar: false,
       })
       const { whatsapp_message_id } = await engineSendMedia({
         accountId: args.automation.account_id,
@@ -805,6 +805,11 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const check = validateInteractivePayload(payload)
       if (!check.ok) throw new Error(check.error)
       const conversationId = await resolveConversationId(args)
+      // «Escribiendo…» + pausa humana antes del menú, igual que en el texto.
+      await mostrarEscribiendo({
+        accountId: args.automation.account_id,
+        messageId: args.context?.message_id ?? null,
+      })
       const { whatsapp_message_id } = await engineSendInteractive({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -838,6 +843,11 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
             })
             .map((k) => String(cfg.variables![k]))
         : []
+      // «Escribiendo…» (si hay id entrante) + pausa humana antes del template.
+      await mostrarEscribiendo({
+        accountId: args.automation.account_id,
+        messageId: args.context?.message_id ?? null,
+      })
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,

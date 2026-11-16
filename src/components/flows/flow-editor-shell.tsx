@@ -3,33 +3,29 @@
 /**
  * View-switcher + chrome for the flow editor.
  *
- * Lays the editor out as one app-like column that fills the dashboard
- * content area (toolbar → mode row → stage → validation bar), matching
- * the Flow Builder design handoff:
- *   - A segmented Canvas / List control on the left of the mode row.
- *   - A node-type legend on the right so the canvas's per-type colors
- *     are decodable at a glance.
- *   - The active view is mounted inside a rounded "stage" that owns its
- *     own scroll/overflow, so the canvas can fill available height and
- *     the list scrolls internally.
+ * Three views over the same data:
+ *   - Canvas: the node graph (drag, connect, minimap).
+ *   - List: the step-by-step editor with per-node forms.
+ *   - Preview: the flow as the customer sees it on WhatsApp — image
+ *     with its caption, texts, buttons and tags, in order, each step
+ *     with an «Editar» button that jumps to that node in List view.
  *
- * Why a separate component:
- *   - The page itself stays trivially small (loading + error + this).
- *   - Either view can stay unaware of the other — they share data
- *     (`{flow, nodes}`) and nothing else.
+ * The preview is the «read it like a customer» view: it answers
+ * «¿qué le llega a la clienta?» without opening every node. It is
+ * read-only (its Edit buttons switch to List and flash the node), so
+ * it's also safe on a phone.
  *
- * View choice persists per-browser via localStorage so a power user
- * who prefers the list isn't fighting the default on every load.
- * Canvas is the default for everyone else — the original user
- * feedback was that the list shape made flows "hard to understand".
+ * View choice persists per-browser via localStorage.
  */
 
 import { useEffect, useState } from "react";
-import { GitFork, List } from "lucide-react";
+import { GitFork, List, MessageSquare } from "lucide-react";
 
 import { FlowBuilder } from "./flow-builder";
 import { FlowCanvas } from "./flow-canvas";
-import { FlowEditorProvider } from "./flow-editor-state";
+import { FlowPalette } from "./flow-palette";
+import { FlowPreview } from "./flow-preview";
+import { FlowEditorProvider, useFlowEditor } from "./flow-editor-state";
 import { EditorHeader } from "./header";
 import { ValidationPanel } from "./validation-panel";
 import { NODE_META, nodeColors, type NodeType } from "./shared";
@@ -38,14 +34,13 @@ import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 import { useTranslations } from "next-intl";
 
 /**
- * Below this viewport width we force list view and hide the toggle.
- * Canvas with drag-to-connect on a phone is unusable — handles are
- * ~10px and live finger drags from one node to another aren't a
- * practical workflow. Matches Tailwind's `md` breakpoint.
+ * Below this viewport width the canvas is unusable (handles are ~10px
+ * and finger drags between nodes aren't a practical workflow), so we
+ * fall back to List. Preview stays available — it's read-only.
  */
 const MOBILE_BREAKPOINT = "(max-width: 767px)";
 
-type View = "canvas" | "list";
+type View = "canvas" | "list" | "preview";
 
 const STORAGE_KEY = "wacrm.flowEditor.view";
 
@@ -60,29 +55,42 @@ interface Props {
 }
 
 export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
+  return (
+    <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
+      <ShellBody />
+    </FlowEditorProvider>
+  );
+}
+
+/**
+ * Inside the provider so it can call `requestFlash` — the preview's
+ * «Editar» buttons switch to List and flash the node that was clicked.
+ */
+function ShellBody() {
   const t = useTranslations("Flows.builder");
+  const { requestFlash } = useFlowEditor();
 
   // Read the persisted choice in the useState initializer. Safe even
   // though this is a client component because the parent page only
   // mounts us AFTER a client-side fetch resolves — there's no SSR
   // pass for this subtree, so no hydration mismatch to worry about.
-  // Default to `canvas` (the new default) when nothing is saved.
   const [view, setView] = useState<View>(() => {
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved === "canvas" || saved === "list") return saved;
+      if (saved === "canvas" || saved === "list" || saved === "preview") {
+        return saved;
+      }
     } catch {
       // Private browsing / disabled storage — fall through to default.
     }
     return "canvas";
   });
 
-  // Live mobile detection. We don't render canvas under the
+  // Live mobile detection. We don't render the canvas under the
   // breakpoint regardless of `view` — but we keep `view` itself
-  // intact so the user's preference comes back when they widen
-  // again (e.g. rotating a tablet, resizing a window).
+  // intact so the user's preference comes back when they widen again.
   const isMobile = useMatchMedia(MOBILE_BREAKPOINT);
-  const effectiveView: View = isMobile ? "list" : view;
+  const effectiveView: View = isMobile && view === "canvas" ? "list" : view;
 
   const choose = (next: View) => {
     setView(next);
@@ -93,69 +101,84 @@ export function FlowEditorShell({ initialFlow, initialNodes }: Props) {
     }
   };
 
-  return (
-    <FlowEditorProvider initialFlow={initialFlow} initialNodes={initialNodes}>
-      <div className="flex h-full min-h-0 flex-col">
-        <EditorHeader />
+  const editarDesdePreview = (key: string) => {
+    choose("list");
+    requestFlash(key);
+  };
 
-        {/* ---- mode row: view toggle + node-type legend ----
-            Omitted entirely on mobile (canvas is unavailable there and
-            the legend is lg-only), so there's no empty band above the
-            stage on small screens. */}
-        {!isMobile && (
-          <div className="flex items-center gap-4 px-6 py-3.5">
-            <div
-              role="group"
-              aria-label={t("editorView")}
-              className="inline-flex gap-0.5 rounded-lg border border-border bg-muted p-0.5"
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <EditorHeader />
+
+      {/* ---- mode row: view toggle + node-type legend ----
+          The legend is lg-only, so there's no empty band on small
+          screens. */}
+      <div className="flex items-center gap-4 px-6 py-3.5">
+        <div
+          role="group"
+          aria-label={t("editorView")}
+          className="inline-flex gap-0.5 rounded-lg border border-border bg-muted p-0.5"
+        >
+          {!isMobile && (
+            <SegButton
+              active={effectiveView === "canvas"}
+              onClick={() => choose("canvas")}
+              icon={<GitFork className="h-3.5 w-3.5" />}
+              label={t("canvasView")}
+            />
+          )}
+          <SegButton
+            active={effectiveView === "list"}
+            onClick={() => choose("list")}
+            icon={<List className="h-3.5 w-3.5" />}
+            label={t("listView")}
+          />
+          <SegButton
+            active={effectiveView === "preview"}
+            onClick={() => choose("preview")}
+            icon={<MessageSquare className="h-3.5 w-3.5" />}
+            label={t("previewView")}
+          />
+        </div>
+        <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
+          {LEGEND_TYPES.map((tipo) => (
+            <span
+              key={tipo}
+              className="inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground"
             >
-              <SegButton
-                active={effectiveView === "canvas"}
-                onClick={() => choose("canvas")}
-                icon={<GitFork className="h-3.5 w-3.5" />}
-                label={t("canvasView")}
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ background: nodeColors(tipo).solid }}
               />
-              <SegButton
-                active={effectiveView === "list"}
-                onClick={() => choose("list")}
-                icon={<List className="h-3.5 w-3.5" />}
-                label={t("listView")}
-              />
-            </div>
-            <div className="ml-auto hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 lg:flex">
-              {LEGEND_TYPES.map((t_type) => (
-                <span
-                  key={t_type}
-                  className="inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground"
-                >
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: nodeColors(t_type).solid }}
-                  />
-                  {t(`nodes.${t_type}.label`)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+              {t(`nodes.${tipo}.label`)}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* ---- cuerpo: barra de herramientas a la izquierda + vista ---- */}
+      <div className="mx-6 flex min-h-0 flex-1 gap-4">
+        <FlowPalette className="hidden w-[200px] shrink-0 lg:flex" />
 
         {/* ---- stage: the active view, owning its own overflow ---- */}
-        <div className="relative mx-6 min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2">
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card-2">
           {effectiveView === "canvas" ? (
             <FlowCanvas />
+          ) : effectiveView === "preview" ? (
+            <FlowPreview onEdit={editarDesdePreview} />
           ) : (
             <div className="absolute inset-0 overflow-y-auto">
               <FlowBuilder />
             </div>
           )}
         </div>
-
-        {/* ---- validation / activate-readiness bar ---- */}
-        <div className="px-6 pb-5 pt-3">
-          <ValidationPanel />
-        </div>
       </div>
-    </FlowEditorProvider>
+
+      {/* ---- validation / activate-readiness bar ---- */}
+      <div className="px-6 pb-5 pt-3">
+        <ValidationPanel />
+      </div>
+    </div>
   );
 }
 

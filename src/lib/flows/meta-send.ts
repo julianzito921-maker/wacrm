@@ -61,39 +61,57 @@ export async function loadAccountMetaCredentials(
 }
 
 /**
- * Marca el mensaje entrante como leído y muestra «escribiendo…» antes de que
- * el embudo conteste, para que la clienta vea a alguien del otro lado y la
- * ráfaga de mensajes no salga de golpe. Cosmético: cualquier fallo se avisa y
- * se sigue (nunca impide el envío).
- *
- * Devuelve cuánto conviene esperar (ms) para que el «escribiendo…» se vea:
- * proporcional al largo del texto, con un mínimo y un máximo humanos.
+ * Lee un ajuste en milisegundos del entorno, con valor por defecto.
+ * Permite a Julián cambiar los tiempos desde Railway sin tocar código.
  */
-export function pausaHumana(texto: string): number {
-  const caracteres = (texto ?? '').length
-  return Math.min(2_600, Math.max(900, caracteres * 18))
+function leerMs(nombre: string, porDefecto: number): number {
+  const bruto = Number(process.env[nombre])
+  return Number.isFinite(bruto) && bruto >= 0 ? bruto : porDefecto
 }
 
+/**
+ * Cuánto esperar antes de cada mensaje del embudo, en milisegundos.
+ *
+ * Por defecto 3–7 s, aleatorio, para que la ráfaga de mensajes no le llegue
+ * de golpe a la clienta (petición expresa de Julián). Ajustable sin desplegar
+ * con `AI_ESPERA_MIN_MS` y `AI_ESPERA_MAX_MS`.
+ */
+export function pausaHumana(): number {
+  const min = leerMs('AI_ESPERA_MIN_MS', 3_000)
+  const max = Math.max(min, leerMs('AI_ESPERA_MAX_MS', 7_000))
+  return Math.round(min + Math.random() * (max - min))
+}
+
+/**
+ * Muestra «escribiendo…» (cuando Meta nos dio el id del mensaje entrante) y
+ * espera la pausa humana antes del envío, para que la clienta vea a alguien
+ * del otro lado y los mensajes no salgan en ráfaga.
+ *
+ * El «escribiendo…» es cosmético: cualquier fallo se avisa y se sigue (nunca
+ * impide el envío). La pausa sí se respeta aunque no haya id, para espaciar
+ * los mensajes; se omite en la suite de pruebas para no alargarla.
+ */
 export async function mostrarEscribiendo(args: {
   accountId: string
   /** Meta message id del mensaje entrante (lo exige la API de indicadores). */
   messageId?: string | null
-  /** Texto que se va a enviar, para calcular la pausa. */
+  /** Texto que se va a enviar (se conserva por compatibilidad). */
   texto?: string
-  /** false = solo marca leído sin esperar (para imágenes y documentos). */
+  /** false = marca leído sin esperar (para envíos sin pausa). */
   esperar?: boolean
 }): Promise<void> {
-  if (!args.messageId) return
-  try {
-    const db = supabaseAdmin()
-    const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(db, args.accountId)
-    await sendTypingIndicator({ phoneNumberId, accessToken, messageId: args.messageId })
-    if (args.esperar !== false) {
-      await new Promise((resolve) => setTimeout(resolve, pausaHumana(args.texto ?? '')))
+  if (args.messageId) {
+    try {
+      const db = supabaseAdmin()
+      const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(db, args.accountId)
+      await sendTypingIndicator({ phoneNumberId, accessToken, messageId: args.messageId })
+    } catch (err) {
+      console.warn('[envío] no se pudo mostrar «escribiendo…»:', err instanceof Error ? err.message : err)
     }
-  } catch (err) {
-    console.warn('[envío] no se pudo mostrar «escribiendo…»:', err instanceof Error ? err.message : err)
   }
+  if (args.esperar === false) return
+  if (process.env.NODE_ENV === 'test') return
+  await new Promise((resolve) => setTimeout(resolve, pausaHumana()))
 }
 
 interface SendTextEngineArgs {
