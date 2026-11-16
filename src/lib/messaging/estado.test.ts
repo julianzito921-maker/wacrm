@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   estado: 'ACTIVE' as string | null,
   optOut: null as string | null,
   bloqueoLibre: true,
+  consent: null as string | null,
   updates: [] as Array<{ tabla: string; patch: Record<string, unknown> }>,
 }))
 
@@ -33,7 +34,7 @@ vi.mock('@/lib/flows/admin-client', () => ({
         maybeSingle: async () =>
           tabla === 'conversations'
             ? { data: h.estado === null ? null : { state: h.estado }, error: null }
-            : { data: { opt_out_at: h.optOut }, error: null },
+            : { data: { opt_out_at: h.optOut, consent_status: h.consent }, error: null },
       })
       // `.or(...).select('id')` debe resolverse a filas: se simula con un
       // objeto que resuelve según el bloqueo.
@@ -69,12 +70,20 @@ vi.mock('@/lib/flows/admin-client', () => ({
   },
 }))
 
-import { admiteAutomatico, estadoPorEntrante, pideBaja, pideHumano, tomarConversacion } from './estado'
+import {
+  admiteAutomatico,
+  estadoPorEntrante,
+  marcarConsentimiento,
+  pideBaja,
+  pideHumano,
+  tomarConversacion,
+} from './estado'
 
 beforeEach(() => {
   h.estado = 'ACTIVE'
   h.optOut = null
   h.bloqueoLibre = true
+  h.consent = null
   h.updates = []
 })
 
@@ -176,5 +185,26 @@ describe('bloqueo por conversación', () => {
   it('lo pierde quien llega segundo', async () => {
     h.bloqueoLibre = false
     expect(await tomarConversacion('conv-1', 'webhook-B')).toBe(false)
+  })
+})
+
+describe('consentimiento desde el anuncio y bajas nuevas', () => {
+  it('reconoce las palabras de baja más comunes', () => {
+    for (const t of ['parar', 'PARA', 'detente', 'eliminar', 'no más mensajes']) {
+      expect(pideBaja(t)).toBe(true)
+    }
+  })
+
+  it('registra el consentimiento cuando llega por anuncio', async () => {
+    await marcarConsentimiento('cont-1', { source: 'META_AD', type: 'marketing' })
+    const patch = h.updates.find((u) => u.tabla === 'contacts')?.patch
+    expect(patch?.consent_status).toBe('granted')
+    expect(patch?.consent_source).toBe('META_AD')
+  })
+
+  it('nunca pisa una baja voluntaria', async () => {
+    h.consent = 'denied'
+    await marcarConsentimiento('cont-1', { source: 'META_AD', type: 'marketing' })
+    expect(h.updates.filter((u) => u.tabla === 'contacts')).toHaveLength(0)
   })
 })

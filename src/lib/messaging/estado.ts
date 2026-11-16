@@ -64,10 +64,14 @@ const BAJA = [
   /no\s+me\s+escribas?/i,
   /no\s+me\s+vuelvas?\s+a\s+escribir/i,
   /no\s+quiero\s+(que\s+me\s+escribas|recibir|ms?s\s*mensajes)/i,
-  /^\s*(stop|baja|cancelar|unsubscribe)\s*[.!]?\s*$/i,
+  // Palabras sueltas que la gente usa para cortar (§12: STOP, BAJA,
+  // CANCELAR). «Parar»/«detente»/«eliminar» faltaban y son de las más
+  // comunes en español.
+  /^\s*(stop|baja|bajas|cancelar|cancela|parar|para|p[aá]rate|detente|unsubscribe|eliminar|elim[ií]name)\s*[.!]?\s*$/i,
   /ya\s+no\s+quiero/i,
   /deja\s+de\s+escribirme/i,
   /no\s+me\s+molestes/i,
+  /no\s+m[aá]s\s+(mensajes|ms?s)/i,
   /quita(m|r)?me\s+de\s+(la\s+lista|tu\s+lista)/i,
 ];
 
@@ -216,6 +220,44 @@ export async function estadoPorSaliente(args: {
     return;
   }
   await fijarEstado(args.conversationId, "HUMAN_HANDOFF");
+}
+
+/**
+ * Registra de dónde vino el consentimiento (§15). Se llama cuando la
+ * clienta llega por un anuncio de clic a WhatsApp: el clic en el anuncio
+ * ES su consentimiento para que le escribamos por ese canal.
+ *
+ * Nunca pisa una baja: si ya dijo que no, se queda dicho.
+ */
+export async function marcarConsentimiento(
+  contactId: string,
+  datos: { source: string; type: string },
+): Promise<void> {
+  try {
+    const db = supabaseAdmin();
+    const { data } = await db
+      .from("contacts")
+      .select("consent_status, opt_out_at")
+      .eq("id", contactId)
+      .maybeSingle();
+    const actual = data as { consent_status?: string | null; opt_out_at?: string | null } | null;
+    if (actual?.opt_out_at || actual?.consent_status === "denied") return;
+    if (actual?.consent_status === "granted") return;
+    await db
+      .from("contacts")
+      .update({
+        consent_status: "granted",
+        consent_source: datos.source,
+        consent_type: datos.type,
+        consent_timestamp: new Date().toISOString(),
+      })
+      .eq("id", contactId);
+  } catch (err) {
+    console.error(
+      "[estado] no se pudo registrar el consentimiento:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 export async function marcarBaja(contactId: string, motivo: string): Promise<void> {

@@ -24,7 +24,7 @@ import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
-import { estadoPorEntrante } from '@/lib/messaging/estado'
+import { estadoPorEntrante, marcarConsentimiento } from '@/lib/messaging/estado'
 import { cancelarPendientes } from '@/lib/messaging/cola-store'
 import { tienePagoPendiente } from '@/lib/ventas/comprobante'
 import { transcribirNotaDeVozDeCuenta } from '@/lib/ai/transcribe'
@@ -690,6 +690,10 @@ async function processMessage(
   // de compra que luego se manda a Meta. Nunca lanza.
   if (message.referral?.ctwa_clid) {
     await guardarReferenciaAnuncio({ accountId, userId: configOwnerUserId, contactId: contactRecord.id, referral: message.referral })
+    // Consentimiento (§15): el clic en el anuncio de clic a WhatsApp es la
+    // autorización para escribirle por este canal. Queda registrado con su
+    // origen, su tipo y su fecha — y nunca pisa una baja.
+    await marcarConsentimiento(contactRecord.id, { source: 'META_AD', type: 'marketing' })
   }
 
   // Find or create conversation
