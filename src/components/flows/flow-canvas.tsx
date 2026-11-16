@@ -57,7 +57,7 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2 } from 'lucide-react';
+import { Copy, Plus, Trash2 } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
@@ -139,7 +139,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
   // El contexto está disponible aquí porque las tarjetas las pinta
   // React-Flow dentro del proveedor: así el botón de borrar actúa
   // directo sobre el nodo, sin abrir el panel lateral.
-  const { removeNode } = useFlowEditor();
+  const { removeNode, duplicateNode } = useFlowEditor();
   const { node, isEntry, isFlashed } = data as NodeData;
   const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
@@ -202,6 +202,24 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         >
           {t(`nodes.${node.node_type}.label`)}
         </span>
+        {/* Duplicar: deja una copia conectada detrás cuando el paso
+            tiene una sola salida. El nodo de entrada no se duplica
+            (solo puede haber uno). */}
+        {node.node_type !== 'start' && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              duplicateNode(node.node_key);
+            }}
+            title={t('duplicateNode')}
+            aria-label={t('duplicateNode')}
+            className="text-muted-foreground hover:text-foreground ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-black/5"
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+        )}
+
         {/* Borrado directo desde la tarjeta. El de entrada se protege
             (sin él el flujo no tiene por dónde empezar): para ese caso
             queda oculto y se cambia de entrada desde el panel. */}
@@ -214,7 +232,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
             }}
             title={t('deleteNode')}
             aria-label={t('deleteNode')}
-            className="text-muted-foreground hover:bg-red-500/10 hover:text-red-500 ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors"
+            className="text-muted-foreground hover:bg-red-500/10 hover:text-red-500 flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors"
           >
             <Trash2 className="h-3 w-3" />
           </button>

@@ -108,6 +108,12 @@ export interface FlowEditorContextValue {
     positions: Record<string, { x: number; y: number }>,
   ) => void;
   removeNode: (key: string) => void;
+  /**
+   * Copia un nodo (con su contenido) y lo deja conectado detrás del
+   * original cuando el paso tenía una sola salida. Devuelve la clave
+   * nueva, o null si el nodo no existía.
+   */
+  duplicateNode: (key: string) => string | null;
 
   // Actions
   save: () => Promise<boolean>;
@@ -192,6 +198,69 @@ export function removeNodeFromState(state: BuilderState, key: string): BuilderSt
     nodes,
     entry_node_id: state.entry_node_id === key ? null : state.entry_node_id,
   };
+}
+
+/**
+ * Duplica un nodo.
+ *
+ * En los pasos de una sola salida (mensaje, archivo, preguntar,
+ * etiqueta) la copia se **empalma justo detrás** del original: el
+ * original pasa a apuntar a la copia y la copia hereda el destino que
+ * tenía el original. Así «duplicar» deja un paso repetido y conectado,
+ * sin errores que perseguir.
+ *
+ * En los nodos con varias salidas (menú, lista, condición) o
+ * terminales, la copia conserva sus propias conexiones y se coloca al
+ * lado, sin tocar el original: dos ramas pueden apuntar al mismo sitio.
+ */
+export function duplicateNodeInState(
+  state: BuilderState,
+  key: string,
+  nuevoKey: string,
+): BuilderState {
+  const original = state.nodes.find((n) => n.node_key === key);
+  if (!original) return state;
+
+  const copia: BuilderNode = {
+    ...original,
+    node_key: nuevoKey,
+    // Copia profunda: si se comparte el objeto, editar la copia
+    // cambiaría también al original.
+    config: JSON.parse(JSON.stringify(original.config)) as Record<string, unknown>,
+  };
+
+  const unaSalida =
+    original.node_type === "send_message" ||
+    original.node_type === "send_media" ||
+    original.node_type === "collect_input" ||
+    original.node_type === "set_tag";
+
+  if (!unaSalida) {
+    copia.position_x = (original.position_x ?? 0) + 280;
+    copia.position_y = original.position_y ?? 0;
+    return { ...state, nodes: [...state.nodes, copia] };
+  }
+
+  const destino = (original.config as { next_node_key?: string }).next_node_key ?? "";
+  (copia.config as Record<string, unknown>).next_node_key = destino;
+
+  // Entre el original y su siguiente, para que se vea dónde cayó.
+  const siguienteNodo = state.nodes.find((n) => n.node_key === destino);
+  copia.position_x = siguienteNodo
+    ? Math.round(((original.position_x ?? 0) + (siguienteNodo.position_x ?? 0)) / 2)
+    : original.position_x ?? 0;
+  copia.position_y = siguienteNodo
+    ? Math.round(((original.position_y ?? 0) + (siguienteNodo.position_y ?? 0)) / 2)
+    : (original.position_y ?? 0) + 150;
+
+  const nodes = state.nodes
+    .map((n) =>
+      n.node_key === key
+        ? { ...n, config: { ...n.config, next_node_key: nuevoKey } }
+        : n,
+    )
+    .concat(copia);
+  return { ...state, nodes };
 }
 
 export function appendNode(state: BuilderState, node: BuilderNode): BuilderState {
@@ -564,6 +633,21 @@ export function FlowEditorProvider({
     [setState],
   );
 
+  const duplicateNode = useCallback(
+    (key: string): string | null => {
+      // La clave nueva se calcula con la última foto conocida de los
+      // nodos (igual que addNode) para poder devolverla sin esperar al
+      // commit de React.
+      const actual = latestNodesRef.current;
+      const original = actual.find((n) => n.node_key === key);
+      if (!original) return null;
+      const nuevoKey = uniqueNodeKey(original.node_key, actual);
+      setState((s) => duplicateNodeInState(s, key, nuevoKey));
+      return nuevoKey;
+    },
+    [setState],
+  );
+
   const value = useMemo<FlowEditorContextValue>(
     () => ({
       flow: initialFlow,
@@ -580,6 +664,7 @@ export function FlowEditorProvider({
       updateNodePosition,
       updateNodePositions,
       removeNode,
+      duplicateNode,
       save,
       setStatus,
       deleteFlow,
@@ -601,6 +686,7 @@ export function FlowEditorProvider({
       updateNodePosition,
       updateNodePositions,
       removeNode,
+      duplicateNode,
       save,
       setStatus,
       deleteFlow,

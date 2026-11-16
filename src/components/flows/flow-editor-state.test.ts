@@ -231,3 +231,53 @@ describe("removeNodeFromState", () => {
     expect(removeNodeFromState(estado, "no_existe")).toBe(estado);
   });
 });
+
+import { duplicateNodeInState } from "./flow-editor-state";
+
+describe("duplicateNodeInState", () => {
+  it("empalma la copia justo detrás en un paso de una sola salida", () => {
+    const salida = duplicateNodeInState(cadena(), "a", "a_2");
+    expect(salida.nodes.map((n) => n.node_key)).toEqual(["a", "b", "c", "a_2"]);
+    const a = salida.nodes.find((n) => n.node_key === "a")!;
+    const copia = salida.nodes.find((n) => n.node_key === "a_2")!;
+    expect(a.config.next_node_key).toBe("a_2");
+    expect(copia.config.next_node_key).toBe("b");
+    expect(copia.config.text).toBe("hola");
+  });
+
+  it("no toca las uniones cuando el nodo tiene varias salidas", () => {
+    const estado: BuilderState = {
+      ...cadena(),
+      nodes: [
+        {
+          node_key: "menu",
+          node_type: "send_buttons",
+          config: {
+            text: "elige",
+            buttons: [{ reply_id: "si", title: "Si", next_node_key: "c" }],
+          },
+          position_x: 0,
+          position_y: 0,
+        },
+        { node_key: "c", node_type: "end", config: {} },
+      ],
+    };
+    const salida = duplicateNodeInState(estado, "menu", "menu_2");
+    const original = salida.nodes.find((n) => n.node_key === "menu")!;
+    expect(original.config.buttons).toEqual([
+      { reply_id: "si", title: "Si", next_node_key: "c" },
+    ]);
+    expect(salida.nodes).toHaveLength(3);
+  });
+
+  it("no duplica el contenido por referencia", () => {
+    const salida = duplicateNodeInState(cadena(), "a", "a_2");
+    const copia = salida.nodes.find((n) => n.node_key === "a_2")!;
+    expect(copia.config).not.toBe(salida.nodes[0].config);
+  });
+
+  it("devuelve el estado tal cual si la clave no existe", () => {
+    const estado = cadena();
+    expect(duplicateNodeInState(estado, "no_existe", "x")).toBe(estado);
+  });
+});

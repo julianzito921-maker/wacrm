@@ -1442,6 +1442,7 @@
       "noNodesYet": "No nodes yet.",
       "deleteNode": "Delete node",
       "canvasView": "Canvas",
+      "duplicateNode": "Duplicate node",
       "edgeInsert": "Insert a step here",
       "edgeRemove": "Remove the connection",
       "maximize": "Maximize",

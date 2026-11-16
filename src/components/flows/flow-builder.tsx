@@ -22,6 +22,7 @@ import { useTranslations } from 'next-intl';
 import {
   CircleAlert,
   Plus,
+  Copy,
   Trash2,
   ChevronDown,
   ChevronUp,
@@ -84,6 +85,7 @@ export function FlowBuilder() {
     updateNode,
     updateNodeConfig,
     removeNode: removeNodeCtx,
+    duplicateNode: duplicateNodeCtx,
   } = useFlowEditor();
 
   // List-only UI state: which cards are expanded + scroll refs for
@@ -115,6 +117,15 @@ export function FlowBuilder() {
       });
     },
     [removeNodeCtx]
+  );
+
+  const duplicateNode = useCallback(
+    (key: string) => {
+      const nuevo = duplicateNodeCtx(key);
+      // La copia nace desplegada: es lo que el usuario quiere editar.
+      if (nuevo) setExpanded((prev) => new Set([...prev, nuevo]));
+    },
+    [duplicateNodeCtx]
   );
 
   const toggleExpanded = useCallback((key: string) => {
@@ -194,6 +205,7 @@ export function FlowBuilder() {
               onUpdate={(patch) => updateNode(node.node_key, patch)}
               onUpdateConfig={(patch) => updateNodeConfig(node.node_key, patch)}
               onRemove={() => removeNode(node.node_key)}
+              onDuplicate={() => duplicateNode(node.node_key)}
               onSetEntry={() =>
                 setState((s) => ({ ...s, entry_node_id: node.node_key }))
               }
@@ -385,6 +397,7 @@ function NodeCard({
   onUpdate,
   onUpdateConfig,
   onRemove,
+  onDuplicate,
   onSetEntry,
   t,
 }: {
@@ -399,6 +412,7 @@ function NodeCard({
   onUpdate: (patch: Partial<BuilderNode>) => void;
   onUpdateConfig: (patch: Record<string, unknown>) => void;
   onRemove: () => void;
+  onDuplicate: () => void;
   onSetEntry: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
@@ -483,6 +497,10 @@ function NodeCard({
                 </Button>
               )}
             </div>
+            <Button variant="ghost" size="sm" onClick={onDuplicate}>
+              <Copy className="h-3.5 w-3.5" />
+              {t('duplicateNode')}
+            </Button>
             <Button
               variant="ghost"
               size="sm"

@@ -1442,6 +1442,7 @@
       "noNodesYet": "아직 노드가 없습니다.",
       "deleteNode": "노드 삭제",
       "canvasView": "캔버스",
+      "duplicateNode": "노드 복제",
       "edgeInsert": "여기에 단계 추가",
       "edgeRemove": "연결 제거",
       "maximize": "전체 화면",
