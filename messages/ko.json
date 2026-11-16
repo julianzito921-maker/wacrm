@@ -2689,7 +2689,8 @@
       "saveReplyNeedsVar": "응답 저장 노드에는 값을 저장할 변수 이름이 필요합니다.",
       "saveReplyNeedsWait": "무응답으로 볼 때까지 기다릴 분을 입력하세요.",
       "saveReplyNeedsBothBranches": "응답 저장 노드에는 두 갈래(응답/무응답)가 모두 필요합니다.",
-      "saveReplyMissingBranch": "응답 저장 노드가 “{key}”를 가리키지만 존재하지 않습니다."
+      "saveReplyMissingBranch": "응답 저장 노드가 “{key}”를 가리키지만 존재하지 않습니다.",
+      "saveReplyWaitTooLong": "23시간을 넘겨 기다릴 수 없습니다. 그 이후에는 WhatsApp 창을 벗어나 메시지를 보낼 수 없습니다."
     },
     "automations": {
       "needsStep": "활성 자동화에는 단계가 하나 이상 필요합니다",

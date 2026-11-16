@@ -2689,7 +2689,8 @@
       "saveReplyNeedsVar": "El nodo Guardar respuesta necesita un nombre de variable donde guardar.",
       "saveReplyNeedsWait": "Hay que indicar cuántos minutos esperar antes de darla por no contestada.",
       "saveReplyNeedsBothBranches": "El nodo Guardar respuesta necesita sus dos salidas: si contesta y si no contesta.",
-      "saveReplyMissingBranch": "El nodo Guardar respuesta apunta a «{key}», que no existe."
+      "saveReplyMissingBranch": "El nodo Guardar respuesta apunta a «{key}», que no existe.",
+      "saveReplyWaitTooLong": "No se puede esperar más de 23 horas: pasado ese tiempo la conversación está fuera de la ventana de WhatsApp y el mensaje no se puede mandar."
     },
     "automations": {
       "needsStep": "las automatizaciones activas necesitan al menos un paso",

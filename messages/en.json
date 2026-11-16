@@ -2689,7 +2689,8 @@
       "saveReplyNeedsVar": "The Save reply node needs a variable name to store the answer.",
       "saveReplyNeedsWait": "Set how many minutes to wait before treating it as no reply.",
       "saveReplyNeedsBothBranches": "The Save reply node needs both branches: replied and no reply.",
-      "saveReplyMissingBranch": "The Save reply node points to “{key}”, which does not exist."
+      "saveReplyMissingBranch": "The Save reply node points to “{key}”, which does not exist.",
+      "saveReplyWaitTooLong": "You cannot wait more than 23 hours: past that the conversation is outside WhatsApp’s window and the message cannot be sent."
     },
     "automations": {
       "needsStep": "active automations need at least one step",

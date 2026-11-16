@@ -2689,7 +2689,8 @@
       "saveReplyNeedsVar": "O nó Salvar resposta precisa de um nome de variável.",
       "saveReplyNeedsWait": "Indique quantos minutos esperar antes de considerar sem resposta.",
       "saveReplyNeedsBothBranches": "O nó Salvar resposta precisa das duas saídas: responde e não responde.",
-      "saveReplyMissingBranch": "O nó Salvar resposta aponta para “{key}”, que não existe."
+      "saveReplyMissingBranch": "O nó Salvar resposta aponta para “{key}”, que não existe.",
+      "saveReplyWaitTooLong": "Não é possível esperar mais de 23 horas: depois disso a conversa sai da janela do WhatsApp e a mensagem não pode ser enviada."
     },
     "automations": {
       "needsStep": "automações ativas precisam de pelo menos uma etapa",

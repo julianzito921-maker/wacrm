@@ -766,6 +766,15 @@ function validateNode(
         });
       }
       const espera = Number(cfg.espera_minutos);
+      if (Number.isFinite(espera) && espera > 23 * 60) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "espera_minutos",
+          message: t("saveReplyWaitTooLong"),
+        });
+      }
       if (!Number.isFinite(espera) || espera < 1) {
         issues.push({
           severity: "error",

@@ -1242,7 +1242,10 @@ export async function resumeSaveReplyTimeout(
   if (!nodo || nodo.node_type !== "save_reply") return false;
 
   const cfg = nodo.config as unknown as SaveReplyNodeConfig;
-  const espera = Number(cfg.espera_minutos) || 0;
+  // Tope de 23 h: pasado eso la conversación está fuera de la ventana de
+  // 24 h de WhatsApp y un mensaje libre sería un rechazo de Meta (y una
+  // señal de spam). Mejor no mandar nada.
+  const espera = Math.min(Number(cfg.espera_minutos) || 0, 23 * 60);
   const minutos =
     (now.getTime() - new Date(run.last_advanced_at).getTime()) / 60_000;
   if (!(espera > 0) || minutos < espera) return false;
