@@ -1,13 +1,15 @@
 import {
-  sendInteractiveButtons,
-  sendInteractiveList,
-  sendMediaMessage,
-  sendTextMessage,
   sendTypingIndicator,
   type InteractiveButton,
   type InteractiveListSection,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
+import {
+  enviarBotones,
+  enviarLista,
+  enviarMedio,
+  enviarTexto,
+} from '@/lib/messaging/send'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -114,7 +116,19 @@ export async function mostrarEscribiendo(args: {
   await new Promise((resolve) => setTimeout(resolve, pausaHumana()))
 }
 
-interface SendTextEngineArgs {
+interface AuditoriaEnvio {
+  /** Por qué se manda (queda en el registro de salida). */
+  reason?: string
+  /** Flujo y nodo que lo provocaron, para poder rastrearlo. */
+  workflowId?: string | null
+  nodeKey?: string | null
+  /** El evento entrante que lo disparó. */
+  sourceEventId?: string | null
+  /** Clave para no registrar (ni repetir) el mismo envío dos veces. */
+  idempotencyKey?: string | null
+}
+
+interface SendTextEngineArgs extends AuditoriaEnvio {
   /** Account-level tenancy key. Drives contact + whatsapp_config
    *  lookups so a flow authored by user A still sends through the
    *  WhatsApp number user B saved on the same account. */
@@ -179,7 +193,19 @@ export async function engineSendText(
   )
 
   const attempt = async (phone: string): Promise<string> => {
-    const r = await sendTextMessage({
+    const r = await enviarTexto({
+      ctx: {
+        accountId: args.accountId,
+        userId: args.userId,
+        conversationId: args.conversationId,
+        contactId: args.contactId,
+        source: 'flujo',
+        reason: args.reason ?? 'mensaje del flujo',
+        workflowId: args.workflowId ?? null,
+        workflowNodeKey: args.nodeKey ?? null,
+        sourceEventId: args.sourceEventId ?? null,
+        idempotencyKey: args.idempotencyKey ?? null,
+      },
       phoneNumberId,
       accessToken,
       to: phone,
@@ -236,7 +262,7 @@ export async function engineSendText(
   return { whatsapp_message_id: waMessageId }
 }
 
-interface SendMediaEngineArgs {
+interface SendMediaEngineArgs extends AuditoriaEnvio {
   accountId: string
   userId: string
   conversationId: string
@@ -293,7 +319,19 @@ export async function engineSendMedia(
   )
 
   const attempt = async (phone: string): Promise<string> => {
-    const r = await sendMediaMessage({
+    const r = await enviarMedio({
+      ctx: {
+        accountId: args.accountId,
+        userId: args.userId,
+        conversationId: args.conversationId,
+        contactId: args.contactId,
+        source: 'flujo',
+        reason: args.reason ?? 'archivo del flujo',
+        workflowId: args.workflowId ?? null,
+        workflowNodeKey: args.nodeKey ?? null,
+        sourceEventId: args.sourceEventId ?? null,
+        idempotencyKey: args.idempotencyKey ?? null,
+      },
       phoneNumberId,
       accessToken,
       to: phone,
@@ -357,7 +395,7 @@ export async function engineSendMedia(
   return { whatsapp_message_id: waMessageId }
 }
 
-interface SendInteractiveButtonsEngineArgs {
+interface SendInteractiveButtonsEngineArgs extends AuditoriaEnvio {
   accountId: string
   userId: string
   conversationId: string
@@ -368,7 +406,7 @@ interface SendInteractiveButtonsEngineArgs {
   footerText?: string
 }
 
-interface SendInteractiveListEngineArgs {
+interface SendInteractiveListEngineArgs extends AuditoriaEnvio {
   accountId: string
   userId: string
   conversationId: string
@@ -450,7 +488,15 @@ async function sendInteractiveViaMeta(
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'buttons') {
-      const r = await sendInteractiveButtons({
+      const r = await enviarBotones({
+        ctx: {
+          accountId: input.accountId,
+          conversationId: input.conversationId,
+          contactId: input.contactId,
+          source: 'flujo',
+          reason: 'menú del flujo',
+          workflowNodeKey: input.nodeKey ?? null,
+        },
         phoneNumberId,
         accessToken,
         to: phone,
@@ -461,7 +507,15 @@ async function sendInteractiveViaMeta(
       })
       return r.messageId
     }
-    const r = await sendInteractiveList({
+    const r = await enviarLista({
+      ctx: {
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        contactId: input.contactId,
+        source: 'flujo',
+        reason: 'lista del flujo',
+        workflowNodeKey: input.nodeKey ?? null,
+      },
       phoneNumberId,
       accessToken,
       to: phone,

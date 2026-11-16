@@ -21,14 +21,14 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { type MediaKind } from '@/lib/whatsapp/meta-api';
 import {
-  sendTextMessage,
-  sendTemplateMessage,
-  sendMediaMessage,
-  sendInteractiveButtons,
-  sendInteractiveList,
-  type MediaKind,
-} from '@/lib/whatsapp/meta-api';
+  enviarBotones,
+  enviarLista,
+  enviarMedio,
+  enviarPlantilla,
+  enviarTexto,
+} from '@/lib/messaging/send';
 import {
   validateInteractivePayload,
   interactivePayloadPreviewText,
@@ -343,9 +343,21 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
+  // Todo envío sale por el punto único (`lib/messaging/send`), que deja
+  // el registro de auditoría: quién, a quién, por qué y qué dijo Meta.
+  const ctxSalida = {
+    accountId,
+    userId: senderId,
+    conversationId: conversation.id,
+    contactId: contact.id,
+    source: 'manual' as const,
+    reason: 'envío desde el CRM',
+  }
+
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
-      const result = await sendTemplateMessage({
+      const result = await enviarPlantilla({
+        ctx: ctxSalida,
         phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
@@ -359,7 +371,8 @@ export async function sendMessageToConversation(
       return result.messageId;
     }
     if (isMediaKind) {
-      const result = await sendMediaMessage({
+      const result = await enviarMedio({
+        ctx: ctxSalida,
         phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
@@ -374,7 +387,8 @@ export async function sendMessageToConversation(
     if (messageType === 'interactive') {
       const p = interactivePayload!;
       if (p.kind === 'buttons') {
-        const result = await sendInteractiveButtons({
+        const result = await enviarBotones({
+          ctx: ctxSalida,
           phoneNumberId: config.phone_number_id,
           accessToken,
           to: phone,
@@ -386,7 +400,8 @@ export async function sendMessageToConversation(
         });
         return result.messageId;
       }
-      const result = await sendInteractiveList({
+      const result = await enviarLista({
+        ctx: ctxSalida,
         phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
@@ -399,7 +414,8 @@ export async function sendMessageToConversation(
       });
       return result.messageId;
     }
-    const result = await sendTextMessage({
+    const result = await enviarTexto({
+      ctx: ctxSalida,
       phoneNumberId: config.phone_number_id,
       accessToken,
       to: phone,

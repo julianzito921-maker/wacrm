@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { enviarPlantilla } from '@/lib/messaging/send'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body'
@@ -188,7 +188,13 @@ export async function POST(request: Request) {
 
       for (const variant of variants) {
         try {
-          const result = await sendTemplateMessage({
+          const result = await enviarPlantilla({
+            ctx: {
+              accountId,
+              userId,
+              source: 'difusion',
+              reason: `difusión: ${template_name}`,
+            },
             phoneNumberId: config.phone_number_id,
             accessToken,
             to: variant,

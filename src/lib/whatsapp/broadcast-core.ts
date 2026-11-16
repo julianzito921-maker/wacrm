@@ -18,7 +18,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
+import { enviarPlantilla } from '@/lib/messaging/send'
 import { decrypt } from '@/lib/whatsapp/encryption';
 import {
   parseInternationalPhone,
@@ -59,10 +59,14 @@ interface PlannedRecipient {
   recipientRowId: string;
   phone: string;
   params: string[];
+  /** Para el registro de auditoría de la salida. */
+  contactId?: string | null;
 }
 
 export interface BroadcastPlan {
   broadcastId: string;
+  /** Cuenta dueña del envío (auditoría de salida). */
+  accountId: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
@@ -233,12 +237,19 @@ export async function createBroadcast(
   const planned: PlannedRecipient[] = createdRows.map(
     (row: { recipient_id: string; contact_id: string }) => {
       const r = byContact.get(row.contact_id)!;
-      return { recipientRowId: row.recipient_id, phone: r.phone, params: r.params };
+      return {
+        recipientRowId: row.recipient_id,
+        phone: r.phone,
+        params: r.params,
+        // Para el registro de auditoría: a qué contacto se le mandó.
+        contactId: row.contact_id,
+      };
     }
   );
 
   return {
     broadcastId,
+    accountId,
     templateName,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phone_number_id,
@@ -274,7 +285,14 @@ export async function deliverBroadcast(
 
     for (const variant of variants) {
       try {
-        const result = await sendTemplateMessage({
+        const result = await enviarPlantilla({
+          ctx: {
+            accountId: plan.accountId,
+            contactId: recipient.contactId ?? null,
+            source: 'difusion',
+            reason: `difusión: ${plan.templateName}`,
+            workflowId: plan.broadcastId ?? null,
+          },
           phoneNumberId: plan.phoneNumberId,
           accessToken: plan.accessToken,
           to: variant,

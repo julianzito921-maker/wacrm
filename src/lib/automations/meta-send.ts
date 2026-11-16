@@ -1,4 +1,4 @@
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { enviarPlantilla, enviarTexto } from '@/lib/messaging/send'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import {
   engineSendInteractiveButtons,
@@ -32,7 +32,13 @@ const t = getT('LibErrors')
 // converge in a later refactor.
 // ------------------------------------------------------------
 
-interface SendTextArgs {
+/** Campos comunes de auditoría: qué automatización y por qué. */
+interface AuditoriaAutomatizacion {
+  reason?: string
+  automationId?: string | null
+}
+
+interface SendTextArgs extends AuditoriaAutomatizacion {
   /** Account-level tenancy key. Drives contact + whatsapp_config
    *  lookups so an automation authored by user A still sends through
    *  the WhatsApp number user B saved on the same account. */
@@ -46,7 +52,7 @@ interface SendTextArgs {
   text: string
 }
 
-interface SendTemplateArgs {
+interface SendTemplateArgs extends AuditoriaAutomatizacion {
   accountId: string
   userId: string
   conversationId: string
@@ -174,8 +180,18 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       : null
 
   const attempt = async (phone: string): Promise<string> => {
+    const ctx = {
+      accountId: input.accountId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      source: 'automatizacion' as const,
+      reason: input.reason ?? `automatización: ${input.kind}`,
+      workflowId: input.automationId ?? null,
+    }
     if (input.kind === 'template') {
-      const r = await sendTemplateMessage({
+      const r = await enviarPlantilla({
+        ctx,
         phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
@@ -186,7 +202,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
       return r.messageId
     }
-    const r = await sendTextMessage({
+    const r = await enviarTexto({
+      ctx,
       phoneNumberId: config.phone_number_id,
       accessToken,
       to: phone,
