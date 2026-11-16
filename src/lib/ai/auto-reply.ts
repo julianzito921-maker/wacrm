@@ -4,6 +4,8 @@ import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt, agenteSiempreActivo, RESPALDO_SIEMPRE_ACTIVO } from './defaults'
+import { detectarIntencion, guiaDeRespuesta, temasEn } from '@/lib/messaging/intencion'
+import { memoriaDe } from '@/lib/messaging/memoria'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
@@ -196,8 +198,22 @@ async function responder(args: DispatchArgs): Promise<void> {
       console.log(`[orquestador] catálogo inyectado: ${productos.length} productos`)
     }
 
+    // Fase 5: qué preguntó (determinista, sin gastar modelo) y qué se le
+    // ha comunicado ya. Con eso la respuesta contesta sólo lo preguntado,
+    // no repite lo ya dicho y termina esperando a la clienta.
+    const ultimo = latestUserMessage(messages) ?? ''
+    const intencion = detectarIntencion(ultimo)
+    const memoria = await memoriaDe(conversationId)
+    const guia = guiaDeRespuesta({
+      intencion,
+      memoria,
+      temasPreguntados: temasEn(ultimo),
+    })
+    console.log(`[orquestador] intención: ${intencion} · ya comunicado: ${Object.keys(memoria).join(', ') || 'nada'}`)
+
     const systemPrompt = buildSystemPrompt({
-      userPrompt: [config.systemPrompt, catalogo].filter(Boolean).join('\n\n') || null,
+      userPrompt:
+        [config.systemPrompt, catalogo, guia].filter(Boolean).join('\n\n') || null,
       mode: 'auto_reply',
       knowledge,
     })
@@ -421,7 +437,17 @@ export function tiempoEscribiendo(texto: string): number {
 }
 
 /** Máximo de mensajes por respuesta (el resto va junto en el último). */
-const MAX_PARTES = 8
+/**
+ * Cuántos mensajes puede mandar la IA en una sola respuesta. Ocho era
+ * demasiado: cuatro mensajes seguidos ya parecen una ráfaga. Por defecto
+ * tres, y se puede bajar por entorno sin desplegar.
+ */
+const MAX_PARTES_POR_DEFECTO = 3
+
+function maxPartes(): number {
+  const n = Number(process.env.AI_MAX_PARTES)
+  return Number.isFinite(n) && n >= 1 && n <= 8 ? n : MAX_PARTES_POR_DEFECTO
+}
 
 /**
  * Parte una respuesta en mensajes de WhatsApp: en cada [[CORTE]] y también en cada renglón en
@@ -434,8 +460,9 @@ export function splitReplyParts(text: string): string[] {
     .map((p) => p.trim())
     .filter(Boolean)
   if (partes.length === 0) return [text.trim()]
-  if (partes.length <= MAX_PARTES) return partes
-  return [...partes.slice(0, MAX_PARTES - 1), partes.slice(MAX_PARTES - 1).join('\n')]
+  const max = maxPartes()
+  if (partes.length <= max) return partes
+  return [...partes.slice(0, max - 1), partes.slice(max - 1).join('\n')]
 }
 
 interface MensajeReciente {
