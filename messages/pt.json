@@ -1528,6 +1528,13 @@
         "uploadFailed": "Falha no upload.",
         "fileTooLarge": "O arquivo tem {size} MB — o limite é 16 MB.",
         "defaultOptionTitle": "Opção",
+        "waitSecondsLabel": "Segundos de espera",
+        "waitSecondsHelp": "De 1 a 300 segundos (5 minutos). O fluxo pausa aqui antes de continuar.",
+        "saveReplyPromptLabel": "Mensagem antes de esperar (opcional)",
+        "saveReplyVarLabel": "Salvar a resposta em",
+        "saveReplyEsperaLabel": "Esperar (minutos) antes de considerar sem resposta",
+        "saveReplyIfYes": "Se responde, continua em",
+        "saveReplyIfNo": "Se não responde, continua em",
         "optionN": "Opção {n}"
       },
       "categories": {
@@ -1560,6 +1567,8 @@
           "label": "Coletar resposta",
           "blurb": "Faz uma pergunta e salva a resposta"
         },
+        "wait": {"label": "Esperar", "blurb": "Deixa passar alguns segundos antes da próxima mensagem"},
+        "save_reply": {"label": "Salvar resposta", "blurb": "Guarda a resposta, com saída se responde e se não"},
         "condition": {
           "label": "Se / senão",
           "blurb": "Ramifica com base em uma regra"
@@ -1615,7 +1624,9 @@
       "modeAdd": "Adicionar",
       "modeRemove": "Remover",
       "tagPicked": "{mode} tag {tag}…",
-      "tagNone": "{mode} tag (nenhuma escolhida)"
+      "tagNone": "{mode} tag (nenhuma escolhida)",
+        "seconds": "{count} s",
+        "minutes": "{count} min"
     },
     "header": {
       "backToFlows": "Voltar aos fluxos",
@@ -2671,7 +2682,14 @@
       "setTagNeedsTag": "O nó Marcar contato precisa de uma tag para aplicar.",
       "setTagNeedsNext": "O nó Marcar contato precisa apontar para um próximo nó.",
       "setTagMissingNext": "O nó Marcar contato aponta para um nó inexistente: \"{key}\".",
-      "unknownNodeType": "Tipo de nó desconhecido: \"{type}\"."
+      "unknownNodeType": "Tipo de nó desconhecido: \"{type}\".",
+      "waitSecondsRange": "A espera deve ficar entre 1 e 300 segundos (5 minutos).",
+      "waitNeedsNext": "O nó Esperar deve apontar para um próximo nó.",
+      "waitMissingNext": "O nó Esperar aponta para “{key}”, que não existe.",
+      "saveReplyNeedsVar": "O nó Salvar resposta precisa de um nome de variável.",
+      "saveReplyNeedsWait": "Indique quantos minutos esperar antes de considerar sem resposta.",
+      "saveReplyNeedsBothBranches": "O nó Salvar resposta precisa das duas saídas: responde e não responde.",
+      "saveReplyMissingBranch": "O nó Salvar resposta aponta para “{key}”, que não existe."
     },
     "automations": {
       "needsStep": "automações ativas precisam de pelo menos uma etapa",

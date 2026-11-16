@@ -1528,6 +1528,13 @@
         "uploadFailed": "Upload failed.",
         "fileTooLarge": "File is {size} MB — limit is 16 MB.",
         "defaultOptionTitle": "Option",
+        "waitSecondsLabel": "Seconds to wait",
+        "waitSecondsHelp": "1 to 300 seconds (5 minutes). The flow pauses here before moving on.",
+        "saveReplyPromptLabel": "Message before waiting (optional)",
+        "saveReplyVarLabel": "Save the answer in",
+        "saveReplyEsperaLabel": "Wait (minutes) before treating it as no reply",
+        "saveReplyIfYes": "If they reply, continue at",
+        "saveReplyIfNo": "If they do not reply, continue at",
         "optionN": "Option {n}"
       },
       "categories": {
@@ -1560,6 +1567,8 @@
           "label": "Collect input",
           "blurb": "Asks a question, saves the reply"
         },
+        "wait": {"label": "Wait", "blurb": "Pause a few seconds before the next message"},
+        "save_reply": {"label": "Save reply", "blurb": "Stores the answer, with a branch for replied / no reply"},
         "condition": {
           "label": "If / else",
           "blurb": "Branches on a rule"
@@ -1615,7 +1624,9 @@
       "modeAdd": "Add",
       "modeRemove": "Remove",
       "tagPicked": "{mode} tag {tag}…",
-      "tagNone": "{mode} tag (none picked)"
+      "tagNone": "{mode} tag (none picked)",
+        "seconds": "{count} s",
+        "minutes": "{count} min"
     },
     "header": {
       "backToFlows": "Back to Flows",
@@ -2671,7 +2682,14 @@
       "setTagNeedsTag": "Set-tag needs a tag to apply.",
       "setTagNeedsNext": "Set-tag must point to a next node.",
       "setTagMissingNext": "Set-tag points to non-existent node \"{key}\".",
-      "unknownNodeType": "Unknown node type \"{type}\"."
+      "unknownNodeType": "Unknown node type \"{type}\".",
+      "waitSecondsRange": "The wait must be between 1 and 300 seconds (5 minutes).",
+      "waitNeedsNext": "The Wait node must point to a next node.",
+      "waitMissingNext": "The Wait node points to “{key}”, which does not exist.",
+      "saveReplyNeedsVar": "The Save reply node needs a variable name to store the answer.",
+      "saveReplyNeedsWait": "Set how many minutes to wait before treating it as no reply.",
+      "saveReplyNeedsBothBranches": "The Save reply node needs both branches: replied and no reply.",
+      "saveReplyMissingBranch": "The Save reply node points to “{key}”, which does not exist."
     },
     "automations": {
       "needsStep": "active automations need at least one step",

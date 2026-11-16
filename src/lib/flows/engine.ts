@@ -108,6 +108,8 @@ import {
   type SendListNodeConfig,
   type SendMediaNodeConfig,
   type SendMessageNodeConfig,
+  type SaveReplyNodeConfig,
+  type WaitNodeConfig,
   type SetTagNodeConfig,
   type StartNodeConfig,
   type KeywordTriggerConfig,
@@ -338,7 +340,8 @@ export function isSuspending(node_type: string): boolean {
   return (
     node_type === "send_buttons" ||
     node_type === "send_list" ||
-    node_type === "collect_input"
+    node_type === "collect_input" ||
+    node_type === "save_reply"
   );
 }
 
@@ -878,6 +881,63 @@ async function advanceFromNodeKey(
       currentKey = cfg.next_node_key;
       continue;
     }
+    if (node.node_type === "wait") {
+      // Espera real antes del mensaje siguiente. Se hace dentro del
+      // mismo avance, así que el tope son 5 minutos: para esperas más
+      // largas (horas, días) hace falta un programador, no este nodo.
+      const cfg = node.config as unknown as WaitNodeConfig;
+      const segundos = Math.min(Math.max(Number(cfg.segundos) || 0, 0), 300);
+      await logEvent(db, run.id, "node_entered", node.node_key, {
+        node_type: "wait",
+        seconds: segundos,
+      });
+      if (segundos > 0) {
+        await new Promise((resolve) => setTimeout(resolve, segundos * 1000));
+      }
+      currentKey = cfg.next_node_key;
+      continue;
+    }
+    if (node.node_type === "save_reply") {
+      // Manda el mensaje (si lo hay) y se queda esperando. La respuesta
+      // la captura handleReplyForActiveRun; si no llega, el barrido
+      // (cron) la manda por la salida de «no contesta».
+      const cfg = node.config as unknown as SaveReplyNodeConfig;
+      if (cfg.prompt_text && cfg.prompt_text.trim()) {
+        try {
+          await ritmoHumano(db, run);
+          const { whatsapp_message_id } = await engineSendText({
+            accountId: run.account_id,
+            userId: run.user_id,
+            conversationId: run.conversation_id!,
+            contactId: run.contact_id!,
+            text: interpolateVars(cfg.prompt_text, run.vars),
+          });
+          await logEvent(db, run.id, "message_sent", node.node_key, {
+            node_type: "save_reply",
+            whatsapp_message_id,
+          });
+        } catch (err) {
+          await logEvent(db, run.id, "error", node.node_key, {
+            reason: "save_reply_prompt_failed",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+          await endRun(db, run.id, "failed", "save_reply_prompt_failed");
+          return { outcome: "completed" };
+        }
+      }
+      const avanzado = await advanceCurrentNodeKey(
+        db,
+        run.id,
+        run.current_node_key,
+        node.node_key,
+      );
+      if (!avanzado) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "lost_race_during_advance",
+        });
+      }
+      return { outcome: "advanced" };
+    }
     if (node.node_type === "collect_input") {
       // Send the prompt and suspend. Customer's next TEXT reply will
       // wake us up via handleReplyForActiveRun's collect_input branch.
@@ -1152,6 +1212,51 @@ async function closeActiveRun(
 // Public entry point — the webhook calls this on every inbound.
 // ============================================================
 
+/**
+ * «Guardar respuesta» sin contestación.
+ *
+ * La clienta no escribió dentro del plazo: el flujo sigue por su salida
+ * de «no contesta». Esto no lo puede detectar el webhook (no hay
+ * mensaje entrante), así que lo llama el barrido periódico
+ * (`/api/flows/cron`). Devuelve true si movió la ejecución.
+ */
+export async function resumeSaveReplyTimeout(
+  db: AdminClient,
+  runId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const { data: fila } = await db
+    .from("flow_runs")
+    .select("*")
+    .eq("id", runId)
+    .maybeSingle();
+  const run = fila as FlowRunRow | null;
+  if (!run || run.status !== "active" || !run.current_node_key) return false;
+
+  const [flow, nodes] = await Promise.all([
+    loadFlow(db, run.flow_id),
+    loadAllNodes(db, run.flow_id),
+  ]);
+  if (!flow) return false;
+  const nodo = nodes.get(run.current_node_key);
+  if (!nodo || nodo.node_type !== "save_reply") return false;
+
+  const cfg = nodo.config as unknown as SaveReplyNodeConfig;
+  const espera = Number(cfg.espera_minutos) || 0;
+  const minutos =
+    (now.getTime() - new Date(run.last_advanced_at).getTime()) / 60_000;
+  if (!(espera > 0) || minutos < espera) return false;
+  if (!cfg.no_contesto_next) return false;
+  if (!(await claimReplyTransition(db, run, cfg.no_contesto_next))) return false;
+
+  await logEvent(db, run.id, "node_entered", nodo.node_key, {
+    saved_key: cfg.var_key,
+    sin_respuesta: true,
+  });
+  await advanceFromNodeKey(db, run, cfg.no_contesto_next, nodes);
+  return true;
+}
+
 export async function dispatchInboundToFlows(
   input: DispatchInboundInput & { isFirstInboundMessage: boolean },
 ): Promise<DispatchInboundResult> {
@@ -1276,6 +1381,25 @@ async function handleReplyForActiveRun(
     (matched = matchTypedReply(currentNode, message.text))
   ) {
     // La clienta escribió su respuesta en vez de tocar el botón: se avanza igual (abajo).
+  } else if (
+    message.kind === "text" &&
+    currentNode.node_type === "save_reply"
+  ) {
+    const cfg = currentNode.config as unknown as SaveReplyNodeConfig;
+    const capturado = message.text.trim();
+    if (capturado.length > 0 && cfg.var_key && cfg.contesto_next) {
+      const vars = { ...run.vars, [cfg.var_key]: capturado };
+      if (!(await claimReplyTransition(db, run, cfg.contesto_next, { vars }))) {
+        return lostReplyRace(db, run, currentNode.node_key);
+      }
+      run.vars = vars;
+      await logEvent(db, run.id, "node_entered", currentNode.node_key, {
+        saved_key: cfg.var_key,
+        saved_length: capturado.length,
+      });
+      const outcome = await advanceFromNodeKey(db, run, cfg.contesto_next, nodes);
+      return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+    }
   } else if (
     message.kind === "text" &&
     currentNode.node_type === "collect_input"

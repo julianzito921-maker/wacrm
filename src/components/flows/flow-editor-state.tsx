@@ -306,6 +306,17 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
         filename: "",
         next_node_key: "",
       };
+    case "wait":
+      // 15 s por defecto: tiempo de lectura humano sin frenar el embudo.
+      return { segundos: 15, next_node_key: "" };
+    case "save_reply":
+      return {
+        prompt_text: "",
+        var_key: "respuesta",
+        espera_minutos: 30,
+        contesto_next: "",
+        no_contesto_next: "",
+      };
     case "collect_input":
       return {
         prompt_text: "",

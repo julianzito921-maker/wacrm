@@ -1528,6 +1528,13 @@
         "uploadFailed": "Error al subir.",
         "fileTooLarge": "El archivo pesa {size} MB; el límite es 16 MB.",
         "defaultOptionTitle": "Opción",
+        "waitSecondsLabel": "Segundos de espera",
+        "waitSecondsHelp": "De 1 a 300 segundos (5 minutos). Aquí el flujo hace una pausa antes de seguir.",
+        "saveReplyPromptLabel": "Mensaje antes de esperar (opcional)",
+        "saveReplyVarLabel": "Guardar la respuesta en",
+        "saveReplyEsperaLabel": "Esperar (minutos) antes de darla por no contestada",
+        "saveReplyIfYes": "Si contesta, sigue en",
+        "saveReplyIfNo": "Si no contesta, sigue en",
         "optionN": "Opción {n}"
       },
       "categories": {
@@ -1560,6 +1567,8 @@
           "label": "Capturar respuesta",
           "blurb": "Hace una pregunta y guarda la respuesta"
         },
+        "wait": {"label": "Esperar", "blurb": "Deja pasar unos segundos antes del mensaje siguiente"},
+        "save_reply": {"label": "Guardar respuesta", "blurb": "Guarda lo que conteste, con salida si contesta y si no"},
         "condition": {
           "label": "Si / si no",
           "blurb": "Ramifica según una regla"
@@ -1615,7 +1624,9 @@
       "modeAdd": "Agregar",
       "modeRemove": "Quitar",
       "tagPicked": "{mode} etiqueta {tag}…",
-      "tagNone": "{mode} etiqueta (ninguna elegida)"
+      "tagNone": "{mode} etiqueta (ninguna elegida)",
+        "seconds": "{count} s",
+        "minutes": "{count} min"
     },
     "header": {
       "backToFlows": "Volver a flujos",
@@ -2671,7 +2682,14 @@
       "setTagNeedsTag": "El nodo Etiquetar contacto necesita una etiqueta para aplicar.",
       "setTagNeedsNext": "El nodo Etiquetar contacto debe apuntar a un nodo siguiente.",
       "setTagMissingNext": "El nodo Etiquetar contacto apunta a un nodo inexistente: \"{key}\".",
-      "unknownNodeType": "Tipo de nodo desconocido: \"{type}\"."
+      "unknownNodeType": "Tipo de nodo desconocido: \"{type}\".",
+      "waitSecondsRange": "La espera tiene que estar entre 1 y 300 segundos (5 minutos).",
+      "waitNeedsNext": "El nodo Esperar debe apuntar a un nodo siguiente.",
+      "waitMissingNext": "El nodo Esperar apunta a «{key}», que no existe.",
+      "saveReplyNeedsVar": "El nodo Guardar respuesta necesita un nombre de variable donde guardar.",
+      "saveReplyNeedsWait": "Hay que indicar cuántos minutos esperar antes de darla por no contestada.",
+      "saveReplyNeedsBothBranches": "El nodo Guardar respuesta necesita sus dos salidas: si contesta y si no contesta.",
+      "saveReplyMissingBranch": "El nodo Guardar respuesta apunta a «{key}», que no existe."
     },
     "automations": {
       "needsStep": "las automatizaciones activas necesitan al menos un paso",

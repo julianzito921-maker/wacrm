@@ -44,6 +44,7 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
   for (const node of nodes) {
     const cfg = node.config;
     switch (node.node_type) {
+      case "wait":
       case "start":
       case "send_message":
       case "send_media":
@@ -56,6 +57,31 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
             source: node.node_key,
             target: next,
             sourceHandle: "next",
+          });
+        }
+        break;
+      }
+
+      case "save_reply": {
+        const contesto = (cfg as { contesto_next?: string }).contesto_next;
+        const noContesto = (cfg as { no_contesto_next?: string })
+          .no_contesto_next;
+        if (contesto && knownKeys.has(contesto)) {
+          edges.push({
+            id: `${node.node_key}--contesto--${contesto}`,
+            source: node.node_key,
+            target: contesto,
+            sourceHandle: "contesto",
+            label: "si contesta",
+          });
+        }
+        if (noContesto && knownKeys.has(noContesto)) {
+          edges.push({
+            id: `${node.node_key}--no_contesto--${noContesto}`,
+            source: node.node_key,
+            target: noContesto,
+            sourceHandle: "no_contesto",
+            label: "si no contesta",
           });
         }
         break;
@@ -178,8 +204,15 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
     case "send_message":
     case "send_media":
     case "collect_input":
+    case "wait":
     case "set_tag":
       return [{ id: "next", label: "Next" }];
+
+    case "save_reply":
+      return [
+        { id: "contesto", label: "Si contesta" },
+        { id: "no_contesto", label: "Si no contesta" },
+      ];
 
     case "condition":
       return [
@@ -252,8 +285,14 @@ export function applyEdgeConnection(
     case "send_message":
     case "send_media":
     case "collect_input":
+    case "wait":
     case "set_tag":
       if (sourceHandle === "next") return { next_node_key: targetKey };
+      return null;
+
+    case "save_reply":
+      if (sourceHandle === "contesto") return { contesto_next: targetKey };
+      if (sourceHandle === "no_contesto") return { no_contesto_next: targetKey };
       return null;
 
     case "condition":
@@ -342,10 +381,19 @@ function patchedConfigWithoutKey(
 ): Record<string, unknown> | null {
   const cfg = node.config;
   switch (node.node_type) {
+    case "save_reply": {
+      const c = cfg as { contesto_next?: string; no_contesto_next?: string };
+      const patch: Record<string, unknown> = {};
+      if (c.contesto_next === deletedKey) patch.contesto_next = "";
+      if (c.no_contesto_next === deletedKey) patch.no_contesto_next = "";
+      return Object.keys(patch).length ? patch : null;
+    }
+
     case "start":
     case "send_message":
     case "send_media":
     case "collect_input":
+    case "wait":
     case "set_tag": {
       const next = (cfg as { next_node_key?: string }).next_node_key;
       if (next !== deletedKey) return null;

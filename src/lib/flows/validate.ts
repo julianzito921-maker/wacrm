@@ -717,6 +717,89 @@ function validateNode(
       break;
     }
 
+    case "wait": {
+      const cfg = node.config as { segundos?: number; next_node_key?: string };
+      const segundos = Number(cfg.segundos);
+      if (!Number.isFinite(segundos) || segundos < 1 || segundos > 300) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "segundos",
+          message: t("waitSecondsRange"),
+        });
+      }
+      if (!cfg.next_node_key) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: t("waitNeedsNext"),
+        });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: t("waitMissingNext", { key: cfg.next_node_key }),
+        });
+      }
+      break;
+    }
+
+    case "save_reply": {
+      const cfg = node.config as {
+        var_key?: string;
+        espera_minutos?: number;
+        contesto_next?: string;
+        no_contesto_next?: string;
+      };
+      if (!cfg.var_key?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "var_key",
+          message: t("saveReplyNeedsVar"),
+        });
+      }
+      const espera = Number(cfg.espera_minutos);
+      if (!Number.isFinite(espera) || espera < 1) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "espera_minutos",
+          message: t("saveReplyNeedsWait"),
+        });
+      }
+      for (const [campo, valor] of [
+        ["contesto_next", cfg.contesto_next],
+        ["no_contesto_next", cfg.no_contesto_next],
+      ] as const) {
+        if (!valor) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: campo,
+            message: t("saveReplyNeedsBothBranches"),
+          });
+        } else if (!knownKeys.has(valor)) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: campo,
+            message: t("saveReplyMissingBranch", { key: valor }),
+          });
+        }
+      }
+      break;
+    }
+
     case "condition": {
       const cfg = node.config as {
         subject?: "var" | "tag" | "contact_field";

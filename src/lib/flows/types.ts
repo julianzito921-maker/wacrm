@@ -116,6 +116,34 @@ export interface HandoffNodeConfig {
  * builder still surfaces the field so users can author flows that
  * v2 will start enforcing.
  */
+export interface WaitNodeConfig {
+  /**
+   * Cuánto esperar antes de seguir con el mensaje siguiente, en
+   * segundos. Tope duro de 5 minutos: la espera se hace dentro del
+   * mismo paso del motor, así que no puede quedar abierta horas.
+   */
+  segundos: number;
+  /** Nodo al que sigue después de la espera. */
+  next_node_key: string;
+}
+
+export interface SaveReplyNodeConfig {
+  /** Texto opcional que se manda antes de quedarse esperando. */
+  prompt_text?: string;
+  /**
+   * Dónde se guarda lo que escriba la clienta:
+   * `flow_runs.vars[var_key]`. Se puede usar después con
+   * `{{vars.tu_clave}}`.
+   */
+  var_key: string;
+  /** Nodo al que sigue si la clienta contesta. */
+  contesto_next: string;
+  /** Nodo al que sigue si no contesta dentro de la espera. */
+  no_contesto_next: string;
+  /** Cuánto esperar antes de darla por no contestada, en minutos. */
+  espera_minutos: number;
+}
+
 export interface CollectInputNodeConfig {
   /** Prompt text sent to the customer before they reply. */
   prompt_text: string;
@@ -191,6 +219,8 @@ export type FlowNodeConfig =
   | { node_type: "send_list"; config: SendListNodeConfig }
   | { node_type: "send_media"; config: SendMediaNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
+  | { node_type: "wait"; config: WaitNodeConfig }
+  | { node_type: "save_reply"; config: SaveReplyNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
@@ -386,6 +416,7 @@ export const AUTO_ADVANCING_NODE_TYPES: ReadonlySet<string> = new Set([
   "send_media",
   "condition",
   "set_tag",
+  "wait",
 ]);
 
 export const MAX_NODES_PER_ADVANCE = 25;

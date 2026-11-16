@@ -131,6 +131,99 @@ export function NodeConfigForm({
         />
       );
 
+    case "wait":
+      return (
+        <>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              {t("waitSecondsLabel")}
+            </label>
+            <Input
+              type="number"
+              min={1}
+              max={300}
+              value={(cfg as { segundos?: number }).segundos ?? 15}
+              onChange={(e) =>
+                onUpdateConfig({
+                  segundos: Math.min(
+                    Math.max(Number(e.target.value) || 0, 1),
+                    300,
+                  ),
+                })
+              }
+              className="bg-muted"
+            />
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              {t("waitSecondsHelp")}
+            </p>
+          </div>
+          <NextNodeRow
+            value={(cfg as { next_node_key?: string }).next_node_key ?? ""}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onChange={(v) => onUpdateConfig({ next_node_key: v })}
+            label={t("advancesTo")}
+          />
+        </>
+      );
+
+    case "save_reply":
+      return (
+        <>
+          <TextRow
+            label={t("saveReplyPromptLabel")}
+            value={(cfg as { prompt_text?: string }).prompt_text ?? ""}
+            onChange={(v) => onUpdateConfig({ prompt_text: v })}
+            rows={2}
+          />
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              {t("saveReplyVarLabel")}
+            </label>
+            <Input
+              value={(cfg as { var_key?: string }).var_key ?? ""}
+              onChange={(e) =>
+                onUpdateConfig({
+                  var_key: e.target.value.replace(/[^a-zA-Z0-9_]/g, ""),
+                })
+              }
+              placeholder={t("varKeyPlaceholder")}
+              className="bg-muted font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              {t("saveReplyEsperaLabel")}
+            </label>
+            <Input
+              type="number"
+              min={1}
+              value={(cfg as { espera_minutos?: number }).espera_minutos ?? 30}
+              onChange={(e) =>
+                onUpdateConfig({
+                  espera_minutos: Math.max(Number(e.target.value) || 0, 1),
+                })
+              }
+              className="bg-muted"
+            />
+          </div>
+          <NextNodeRow
+            value={(cfg as { contesto_next?: string }).contesto_next ?? ""}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onChange={(v) => onUpdateConfig({ contesto_next: v })}
+            label={t("saveReplyIfYes")}
+          />
+          <NextNodeRow
+            value={(cfg as { no_contesto_next?: string }).no_contesto_next ?? ""}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onChange={(v) => onUpdateConfig({ no_contesto_next: v })}
+            label={t("saveReplyIfNo")}
+          />
+        </>
+      );
+
     case "collect_input":
       return (
         <>

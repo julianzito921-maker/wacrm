@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
 
+import { resumeSaveReplyTimeout } from '@/lib/flows/engine'
+
 const TIMEOUT_SWEEP_PAGE_SIZE = 500
 const TIMEOUT_SWEEP_MAX_PAGES = 20
 
@@ -57,6 +59,48 @@ export async function GET(request: Request) {
   const admin = supabaseAdmin()
   const now = new Date()
 
+  // 1) «Guardar respuesta» sin contestación: si el flujo lleva
+  //    esperando más de lo que pide el nodo, se va por «no contesta».
+  let rescatados = 0
+  {
+    const corte = now.getTime() - 60_000
+    const { data: activasCrudas } = await admin
+      .from('flow_runs')
+      .select('id, flow_id, current_node_key, last_advanced_at')
+      .eq('status', 'active')
+      .limit(TIMEOUT_SWEEP_PAGE_SIZE)
+    // El corte se aplica aquí (no con `.lt`) para no depender de filtros
+    // de fecha en la consulta: son pocas filas y así el barrido también
+    // funciona con la base de pruebas.
+    const activas = (activasCrudas ?? []).filter(
+      (r) =>
+        r.current_node_key &&
+        new Date(r.last_advanced_at ?? 0).getTime() <= corte,
+    )
+    const claves = [
+      ...new Set((activas ?? []).map((r) => r.current_node_key).filter(Boolean)),
+    ] as string[]
+    if (activas?.length && claves.length) {
+      const { data: nodos } = await admin
+        .from('flow_nodes')
+        .select('flow_id, node_key, node_type, config')
+        .in('node_key', claves)
+      const porFlujo = new Map(
+        (nodos ?? [])
+          .filter((n) => n.node_type === 'save_reply')
+          .map((n) => [`${n.flow_id}:${n.node_key}`, n]),
+      )
+      for (const r of activas) {
+        if (!porFlujo.has(`${r.flow_id}:${r.current_node_key}`)) continue
+        try {
+          if (await resumeSaveReplyTimeout(admin, r.id, now)) rescatados += 1
+        } catch (err) {
+          console.error('[flows-cron] save_reply resume failed:', err)
+        }
+      }
+    }
+  }
+
   let swept = 0
   for (let page = 0; page < TIMEOUT_SWEEP_MAX_PAGES; page += 1) {
     const { data: runs, error } = await admin.rpc('list_timed_out_flow_runs', {
@@ -82,5 +126,7 @@ export async function GET(request: Request) {
     if (rows.length < TIMEOUT_SWEEP_PAGE_SIZE || sweptThisPage === 0) break
   }
 
-  return NextResponse.json({ swept })
+  // `rescatados` solo aparece cuando hubo alguno: mantiene la forma de
+  // la respuesta para quien ya la consumía.
+  return NextResponse.json(rescatados > 0 ? { swept, rescatados } : { swept })
 }

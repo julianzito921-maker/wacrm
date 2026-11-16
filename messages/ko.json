@@ -1528,6 +1528,13 @@
         "uploadFailed": "업로드에 실패했습니다.",
         "fileTooLarge": "파일이 {size}MB입니다 — 제한은 16MB입니다.",
         "defaultOptionTitle": "옵션",
+        "waitSecondsLabel": "대기 시간(초)",
+        "waitSecondsHelp": "1~300초(5분). 흐름이 다음 단계 전에 잠시 멈춥니다.",
+        "saveReplyPromptLabel": "대기 전 보낼 메시지 (선택)",
+        "saveReplyVarLabel": "응답을 저장할 위치",
+        "saveReplyEsperaLabel": "무응답으로 볼 때까지 대기(분)",
+        "saveReplyIfYes": "응답하면 이동",
+        "saveReplyIfNo": "응답하지 않으면 이동",
         "optionN": "옵션 {n}"
       },
       "categories": {
@@ -1560,6 +1567,8 @@
           "label": "입력 수집",
           "blurb": "질문을 하고 응답을 저장합니다"
         },
+        "wait": {"label": "대기", "blurb": "다음 메시지 전에 몇 초 기다립니다"},
+        "save_reply": {"label": "응답 저장", "blurb": "답변을 저장하고, 응답/무응답 분기를 둡니다"},
         "condition": {
           "label": "만약 / 아니면",
           "blurb": "규칙에 따라 분기합니다"
@@ -1615,7 +1624,9 @@
       "modeAdd": "추가",
       "modeRemove": "제거",
       "tagPicked": "{tag} 태그 {mode}…",
-      "tagNone": "태그 {mode} (선택된 태그 없음)"
+      "tagNone": "태그 {mode} (선택된 태그 없음)",
+        "seconds": "{count}초",
+        "minutes": "{count}분"
     },
     "header": {
       "backToFlows": "플로우로 돌아가기",
@@ -2671,7 +2682,14 @@
       "setTagNeedsTag": "연락처 태그 지정에는 적용할 태그가 필요합니다.",
       "setTagNeedsNext": "연락처 태그 지정 노드는 다음 노드를 가리켜야 합니다.",
       "setTagMissingNext": "연락처 태그 지정 노드가 존재하지 않는 노드 \"{key}\"을(를) 가리킵니다.",
-      "unknownNodeType": "알 수 없는 노드 유형 \"{type}\"."
+      "unknownNodeType": "알 수 없는 노드 유형 \"{type}\".",
+      "waitSecondsRange": "대기는 1~300초(5분) 사이여야 합니다.",
+      "waitNeedsNext": "대기 노드는 다음 노드를 가리켜야 합니다.",
+      "waitMissingNext": "대기 노드가 “{key}”를 가리키지만 존재하지 않습니다.",
+      "saveReplyNeedsVar": "응답 저장 노드에는 값을 저장할 변수 이름이 필요합니다.",
+      "saveReplyNeedsWait": "무응답으로 볼 때까지 기다릴 분을 입력하세요.",
+      "saveReplyNeedsBothBranches": "응답 저장 노드에는 두 갈래(응답/무응답)가 모두 필요합니다.",
+      "saveReplyMissingBranch": "응답 저장 노드가 “{key}”를 가리키지만 존재하지 않습니다."
     },
     "automations": {
       "needsStep": "활성 자동화에는 단계가 하나 이상 필요합니다",

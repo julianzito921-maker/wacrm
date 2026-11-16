@@ -23,9 +23,11 @@ import {
   ListChecks,
   ListPlus,
   MessageCircle,
+  MessageSquareReply,
   Paperclip,
   PlayCircle,
   Tag,
+  Timer,
   UserPlus,
   Workflow,
 } from 'lucide-react';
@@ -47,6 +49,8 @@ export type NodeType =
   | 'send_list'
   | 'send_media'
   | 'collect_input'
+  | 'wait'
+  | 'save_reply'
   | 'condition'
   | 'set_tag'
   | 'handoff'
@@ -139,6 +143,18 @@ export const NODE_META: Record<
     color: 'text-fuchsia-400',
     category: 'logic',
   },
+  wait: {
+    slugSeed: 'Wait',
+    icon: Timer,
+    color: 'text-orange-400',
+    category: 'flow',
+  },
+  save_reply: {
+    slugSeed: 'Save reply',
+    icon: MessageSquareReply,
+    color: 'text-teal-400',
+    category: 'logic',
+  },
   set_tag: {
     slugSeed: 'Tag contact',
     icon: Tag,
@@ -193,6 +209,8 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   send_list: { l: 0.62, c: 0.15, h: 277 }, // indigo
   send_media: { l: 0.65, c: 0.12, h: 210 }, // sky
   collect_input: { l: 0.65, c: 0.1, h: 185 }, // teal — capture
+  wait: { l: 0.68, c: 0.14, h: 45 }, // naranja — temporizador
+  save_reply: { l: 0.66, c: 0.11, h: 175 }, // verde azulado — guarda respuesta
   condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
   set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
   handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
@@ -368,6 +386,23 @@ export function summarizeNode(
           : truncate(prompt);
       }
       return varKey ? `→ vars.${varKey}` : null;
+    }
+    case 'wait': {
+      const segundos = typeof cfg.segundos === 'number' ? cfg.segundos : 0;
+      return segundos > 0
+        ? t ? t('seconds', { count: segundos }) : `${segundos} s`
+        : null;
+    }
+    case 'save_reply': {
+      const varKey = typeof cfg.var_key === 'string' ? cfg.var_key : '';
+      const prompt = typeof cfg.prompt_text === 'string' ? cfg.prompt_text : '';
+      const espera = typeof cfg.espera_minutos === 'number' ? cfg.espera_minutos : 0;
+      const partes = [
+        prompt ? truncate(prompt, 34) : null,
+        varKey ? `→ vars.${varKey}` : null,
+        espera > 0 ? (t ? t('minutes', { count: espera }) : `${espera} min`) : null,
+      ].filter(Boolean);
+      return partes.length ? partes.join(' · ') : null;
     }
     case 'condition': {
       const subjectKey =
