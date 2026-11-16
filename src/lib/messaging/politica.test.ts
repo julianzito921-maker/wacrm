@@ -246,3 +246,26 @@ describe('estado de la conversación y baja voluntaria', () => {
     expect(d.permitido).toBe(true)
   })
 })
+
+describe('ráfaga (la regla del baneo)', () => {
+  it('frena cuando salen demasiados mensajes en una ventana corta', async () => {
+    // Seis bloques en un minuto: el caso que tumbó la cuenta.
+    h.previos = [0, 1, 2, 3, 4].map((i) => ({
+      created_at: haceMin(0),
+      content_hash: `h${i}`,
+    }))
+    const d = await decidirSalida({ ctx, tipo: 'text', contenido: 'sexto' })
+    expect(d.permitido).toBe(false)
+    expect(['burst', 'limit_per_minute']).toContain(d.motivo)
+  })
+
+  it('deja pasar una entrega pedida repartida con esperas', async () => {
+    // Cinco archivos separados ~2 min: no es ráfaga.
+    h.previos = [2, 4, 6, 8].map((i) => ({
+      created_at: haceMin(i),
+      content_hash: `f${i}`,
+    }))
+    const d = await decidirSalida({ ctx, tipo: 'document', contenido: 'bono-5.pdf' })
+    expect(d.permitido).toBe(true)
+  })
+})

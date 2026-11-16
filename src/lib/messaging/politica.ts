@@ -53,7 +53,15 @@ export const TOPES = {
   /** Horas de ventana de servicio (con margen sobre las 24 h de Meta). */
   ventanaHoras: () => NUM(process.env.WHATSAPP_WINDOW_HOURS, 23.5),
   maxSeguidos: () => NUM(process.env.SAFETY_MAX_CONSECUTIVE, 8),
-  maxPorMinuto: () => NUM(process.env.SAFETY_MAX_PER_MINUTE, 8),
+  maxPorMinuto: () => NUM(process.env.SAFETY_MAX_PER_MINUTE, 3),
+  /**
+   * Ráfaga: cuántos mensajes pueden salir en una ventana corta. Es la
+   * regla que hubiera frenado el flujo que nos baneó (6 bloques de texto
+   * y multimedia en 60 s). Deja pasar una entrega pedida repartida con
+   * esperas, pero corta la ametralladora.
+   */
+  ventanaRafagaSegundos: () => NUM(process.env.SAFETY_BURST_WINDOW_SECONDS, 300),
+  maxEnRafaga: () => NUM(process.env.SAFETY_MAX_IN_WINDOW, 5),
   maxPorHora: () => NUM(process.env.SAFETY_MAX_PER_HOUR, 20),
   maxPorDia: () => NUM(process.env.SAFETY_MAX_PER_DAY, 60),
   dupMinutos: () => NUM(process.env.SAFETY_DUP_WINDOW_MINUTES, 10),
@@ -210,6 +218,21 @@ export async function decidirSalida(args: {
   }
   if (filas.length >= TOPES.maxPorDia()) {
     return frenar("limit_per_day", `Más de ${TOPES.maxPorDia()} mensajes en 24 h.`);
+  }
+
+  // 4b) Ráfaga: demasiados mensajes en una ventana corta. Es la regla
+  //     del baneo: seis bloques seguidos en un minuto no son una
+  //     conversación. Se cuenta por tiempo (no «desde la última
+  //     respuesta») para dejar pasar una entrega pedida y repartida.
+  const segundosRafaga = TOPES.ventanaRafagaSegundos();
+  const enRafaga = filas.filter(
+    (f) => new Date(f.created_at).getTime() >= ahora - segundosRafaga * 1000,
+  ).length;
+  if (enRafaga >= TOPES.maxEnRafaga()) {
+    return frenar(
+      "burst",
+      `${enRafaga} mensajes en ${Math.round(segundosRafaga / 60)} minutos (tope ${TOPES.maxEnRafaga()}). Reparte el contenido entre turnos.`,
+    );
   }
 
   // 5) El que más pesa: seguidos sin respuesta de la clienta.
