@@ -17,6 +17,9 @@ const CACHE_MS = 30_000;
 
 let cache: { valor: boolean; hasta: number } | null = null;
 
+/** Caché por interruptor (los procesos proactivos tienen el suyo). */
+const cachePorClave = new Map<string, { valor: boolean; hasta: number }>();
+
 function delEntorno(): boolean | null {
   const v = process.env.WHATSAPP_AUTOMATION_ENABLED;
   if (v === undefined) return null;
@@ -73,7 +76,69 @@ export async function fijarInterruptor(
   }
 }
 
+/**
+ * Lee un interruptor concreto. `porDefecto` decide qué hacer cuando la
+ * fila no existe: la automatización general nace encendida, pero los
+ * procesos proactivos (barrido, recordatorios) nacen apagados.
+ */
+export async function leerFlag(
+  key: string,
+  porDefecto: boolean,
+): Promise<boolean> {
+  const ahora = Date.now();
+  const enCache = cachePorClave.get(key);
+  if (enCache && enCache.hasta > ahora) return enCache.valor;
+  let valor = porDefecto;
+  try {
+    const db = supabaseAdmin();
+    const { data } = await db
+      .from("messaging_flags")
+      .select("valor")
+      .eq("key", key)
+      .maybeSingle();
+    const fila = data as { valor?: boolean } | null;
+    if (fila && typeof fila.valor === "boolean") valor = fila.valor;
+  } catch {
+    valor = porDefecto;
+  }
+  cachePorClave.set(key, { valor, hasta: ahora + CACHE_MS });
+  return valor;
+}
+
+/** ¿Se puede barrer conversaciones calladas? (proactivo, nace apagado) */
+export function barridoPendientesActivo(): Promise<boolean> {
+  return leerFlag("barrido_pendientes_activo", false);
+}
+
+/** ¿Se pueden mandar recordatorios de pago? (proactivo, nace apagado) */
+export function recordatoriosPagoActivos(): Promise<boolean> {
+  return leerFlag("recordatorios_pago_activos", false);
+}
+
+export async function fijarFlag(
+  key: string,
+  valor: boolean,
+  reason: string,
+): Promise<void> {
+  try {
+    const db = supabaseAdmin();
+    await db
+      .from("messaging_flags")
+      .upsert(
+        { key, valor, reason, updated_at: new Date().toISOString() },
+        { onConflict: "key" },
+      );
+    cachePorClave.set(key, { valor, hasta: Date.now() + CACHE_MS });
+  } catch (err) {
+    console.error(
+      "[interruptor] no se pudo cambiar el flag:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 /** Sólo para las pruebas. */
 export function limpiarCacheInterruptor(): void {
   cache = null;
+  cachePorClave.clear();
 }
