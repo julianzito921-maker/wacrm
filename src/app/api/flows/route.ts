@@ -93,6 +93,25 @@ export async function POST(request: Request) {
          * provided.
          */
         template_slug?: string
+        /**
+         * Import path: a flow exported from another account (or the
+         * same one) as JSON. Creates a fresh draft owned by the caller
+         * — nothing is shared or linked back to the source.
+         */
+        import_flow?: {
+          name?: string
+          description?: string | null
+          trigger_type?: 'keyword' | 'first_inbound_message' | 'manual'
+          trigger_config?: Record<string, unknown>
+          entry_node_id?: string | null
+          nodes?: Array<{
+            node_key?: string
+            node_type?: string
+            config?: Record<string, unknown>
+            position_x?: number
+            position_y?: number
+          }>
+        }
       }
     | null
   if (!body) {
@@ -100,6 +119,50 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // -------- Import path --------
+  if (body.import_flow) {
+    const entrada = body.import_flow
+    const nodos = Array.isArray(entrada.nodes) ? entrada.nodes : []
+    if (nodos.length === 0) {
+      return NextResponse.json({ error: t('flows.importNoNodes') }, { status: 400 })
+    }
+    const { data: flow, error: flowErr } = await admin
+      .from('flows')
+      .insert({
+        user_id: userId,
+        account_id: accountId,
+        name: (body.name?.trim() || entrada.name?.trim() || 'Flujo importado').slice(0, 120),
+        description: entrada.description ?? null,
+        status: 'draft',
+        trigger_type: entrada.trigger_type ?? 'keyword',
+        trigger_config: entrada.trigger_config ?? {},
+        entry_node_id: entrada.entry_node_id ?? 'start',
+      })
+      .select()
+      .single()
+    if (flowErr || !flow) {
+      return NextResponse.json(
+        { error: flowErr?.message ?? t('flows.insertFailed') },
+        { status: 500 },
+      )
+    }
+    const { error: nodesErr } = await admin.from('flow_nodes').insert(
+      nodos.map((n, i) => ({
+        flow_id: flow.id,
+        node_key: n.node_key?.trim() || `nodo_${i + 1}`,
+        node_type: n.node_type ?? 'send_message',
+        config: n.config ?? {},
+        position_x: n.position_x ?? 0,
+        position_y: n.position_y ?? i * 150,
+      })),
+    )
+    if (nodesErr) {
+      await admin.from('flows').delete().eq('id', flow.id)
+      return NextResponse.json({ error: nodesErr.message }, { status: 500 })
+    }
+    return NextResponse.json({ flow }, { status: 201 })
+  }
 
   // -------- Template clone path --------
   if (body.template_slug) {
