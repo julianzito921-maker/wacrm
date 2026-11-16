@@ -11,6 +11,7 @@ import type { AutomationContext } from '@/lib/automations/engine'
 import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
 import { resumeSaveReplyTimeout } from '@/lib/flows/engine'
 import { procesarLote } from '@/lib/messaging/cola'
+import { evaluarAlertas } from '@/lib/messaging/riesgo'
 
 /**
  * UN SOLO CRON PARA TODO (fase 4, §22).
@@ -62,6 +63,27 @@ export async function GET(request: Request) {
 
   // ---- 1. Cola de salida: reintentos -------------------------------
   const cola = await procesarLote(50)
+
+  // ---- 1b. Alertas de riesgo (§22) ---------------------------------
+  //    Se revisa cada cuenta con actividad en la última hora: si algo se
+  //    desboca (racha, relación fuera de rango, errores) se avisa, se
+  //    pausa el flujo culpable o se apaga la automatización.
+  let alertas = 0
+  {
+    const { data: cuentas } = await admin
+      .from('outbound_message_log')
+      .select('account_id')
+      .gte('created_at', new Date(ahora.getTime() - 3_600_000).toISOString())
+      .limit(500)
+    const unicas = [...new Set((cuentas ?? []).map((c) => c.account_id))]
+    for (const cuenta of unicas) {
+      try {
+        alertas += (await evaluarAlertas(cuenta)).length
+      } catch (err) {
+        console.error('[messaging-cron] alertas:', err)
+      }
+    }
+  }
 
   // ---- 2. Flujos: «guardar respuesta» sin contestación --------------
   let rescatados = 0
@@ -158,6 +180,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     cola,
+    alertas,
     flujos: { rescatados, swept },
     automatizaciones: { processed, expired, requeued },
   })

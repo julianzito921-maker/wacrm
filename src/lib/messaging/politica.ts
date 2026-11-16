@@ -23,6 +23,7 @@
 
 import { supabaseAdmin } from "@/lib/flows/admin-client";
 import { admiteAutomatico, estaEnBaja, leerEstado } from "./estado";
+import { automatizacionActiva } from "./interruptor";
 import type { ContextoSalida, TipoSalida } from "./send";
 
 export interface Decision {
@@ -95,7 +96,8 @@ export async function decidirSalida(args: {
   const automatico = esAutomatico(ctx.source);
 
   // 1) Interruptor general (§23): apaga lo automático, deja lo humano.
-  if (automatico && !TOPES.automatizacionActiva()) {
+  //    Se lee del entorno Y de la base, para poder apagarlo en caliente.
+  if (automatico && !(await automatizacionActiva())) {
     return {
       permitido: false,
       motivo: "automation_disabled",

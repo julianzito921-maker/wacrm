@@ -129,3 +129,24 @@ describe('utilidades de auditoría', () => {
     expect(hashContenido('Hola')).not.toBe(hashContenido('Hola!'))
   })
 })
+
+describe('modo simulación (DRY_RUN)', () => {
+  it('no llama a Meta y lo registra como simulado', async () => {
+    process.env.WHATSAPP_DRY_RUN = 'true'
+    try {
+      const r = await enviarTexto({
+        ctx,
+        phoneNumberId: 'pn-1',
+        accessToken: 'tok',
+        to: 'x',
+        text: 'Hola',
+      })
+      expect(r.messageId).toMatch(/^dryrun\./)
+      expect(h.enviar).not.toHaveBeenCalled()
+      expect(h.inserts).toHaveLength(1)
+      expect(h.inserts[0].dry_run).toBe(true)
+    } finally {
+      delete process.env.WHATSAPP_DRY_RUN
+    }
+  })
+})

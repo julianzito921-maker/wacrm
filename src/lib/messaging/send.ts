@@ -125,6 +125,16 @@ export function extraerErrorMeta(err: unknown): {
  * envío no puede caerse por eso.
  */
 /**
+ * Modo simulación (§30): la política decide, la cola registra… y no se
+ * manda nada a WhatsApp. Sirve para revisar qué habría salido y qué
+ * regla lo permitió o lo frenó antes de encenderlo de verdad.
+ */
+export function esSimulacion(): boolean {
+  const v = process.env.WHATSAPP_DRY_RUN;
+  return v !== undefined && ["1", "true", "on", "yes"].includes(v.toLowerCase());
+}
+
+/**
  * ¿Es un fallo temporal? Se decide aquí (y no en `cola.ts`) para no
  * crear una dependencia circular entre el punto único y el worker.
  */
@@ -229,6 +239,22 @@ export async function enviarSaliente(
   // deja constancia en la MISMA fila del envío (una fila por mensaje),
   // para poder medir los topes antes de activarlos.
   const aviso = decision.motivo ? decision : null;
+
+  if (esSimulacion()) {
+    // No se llama a Meta: se registra como si hubiera salido.
+    const simulado = { messageId: `dryrun.${Date.now()}`, response: null };
+    await registrar({
+      ctx,
+      tipo: envio.tipo,
+      contenido: envio.contenido,
+      status: "sent",
+      whatsappMessageId: simulado.messageId,
+      blockedReason: aviso?.motivo ?? null,
+      dryRun: true,
+      latencyMs: Date.now() - inicio,
+    });
+    return simulado;
+  }
 
   try {
     const r = await envio.enviar();
