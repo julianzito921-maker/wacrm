@@ -1442,6 +1442,8 @@
       "noNodesYet": "No nodes yet.",
       "deleteNode": "Delete node",
       "canvasView": "Canvas",
+      "edgeInsert": "Insert a step here",
+      "edgeRemove": "Remove the connection",
       "maximize": "Maximize",
       "minimize": "Exit full screen",
       "paletteTitle": "Add to flow",

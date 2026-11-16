@@ -96,6 +96,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useFlowEditor } from './flow-editor-state';
+import { FlowEdge } from './flow-edge';
 import { NodeConfigForm } from './forms/node-config-form';
 
 // React-Flow node `data` payload — the bits our custom renderer needs.
@@ -276,6 +277,11 @@ function FlowNodeCard({ data, selected }: NodeProps) {
 
 const NODE_TYPES = { flow: FlowNodeCard };
 
+// Un solo tipo de arista, con los iconos de quitar/insertar en la línea.
+// Constante de módulo a propósito: React-Flow avisa si el objeto cambia
+// de identidad en cada render.
+const EDGE_TYPES = { flujo: FlowEdge };
+
 // ============================================================
 // Root canvas
 // ============================================================
@@ -391,6 +397,7 @@ function FlowCanvasInner() {
     // can hang the arrow off the right place on each card.
     const rfEdges: RfEdge[] = canvasEdges.map((e) => ({
       id: e.id,
+      type: 'flujo',
       source: e.source,
       target: e.target,
       sourceHandle: e.sourceHandle,
@@ -551,6 +558,7 @@ function FlowCanvasInner() {
           nodes={rfNodes}
           edges={rfEdges}
           nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
           fitView
           fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
           proOptions={{ hideAttribution: true }}

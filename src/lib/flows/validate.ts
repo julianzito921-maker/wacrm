@@ -24,6 +24,19 @@
  */
 
 import { INTERACTIVE_LIMITS } from "@/lib/whatsapp/meta-api";
+
+/**
+ * Cuenta caracteres como los cuenta WhatsApp (puntos de código), no como
+ * unidades UTF-16.
+ *
+ * Las negritas de adorno que se usan en los embudos (𝗔, 𝐀, 𝘀) viven
+ * fuera del plano básico: en JavaScript cada una ocupa 2 unidades, así
+ * que un texto de 897 caracteres se medía como 1116 y el validador lo
+ * marcaba como «supera los 1024» aunque Meta lo acepta sin problema.
+ */
+export function cuentaCaracteres(texto: string): number {
+  return Array.from(texto).length;
+}
 import { getT } from "@/lib/i18n/translate";
 import { AUTO_ADVANCING_NODE_TYPES, MAX_AUTO_ADVANCING_CHAIN } from "./types";
 
@@ -383,7 +396,7 @@ function validateNode(
       }
       // Caption cap mirrors Meta's interactive body cap; documented as a
       // hard limit in the WhatsApp Cloud API media-message reference.
-      if (cfg.caption && cfg.caption.length > INTERACTIVE_LIMITS.bodyMaxLength) {
+      if (cfg.caption && cuentaCaracteres(cfg.caption) > INTERACTIVE_LIMITS.bodyMaxLength) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -479,7 +492,7 @@ function validateNode(
             field: `${field}.title`,
             message: t("buttonNeedsTitle", { n: i + 1 }),
           });
-        } else if (b.title.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
+        } else if (cuentaCaracteres(b.title) > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
           issues.push({
             severity: "error",
             scope: "node",
@@ -601,7 +614,7 @@ function validateNode(
               message: t("rowNeedsTitle", { n: ri + 1 }),
             });
           } else if (
-            row.title.length > INTERACTIVE_LIMITS.listRowTitleMaxLength
+            cuentaCaracteres(row.title) > INTERACTIVE_LIMITS.listRowTitleMaxLength
           ) {
             issues.push({
               severity: "error",
@@ -616,7 +629,7 @@ function validateNode(
           }
           if (
             row.description &&
-            row.description.length >
+            cuentaCaracteres(row.description) >
               INTERACTIVE_LIMITS.listRowDescriptionMaxLength
           ) {
             issues.push({

@@ -1442,6 +1442,8 @@
       "noNodesYet": "Nenhum nó ainda.",
       "deleteNode": "Excluir nó",
       "canvasView": "Canvas",
+      "edgeInsert": "Inserir um passo aqui",
+      "edgeRemove": "Remover a conexão",
       "maximize": "Maximizar",
       "minimize": "Sair da tela cheia",
       "paletteTitle": "Adicionar ao fluxo",
