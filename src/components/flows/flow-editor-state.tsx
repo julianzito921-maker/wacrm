@@ -25,11 +25,12 @@
  *   - Canvas-view UI state (selected node id, side-sheet open) —
  *     those are canvas-only and stay in `flow-canvas.tsx`.
  *
- * `removeNode` does NOT auto-clean inbound edges. The list-view's
- * NodeKeySelect dropdowns and the validator both surface dangling
- * `next_node_key` references; that visibility is enough for v1. PR 2b
- * (canvas delete via keyboard) will revisit if the canvas adds an
- * implicit-delete affordance that's easier to trip accidentally.
+ * `removeNode` deletes a node and repairs the graph around it: when
+ * the node sat in a straight line (one inbound edge, one outbound) the
+ * predecessor is re-pointed at the successor, so cutting a step out of
+ * a chain doesn't cascade into «missing next» / unreachable errors.
+ * Otherwise the inbound references are cleared (the empty-string
+ * sentinel the forms already use for «no target picked»).
  */
 
 import {
@@ -51,7 +52,11 @@ import {
 } from "@/lib/flows/validate";
 import { useTranslations } from "next-intl";
 import { getT } from "@/lib/i18n/translate";
-import { unlinkNodeReferences } from "@/lib/flows/edges";
+import {
+  applyEdgeConnection,
+  deriveCanvasEdges,
+  unlinkNodeReferences,
+} from "@/lib/flows/edges";
 import type { FlowNodeRow, FlowRow } from "@/lib/flows/types";
 import { NODE_META, slugify, type BuilderNode, type NodeType } from "./shared";
 
@@ -141,6 +146,51 @@ export function buildNewNode(type: NodeType, existing: BuilderNode[]): BuilderNo
     node_key: uniqueNodeKey(base, existing),
     node_type: type,
     config: defaultConfigFor(type),
+  };
+}
+
+/**
+ * Quita un nodo del flujo y repara el grafo a su alrededor.
+ *
+ * Si el nodo iba en línea recta —una sola flecha entrante y una sola
+ * saliente— el nodo anterior se re-apunta al siguiente: borrar un paso
+ * intermedio no deja la cadena cortada ni provoca errores en cascada
+ * («falta el siguiente», «nodo inalcanzable»). En cualquier otro caso
+ * (menú con varias salidas, condición, nodo de entrada) se sueltan las
+ * referencias que apuntaban a él, que es el estado «sin destino» que ya
+ * usan los formularios.
+ *
+ * Pura y exportada a propósito: el borrado del lienzo, el de la vista
+ * de lista y el botón de la tarjeta pasan todos por aquí, y se puede
+ * probar sin montar React.
+ */
+export function removeNodeFromState(state: BuilderState, key: string): BuilderState {
+  if (!state.nodes.some((n) => n.node_key === key)) return state;
+
+  const aristas = deriveCanvasEdges(state.nodes);
+  const entrantes = aristas.filter((e) => e.target === key);
+  const salientes = aristas.filter((e) => e.source === key);
+  const sucesor = salientes.length === 1 ? salientes[0].target : null;
+  const costura =
+    sucesor && entrantes.length === 1
+      ? { nodeKey: entrantes[0].source, slot: entrantes[0].sourceHandle }
+      : null;
+
+  let nodes = state.nodes.filter((n) => n.node_key !== key);
+  if (costura && sucesor) {
+    nodes = nodes.map((n) => {
+      if (n.node_key !== costura.nodeKey) return n;
+      const patch = applyEdgeConnection(n, costura.slot, sucesor);
+      return patch ? { ...n, config: { ...n.config, ...patch } } : n;
+    });
+  } else {
+    nodes = unlinkNodeReferences(nodes, key);
+  }
+
+  return {
+    ...state,
+    nodes,
+    entry_node_id: state.entry_node_id === key ? null : state.entry_node_id,
   };
 }
 
@@ -509,18 +559,7 @@ export function FlowEditorProvider({
 
   const removeNode = useCallback(
     (key: string) => {
-      // Auto-unlink inbound references so canvas / list deletes don't
-      // leave dangling arrows behind that the validator would flag.
-      // Cleared refs become "" (the "no target picked" sentinel the
-      // builder forms already use).
-      setState((s) => ({
-        ...s,
-        nodes: unlinkNodeReferences(
-          s.nodes.filter((n) => n.node_key !== key),
-          key,
-        ),
-        entry_node_id: s.entry_node_id === key ? null : s.entry_node_id,
-      }));
+      setState((s) => removeNodeFromState(s, key));
     },
     [setState],
   );

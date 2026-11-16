@@ -174,3 +174,60 @@ describe("appendNode", () => {
     expect(appendNode(baseState, end).entry_node_id).toBeNull();
   });
 });
+
+import { removeNodeFromState } from "./flow-editor-state";
+
+const cadena = (): BuilderState => ({
+  name: "flujo",
+  description: "",
+  trigger_type: "keyword",
+  trigger_config: {},
+  entry_node_id: "a",
+  status: "draft",
+  nodes: [
+    { node_key: "a", node_type: "send_message", config: { text: "hola", next_node_key: "b" } },
+    { node_key: "b", node_type: "send_message", config: { text: "medio", next_node_key: "c" } },
+    { node_key: "c", node_type: "end", config: {} },
+  ],
+});
+
+describe("removeNodeFromState", () => {
+  it("recostura la cadena: el anterior apunta al siguiente", () => {
+    const salida = removeNodeFromState(cadena(), "b");
+    expect(salida.nodes.map((n) => n.node_key)).toEqual(["a", "c"]);
+    expect(salida.nodes[0].config.next_node_key).toBe("c");
+  });
+
+  it("suelta la referencia cuando el nodo tenía varias salidas", () => {
+    const estado = cadena();
+    estado.nodes = [
+      { node_key: "a", node_type: "send_message", config: { text: "hola", next_node_key: "menu" } },
+      {
+        node_key: "menu",
+        node_type: "send_buttons",
+        config: {
+          text: "elige",
+          buttons: [
+            { reply_id: "si", title: "Si", next_node_key: "c" },
+            { reply_id: "no", title: "No", next_node_key: "c" },
+          ],
+        },
+      },
+      { node_key: "c", node_type: "end", config: {} },
+    ];
+    const salida = removeNodeFromState(estado, "menu");
+    expect(salida.nodes.map((n) => n.node_key)).toEqual(["a", "c"]);
+    expect(salida.nodes[0].config.next_node_key).toBe("");
+  });
+
+  it("deja el flujo sin entrada si se borra el nodo de entrada", () => {
+    const salida = removeNodeFromState(cadena(), "a");
+    expect(salida.entry_node_id).toBeNull();
+    expect(salida.nodes.map((n) => n.node_key)).toEqual(["b", "c"]);
+  });
+
+  it("no cambia nada si la clave no existe", () => {
+    const estado = cadena();
+    expect(removeNodeFromState(estado, "no_existe")).toBe(estado);
+  });
+});

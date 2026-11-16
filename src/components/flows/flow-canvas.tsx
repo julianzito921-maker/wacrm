@@ -379,8 +379,12 @@ function FlowCanvasInner() {
     setRfNodes(derivedRfNodes);
   }, [derivedRfNodes]);
 
+  // Las flechas salen de la MISMA lista que React-Flow está pintando
+  // (rfNodes), no de `builderNodes`: si se derivan de otra lista, en el
+  // render en que se borra un nodo las flechas todavía lo referencian y
+  // React-Flow escupe errores de handles inexistentes.
   const rfEdges = useMemo(() => {
-    const canvasEdges = deriveCanvasEdges(builderNodes);
+    const canvasEdges = deriveCanvasEdges(rfNodes.map((n) => n.data.node));
 
     // sourceHandle is now wired up — the FlowNodeCard renders a Handle
     // per slot whose id matches the scheme in edges.ts, so React-Flow
@@ -400,7 +404,7 @@ function FlowCanvasInner() {
     }));
 
     return rfEdges;
-  }, [builderNodes]);
+  }, [rfNodes]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<RfNode<NodeData>>[]) => {
