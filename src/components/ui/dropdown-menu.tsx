@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePortalContainer } from "./portal-container"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 
 import { cn } from "@/lib/utils"
@@ -31,7 +32,7 @@ function DropdownMenuContent({
     "align" | "alignOffset" | "side" | "sideOffset"
   >) {
   return (
-    <MenuPrimitive.Portal>
+    <MenuPrimitive.Portal container={usePortalContainer()}>
       <MenuPrimitive.Positioner
         className="isolate z-50 outline-none"
         align={align}

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePortalContainer } from "./portal-container"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
@@ -54,7 +55,7 @@ function SheetContent({
   showCloseButton?: boolean
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal container={usePortalContainer()}>
       <SheetOverlay />
       <SheetPrimitive.Popup
         data-slot="sheet-content"

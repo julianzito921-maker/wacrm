@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePortalContainer } from "./portal-container"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@/lib/utils"
@@ -26,7 +27,7 @@ function PopoverContent({
     "align" | "alignOffset" | "side" | "sideOffset"
   >) {
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={usePortalContainer()}>
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

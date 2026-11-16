@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePortalContainer } from "./portal-container"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
 
 import { cn } from "@/lib/utils"
@@ -71,7 +72,7 @@ function SelectContent({
     "align" | "alignOffset" | "side" | "sideOffset" | "alignItemWithTrigger"
   >) {
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={usePortalContainer()}>
       <SelectPrimitive.Positioner
         side={side}
         sideOffset={sideOffset}

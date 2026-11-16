@@ -18,7 +18,7 @@
  * View choice persists per-browser via localStorage.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { GitFork, List, Maximize2, MessageSquare, Minimize2 } from "lucide-react";
 
 import { FlowBuilder } from "./flow-builder";
@@ -29,6 +29,7 @@ import { FlowEditorProvider, useFlowEditor } from "./flow-editor-state";
 import { EditorHeader } from "./header";
 import { ValidationPanel } from "./validation-panel";
 import { NODE_META, nodeColors, type NodeType } from "./shared";
+import { PortalContainerProvider } from "@/components/ui/portal-container";
 import { cn } from "@/lib/utils";
 import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 import { useTranslations } from "next-intl";
@@ -73,7 +74,9 @@ function ShellBody() {
   // Pantalla completa: el editor ocupa toda la ventana (el navegador
   // esconde la barra lateral y la cabecera), que es lo que hacía falta
   // para ver el flujo entero sin recortarlo.
-  const contenedor = useRef<HTMLDivElement>(null);
+  // En estado y no en un ref: durante el render hay que leerlo para
+  // decidir dónde se montan los portales, y los refs no se leen ahí.
+  const [contenedor, setContenedor] = useState<HTMLDivElement | null>(null);
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
 
   useEffect(() => {
@@ -87,7 +90,7 @@ function ShellBody() {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
       } else {
-        await contenedor.current?.requestFullscreen();
+        await contenedor?.requestFullscreen();
       }
     } catch {
       // Algún navegador puede negarse (permisos); se ignora y el
@@ -132,8 +135,12 @@ function ShellBody() {
   };
 
   return (
+    // En pantalla completa, los paneles y menús se montan DENTRO del
+    // contenedor a pantalla completa: fuera de él el navegador no pinta
+    // nada, y era el motivo de que el editor del nodo no apareciera.
+    <PortalContainerProvider value={pantallaCompleta ? contenedor : null}>
     <div
-      ref={contenedor}
+      ref={setContenedor}
       className={cn(
         // Sangrado negativo: el editor se come el relleno del panel y
         // usa todo el ancho y todo el alto disponibles en vez de quedar
@@ -227,6 +234,7 @@ function ShellBody() {
         <ValidationPanel />
       </div>
     </div>
+    </PortalContainerProvider>
   );
 }
 
