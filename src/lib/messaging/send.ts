@@ -22,6 +22,7 @@
 import { supabaseAdmin } from "@/lib/flows/admin-client";
 import { decidirSalida } from "./politica";
 import { estadoPorSaliente } from "./estado";
+import { insertarEnCola } from "./cola-store";
 import {
   sendInteractiveButtons,
   sendInteractiveList,
@@ -71,8 +72,14 @@ export interface EnvioSaliente {
   tipo: TipoSalida;
   /** Contenido para el registro (texto, pie de foto o nombre del archivo). */
   contenido?: string | null;
-  /** Llamada real a Meta. Recibe la url junto al resto de argumentos. */
+  /** Llamada real a Meta. */
   enviar: () => Promise<{ messageId: string; response?: unknown }>;
+  /**
+   * Con qué argumentos se puede rehacer el envío desde la cola si falla
+   * por algo temporal (5xx, 429, red). Sin esto, un fallo no se
+   * reintenta: se pierde.
+   */
+  payloadParaCola?: Record<string, unknown>;
 }
 
 /** Hash corto y estable del contenido, para detectar duplicados. */
@@ -117,6 +124,15 @@ export function extraerErrorMeta(err: unknown): {
  * Escribe la fila de auditoría. Nunca lanza: si el registro falla, el
  * envío no puede caerse por eso.
  */
+/**
+ * ¿Es un fallo temporal? Se decide aquí (y no en `cola.ts`) para no
+ * crear una dependencia circular entre el punto único y el worker.
+ */
+export function esFalloReintentable(mensaje: string): boolean {
+  if (mensaje.includes("Meta API error: 5") || mensaje.includes("429")) return true;
+  return /fetch failed|ETIMEDOUT|ECONNRESET|socket hang up|network|timeout/i.test(mensaje);
+}
+
 /** Error tipado de un envío frenado por la capa de seguridad. */
 export class EnvioBloqueadoError extends Error {
   readonly motivo: string;
@@ -249,6 +265,26 @@ export async function enviarSaliente(
       errorMessage: message,
       latencyMs: Date.now() - inicio,
     });
+
+    // Fase 4: si el fallo es temporal (5xx, 429, red) y sabemos con qué
+    // argumentos rehacerlo, se encola el reintento. La clave de
+    // idempotencia es la misma, así que no puede duplicarse (§19).
+    if (envio.payloadParaCola && esFalloReintentable(message) && ctx.conversationId) {
+      void insertarEnCola({
+        account_id: ctx.accountId,
+        conversation_id: ctx.conversationId,
+        contact_id: ctx.contactId ?? null,
+        message_type: envio.tipo,
+        payload: envio.payloadParaCola,
+        content_preview: envio.contenido ? envio.contenido.slice(0, 500) : null,
+        reason: ctx.reason ?? null,
+        source: ctx.source,
+        workflow_id: ctx.workflowId ?? null,
+        workflow_node_key: ctx.workflowNodeKey ?? null,
+        source_event_id: ctx.sourceEventId ?? null,
+        idempotency_key: ctx.idempotencyKey ?? null,
+      });
+    }
     throw err;
   }
 }
@@ -270,6 +306,7 @@ export async function enviarTexto({ ctx, ...args }: ArgsTexto) {
     tipo: "text",
     contenido: args.text,
     enviar: () => sendTextMessage(args),
+    payloadParaCola: { text: args.text },
   });
 }
 
@@ -284,6 +321,12 @@ export async function enviarMedio({ ctx, kind, caption, filename, ...args }: Arg
         ...(caption ? { caption } : {}),
         ...(filename ? { filename } : {}),
       } as SendMediaMessageArgs),
+    payloadParaCola: {
+      kind,
+      link: (args as { link?: string }).link ?? "",
+      ...(caption ? { caption } : {}),
+      ...(filename ? { filename } : {}),
+    },
   });
 }
 
@@ -292,6 +335,11 @@ export async function enviarPlantilla({ ctx, ...args }: ArgsPlantilla) {
     tipo: "template",
     contenido: args.templateName,
     enviar: () => sendTemplateMessage(args),
+    payloadParaCola: {
+      templateName: args.templateName,
+      ...(args.language ? { language: args.language } : {}),
+      ...(args.params ? { params: args.params } : {}),
+    },
   });
 }
 
@@ -300,6 +348,7 @@ export async function enviarBotones({ ctx, ...args }: ArgsBotones) {
     tipo: "buttons",
     contenido: args.bodyText,
     enviar: () => sendInteractiveButtons(args),
+    payloadParaCola: { bodyText: args.bodyText, buttons: args.buttons as never },
   });
 }
 
@@ -308,5 +357,10 @@ export async function enviarLista({ ctx, ...args }: ArgsLista) {
     tipo: "list",
     contenido: args.bodyText,
     enviar: () => sendInteractiveList(args),
+    payloadParaCola: {
+      bodyText: args.bodyText,
+      buttonLabel: args.buttonLabel,
+      sections: args.sections as never,
+    },
   });
 }

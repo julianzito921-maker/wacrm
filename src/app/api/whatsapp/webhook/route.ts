@@ -25,6 +25,7 @@ import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
 import { estadoPorEntrante } from '@/lib/messaging/estado'
+import { cancelarPendientes } from '@/lib/messaging/cola-store'
 import { tienePagoPendiente } from '@/lib/ventas/comprobante'
 import { transcribirNotaDeVozDeCuenta } from '@/lib/ai/transcribe'
 import { procesarComprobante } from '@/lib/ventas/comprobante'
@@ -841,10 +842,18 @@ async function processMessage(
       contactId: conversation.contact_id,
       texto: contentText ?? '',
     })
+    // Fase 4: si la clienta contesta (o pide humano, o se da de baja), lo
+    // que estuviera esperando en la cola ya no tiene sentido: se cancela.
+    const cancelados = await cancelarPendientes(
+      conversation.id,
+      estado.bajo ? 'opt_out' : estado.humano ? 'human_handoff' : 'user_replied'
+    )
     if (estado.bajo) {
       console.info('[webhook] baja voluntaria registrada:', conversation.contact_id)
     } else if (estado.humano) {
       console.info('[webhook] traspaso a humano pedido:', conversation.contact_id)
+    } else if (cancelados > 0) {
+      console.info('[webhook] cancelados', cancelados, 'mensajes en cola (contestó)')
     }
   } catch (err) {
     console.error(
