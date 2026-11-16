@@ -135,6 +135,10 @@ function slotColor(nodeType: NodeType, slotId: string, fallback: string) {
 
 function FlowNodeCard({ data, selected }: NodeProps) {
   const t = useTranslations('Flows.builder');
+  // El contexto está disponible aquí porque las tarjetas las pinta
+  // React-Flow dentro del proveedor: así el botón de borrar actúa
+  // directo sobre el nodo, sin abrir el panel lateral.
+  const { removeNode } = useFlowEditor();
   const { node, isEntry, isFlashed } = data as NodeData;
   const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
@@ -197,6 +201,23 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         >
           {t(`nodes.${node.node_type}.label`)}
         </span>
+        {/* Borrado directo desde la tarjeta. El de entrada se protege
+            (sin él el flujo no tiene por dónde empezar): para ese caso
+            queda oculto y se cambia de entrada desde el panel. */}
+        {!isEntry && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              removeNode(node.node_key);
+            }}
+            title={t('deleteNode')}
+            aria-label={t('deleteNode')}
+            className="text-muted-foreground hover:bg-red-500/10 hover:text-red-500 ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        )}
         {isEntry && (
           <span className="border-border text-muted-foreground ml-auto rounded border px-1.5 py-0.5 text-[8.5px] font-bold tracking-[0.1em] uppercase">
             {t('badgeEntry')}
@@ -533,8 +554,13 @@ function FlowCanvasInner() {
           onNodeDragStop={handleNodeDragStop}
           onNodeClick={handleNodeClick}
           onConnect={handleConnect}
+          // Clic en la flecha = desconectar: vacía el «a dónde sigue»
+          // del nodo de origen, que es lo único que sostiene la unión.
+          onEdgeClick={(_, edge) => handleEdgesDelete([edge])}
           onNodesDelete={handleNodesDelete}
           onEdgesDelete={handleEdgesDelete}
+          // Flechas más fáciles de acertar con el ratón (zona de clic).
+          defaultEdgeOptions={{ interactionWidth: 28 }}
           // Default is "Backspace" only — accept both so Mac users
           // hitting Delete (Fn+Backspace) get the same behavior.
           deleteKeyCode={['Backspace', 'Delete']}
