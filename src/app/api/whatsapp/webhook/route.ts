@@ -1034,8 +1034,15 @@ async function processMessage(
     !(await botonDeAutomatizacion(accountId, interactiveReplyId))
   // Texto que el embudo tomó pero que trae algo más (datos, enfermedades, preguntas): el
   // embudo sigue Y la IA contesta esa parte (caso Graciela, 13-nov-2026).
+  // El flujo puede pedir que la IA NO se sume a lo que él ya contesta
+  // (`extra_para_ia: false` en su disparador). Es lo que evita que, al
+  // arrancar el embudo, la IA mande encima su propia respuesta.
+  const flujoAdmiteIaExtra =
+    (flowResult.flow?.trigger_config as { extra_para_ia?: boolean } | undefined)
+      ?.extra_para_ia !== false
   const extraParaIa =
     flowConsumed &&
+    flujoAdmiteIaExtra &&
     !interactiveReplyId &&
     textoConExtra(inboundText, flowResult.outcome === 'started')
   if (

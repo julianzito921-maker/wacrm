@@ -364,6 +364,12 @@ export interface DispatchInboundResult {
     | "duplicate_inbound_ignored"
     | "run_error"
     | "no_match";
+  /**
+   * El flujo que atendió el mensaje. Lo usa el webhook para respetar la
+   * configuración del flujo (p. ej. `extra_para_ia`), sin tener que
+   * volver a consultarlo.
+   */
+  flow?: FlowRow;
 }
 
 // ============================================================

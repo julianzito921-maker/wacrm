@@ -38,7 +38,59 @@ import {
   engineSendInteractiveList,
   engineSendMedia,
   engineSendText,
+  mostrarEscribiendo,
 } from "./meta-send";
+
+/**
+ * wamid del último mensaje de la clienta. Meta lo exige para poder
+ * mostrar «escribiendo…»; el run no lo guarda, así que se consulta al
+ * vuelo (consulta indexada, un registro).
+ */
+async function wamidEntrante(
+  db: AdminClient,
+  conversationId: string | null,
+): Promise<string | null> {
+  if (!conversationId) return null;
+  try {
+    const { data } = await db
+      .from("messages")
+      .select("message_id")
+      .eq("conversation_id", conversationId)
+      .eq("sender_type", "customer")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data as { message_id: string } | null)?.message_id ?? null;
+  } catch {
+    // Sin wamid no hay «escribiendo…», pero la pausa sí se respeta y el
+    // mensaje sale igual: esto es cosmético y nunca frena el embudo.
+    return null;
+  }
+}
+
+/**
+ * «Escribiendo…» + pausa de 3–7 s antes de cada mensaje del flujo, para
+ * que la secuencia no le llegue de golpe a la clienta.
+ *
+ * Envuelto en try/catch a propósito: el ritmo es cosmético. Si algo
+ * falla aquí, el mensaje tiene que salir igual.
+ */
+async function ritmoHumano(
+  db: AdminClient,
+  run: FlowRunRow,
+): Promise<void> {
+  try {
+    await mostrarEscribiendo({
+      accountId: run.account_id,
+      messageId: await wamidEntrante(db, run.conversation_id),
+    });
+  } catch (err) {
+    console.warn(
+      "[flows] no se pudo mostrar «escribiendo…»:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
@@ -526,6 +578,7 @@ async function sendButtonsAndSuspend(
   // Meta byte-for-byte as authored. Interpolation can push a title past
   // Meta's 20-char cap; meta-api's validator throws a descriptive error
   // and the caller logs it — we never truncate silently.
+  await ritmoHumano(db, run);
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
     accountId: run.account_id,
     userId: run.user_id,
@@ -567,6 +620,7 @@ async function sendListAndSuspend(
   const cfg = node.config as unknown as SendListNodeConfig;
   // See sendButtonsAndSuspend — interpolate every visible string,
   // never the row `reply_id`.
+  await ritmoHumano(db, run);
   const { whatsapp_message_id } = await engineSendInteractiveList({
     accountId: run.account_id,
     userId: run.user_id,
@@ -769,6 +823,7 @@ async function advanceFromNodeKey(
     if (node.node_type === "send_message") {
       const cfg = node.config as unknown as SendMessageNodeConfig;
       try {
+        await ritmoHumano(db, run);
         const { whatsapp_message_id } = await engineSendText({
           accountId: run.account_id,
     userId: run.user_id,
@@ -794,6 +849,7 @@ async function advanceFromNodeKey(
     if (node.node_type === "send_media") {
       const cfg = node.config as unknown as SendMediaNodeConfig;
       try {
+        await ritmoHumano(db, run);
         const { whatsapp_message_id } = await engineSendMedia({
           accountId: run.account_id,
     userId: run.user_id,
@@ -1140,13 +1196,14 @@ export async function dispatchInboundToFlows(
         now,
       });
       if (!closure) {
-        return handleReplyForActiveRun(
+        const respuesta = await handleReplyForActiveRun(
           db,
           activeRun,
           runFlow!,
           input.message,
           nodes,
         );
+        return { ...respuesta, flow: runFlow ?? undefined };
       }
       await closeActiveRun(db, activeRun, closure, now);
       ownedRunId = null;
@@ -1163,7 +1220,8 @@ export async function dispatchInboundToFlows(
       return { consumed: false, outcome: "no_match" };
     }
     const nodes = await loadAllNodes(db, flow.id);
-    return startNewRun(db, flow, input, nodes);
+    const respuesta = await startNewRun(db, flow, input, nodes);
+    return { ...respuesta, flow };
   } catch (err) {
     console.error(
       "[flows] dispatchInboundToFlows threw:",
@@ -1298,6 +1356,7 @@ async function handleReplyForActiveRun(
         // Customer typed something we couldn't accept (empty after trim,
         // or var_key missing — rare). Re-send the prompt so they try again.
         const cfg = currentNode.config as unknown as CollectInputNodeConfig;
+        await ritmoHumano(db, run);
         await engineSendText({
           accountId: run.account_id,
           userId: run.user_id,
