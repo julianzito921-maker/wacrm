@@ -11,10 +11,10 @@ import { createClient } from '@supabase/supabase-js'
 import { loadAiConfig } from '../src/lib/ai/config'
 import { leerImagen } from '../src/lib/ai/comprension/vision'
 
-const [, , url, phone = '1465685913294434'] = process.argv
+const [, , url, phone] = process.argv
 
-if (!url) {
-  console.error('falta la URL de la imagen')
+if (!url || !phone) {
+  console.error('uso: leer_imagen.ts <url-de-la-imagen> <phone_number_id>')
   process.exit(1)
 }
 
