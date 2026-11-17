@@ -41,6 +41,7 @@ export type OrigenSalida =
   | "flujo"
   | "automatizacion"
   | "ia"
+  | "agente"
   | "manual"
   | "difusion"
   | "ventas";

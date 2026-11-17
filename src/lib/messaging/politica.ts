@@ -76,6 +76,7 @@ const AUTOMATICOS = new Set<ContextoSalida["source"]>([
   "flujo",
   "automatizacion",
   "ia",
+  "agente",
   "ventas",
 ]);
 

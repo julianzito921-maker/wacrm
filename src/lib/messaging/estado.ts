@@ -142,6 +142,17 @@ export async function leerEstado(conversationId: string): Promise<EstadoConversa
   }
 }
 
+/**
+ * Fija el estado desde fuera (lo usan las herramientas del agente).
+ * Es el mismo camino que el automático: si algo falla, avisa y sigue.
+ */
+export async function fijarEstadoDeConversacion(
+  conversationId: string,
+  estado: EstadoConversacion,
+): Promise<void> {
+  return fijarEstado(conversationId, estado);
+}
+
 async function fijarEstado(
   conversationId: string,
   estado: EstadoConversacion,

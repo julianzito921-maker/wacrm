@@ -223,14 +223,40 @@ export default function FlowsPage() {
     }
   }
 
+  /**
+   * Un flujo se ARCHIVA; solo se borra de verdad si ya estaba archivado.
+   *
+   * Por qué: el borrado es irreversible y se lleva sus pasos en cascada.
+   * Perder un embudo entero por un clic (con el constructor abierto y sin
+   * papelera) es un precio demasiado alto: archivado desaparece del camino
+   * vivo y se puede recuperar.
+   */
   async function handleDelete(flow: FlowRow) {
-    const yes = window.confirm(t("deleteConfirm", { name: flow.name }));
+    const yaArchivado = flow.status === "archived";
+    const yes = window.confirm(
+      yaArchivado
+        ? t("deleteConfirm", { name: flow.name })
+        : t("archiveConfirm", { name: flow.name }),
+    );
     if (!yes) return;
     try {
-      const res = await fetch(`/api/flows/${flow.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
-      setFlows((prev) => prev.filter((f) => f.id !== flow.id));
-      toast.success(t("deleteSuccess"));
+      if (yaArchivado) {
+        const res = await fetch(`/api/flows/${flow.id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+        setFlows((prev) => prev.filter((f) => f.id !== flow.id));
+        toast.success(t("deleteSuccess"));
+      } else {
+        const res = await fetch(`/api/flows/${flow.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "archived" }),
+        });
+        if (!res.ok) throw new Error(`Archive failed: ${res.status}`);
+        setFlows((prev) =>
+          prev.map((f) => (f.id === flow.id ? { ...f, status: "archived" } : f)),
+        );
+        toast.success(t("archiveSuccess"));
+      }
     } catch (err) {
       console.error(err);
       toast.error(t("deleteError"));
@@ -499,6 +525,7 @@ export default function FlowsPage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => void handleDelete(flow)}
+                              title={flow.status === "archived" ? t("delete") : t("archive")}
                               className="text-red-500 hover:bg-red-500/10 dark:text-red-400"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
