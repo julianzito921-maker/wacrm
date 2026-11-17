@@ -12,15 +12,13 @@ name: Barrido de mensajería
 #   Name:  CRON_SECRET
 #   Value: el mismo valor de AUTOMATION_CRON_SECRET en Railway
 #
-# Si el secreto no está puesto, el paso se salta sin fallar: no rompe
-# nada y se ve en la pestaña Actions.
+# Sin el secreto, el paso avisa y termina bien (no rompe nada).
 
 on:
   schedule:
     # Cada 10 minutos. GitHub puede retrasarlo unos minutos en horas pico;
-    # para la calidad del número y los reintentos es más que suficiente.
+    # para la calidad del número y los reintentos alcanza.
     - cron: '*/10 * * * *'
-  # También se puede lanzar a mano desde la pestaña Actions.
   workflow_dispatch:
 
 concurrency:
@@ -32,27 +30,23 @@ jobs:
     name: Llamar al barrido
     runs-on: ubuntu-latest
     steps:
-      - name: Aviso si falta el secreto
-        if: ${{ secrets.CRON_SECRET == '' }}
-        run: |
-          echo "::warning:: falta el secreto CRON_SECRET en este repositorio; el barrido no se ejecutó"
-
       - name: Llamar a /api/messaging/cron
-        if: ${{ secrets.CRON_SECRET != '' }}
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -o pipefail
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "::warning::falta el secreto CRON_SECRET en este repositorio; no se llamó al barrido"
+            exit 0
+          fi
           codigo=$(curl -sS -o respuesta.json -w '%{http_code}' \
             -H "x-cron-secret: ${CRON_SECRET}" \
             --max-time 120 \
             "https://wacrm-production-e3cd4a64.up.railway.app/api/messaging/cron")
           echo "HTTP ${codigo}"
           cat respuesta.json
-          # 401 = secreto equivocado; 503 = no hay secreto configurado en el
-          # servidor. Con esos avisos, el workflow falla para que GitHub lo
-          # notifique por correo.
+          # 401 = secreto equivocado; 503 = el servidor no tiene secreto.
           if [ "${codigo}" != "200" ]; then
-            echo "::error::el barrido respondió ${codigo}. Revisa AUTOMATION_CRON_SECRET en Railway y CRON_SECRET aquí."
+            echo "::error::el barrido respondió ${codigo}. Revisa AUTOMATION_CRON_SECRET (Railway) y CRON_SECRET (aquí)."
             exit 1
           fi
