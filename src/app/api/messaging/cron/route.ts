@@ -12,6 +12,7 @@ import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
 import { resumeSaveReplyTimeout } from '@/lib/flows/engine'
 import { procesarLote } from '@/lib/messaging/cola'
 import { evaluarAlertas } from '@/lib/messaging/riesgo'
+import { revisarCalidadDeNumeros } from '@/lib/messaging/calidad'
 
 /**
  * UN SOLO CRON PARA TODO (fase 4, §22).
@@ -83,6 +84,17 @@ export async function GET(request: Request) {
         console.error('[messaging-cron] alertas:', err)
       }
     }
+  }
+
+  // ---- 1c. Calidad del número (§Meta) ------------------------------
+  //    Único aviso público de Meta sobre «cómo va el número»: si baja a
+  //    amarillo se avisa, y si está en rojo se apaga la automatización
+  //    sola, para no seguir mandando con el número en riesgo.
+  let calidad: Awaited<ReturnType<typeof revisarCalidadDeNumeros>> = []
+  try {
+    calidad = await revisarCalidadDeNumeros()
+  } catch (err) {
+    console.error('[messaging-cron] calidad:', err)
   }
 
   // ---- 2. Flujos: «guardar respuesta» sin contestación --------------
@@ -181,6 +193,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     cola,
     alertas,
+    calidad,
     flujos: { rescatados, swept },
     automatizaciones: { processed, expired, requeued },
   })
