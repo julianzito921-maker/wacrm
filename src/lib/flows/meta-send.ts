@@ -78,10 +78,18 @@ function leerMs(nombre: string, porDefecto: number): number {
  * de golpe a la clienta (petición expresa de Julián). Ajustable sin desplegar
  * con `AI_ESPERA_MIN_MS` y `AI_ESPERA_MAX_MS`.
  */
-export function pausaHumana(): number {
-  const min = leerMs('AI_ESPERA_MIN_MS', 3_000)
-  const max = Math.max(min, leerMs('AI_ESPERA_MAX_MS', 7_000))
-  return Math.round(min + Math.random() * (max - min))
+export function pausaHumana(texto?: string): number {
+  const min = leerMs('AI_ESPERA_MIN_MS', 2_500)
+  const max = Math.max(min, leerMs('AI_ESPERA_MAX_MS', 12_000))
+  // Un humano no teclea a velocidad constante: cuanto más largo el mensaje,
+  // más tarda en escribirlo. ~65 ms por carácter (≈15 car./s en el móvil)
+  // sobre un mínimo de 2,5 s, con un 15 % de variación para que no suene a
+  // metrónomo. Sin esto, un texto de 400 caracteres salía en el mismo
+  // tiempo que uno de 20 y se notaba el robot.
+  const calculado = min + (texto ?? '').length * 65
+  const objetivo = Math.min(Math.max(calculado, min), max)
+  const variacion = 0.85 + Math.random() * 0.3
+  return Math.round(objetivo * variacion)
 }
 
 /**
@@ -113,7 +121,7 @@ export async function mostrarEscribiendo(args: {
   }
   if (args.esperar === false) return
   if (process.env.NODE_ENV === 'test') return
-  await new Promise((resolve) => setTimeout(resolve, pausaHumana()))
+  await new Promise((resolve) => setTimeout(resolve, pausaHumana(args.texto)))
 }
 
 interface AuditoriaEnvio {

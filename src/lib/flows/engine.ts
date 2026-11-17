@@ -78,11 +78,13 @@ async function wamidEntrante(
 async function ritmoHumano(
   db: AdminClient,
   run: FlowRunRow,
+  texto?: string,
 ): Promise<void> {
   try {
     await mostrarEscribiendo({
       accountId: run.account_id,
       messageId: await wamidEntrante(db, run.conversation_id),
+      texto,
     });
   } catch (err) {
     console.warn(
@@ -574,6 +576,8 @@ async function sendButtonsAndSuspend(
   node: FlowNodeRow,
 ): Promise<{ outcome: "advanced"; node_key: string }> {
   const cfg = node.config as unknown as SendButtonsNodeConfig;
+  // Texto que verá el cliente: define cuánto dura el «escribiendo…».
+  const textoDelNodo = cfg.text ?? "";
   // Every customer-visible string is interpolated against run.vars —
   // same treatment send_message / collect_input already get (#553).
   // `reply_id` is deliberately NOT interpolated: it is the routing key
@@ -581,7 +585,7 @@ async function sendButtonsAndSuspend(
   // Meta byte-for-byte as authored. Interpolation can push a title past
   // Meta's 20-char cap; meta-api's validator throws a descriptive error
   // and the caller logs it — we never truncate silently.
-  await ritmoHumano(db, run);
+  await ritmoHumano(db, run, textoDelNodo);
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
     accountId: run.account_id,
     userId: run.user_id,
@@ -621,9 +625,10 @@ async function sendListAndSuspend(
   node: FlowNodeRow,
 ): Promise<{ outcome: "advanced"; node_key: string }> {
   const cfg = node.config as unknown as SendListNodeConfig;
+  const textoDelNodo = cfg.text ?? "";
   // See sendButtonsAndSuspend — interpolate every visible string,
   // never the row `reply_id`.
-  await ritmoHumano(db, run);
+  await ritmoHumano(db, run, textoDelNodo);
   const { whatsapp_message_id } = await engineSendInteractiveList({
     accountId: run.account_id,
     userId: run.user_id,
@@ -819,6 +824,17 @@ async function advanceFromNodeKey(
       node_type: node.node_type,
     });
 
+    // Texto que se va a mandar en este paso: sirve para calcular cuánto
+    // tarda «escribiendo…» (a más texto, más tiempo).
+    const textoDelNodo =
+      typeof (node.config as { text?: unknown }).text === "string"
+        ? ((node.config as { text: string }).text ?? "")
+        : typeof (node.config as { caption?: unknown }).caption === "string"
+          ? ((node.config as { caption: string }).caption ?? "")
+          : typeof (node.config as { body_text?: unknown }).body_text === "string"
+            ? ((node.config as { body_text: string }).body_text ?? "")
+            : "";
+
     if (node.node_type === "start") {
       currentKey = (node.config as unknown as StartNodeConfig).next_node_key;
       continue;
@@ -826,7 +842,7 @@ async function advanceFromNodeKey(
     if (node.node_type === "send_message") {
       const cfg = node.config as unknown as SendMessageNodeConfig;
       try {
-        await ritmoHumano(db, run);
+        await ritmoHumano(db, run, textoDelNodo);
         const { whatsapp_message_id } = await engineSendText({
           accountId: run.account_id,
     userId: run.user_id,
@@ -852,7 +868,7 @@ async function advanceFromNodeKey(
     if (node.node_type === "send_media") {
       const cfg = node.config as unknown as SendMediaNodeConfig;
       try {
-        await ritmoHumano(db, run);
+        await ritmoHumano(db, run, textoDelNodo);
         const { whatsapp_message_id } = await engineSendMedia({
           accountId: run.account_id,
     userId: run.user_id,
@@ -904,7 +920,7 @@ async function advanceFromNodeKey(
       const cfg = node.config as unknown as SaveReplyNodeConfig;
       if (cfg.prompt_text && cfg.prompt_text.trim()) {
         try {
-          await ritmoHumano(db, run);
+          await ritmoHumano(db, run, textoDelNodo);
           const { whatsapp_message_id } = await engineSendText({
             accountId: run.account_id,
             userId: run.user_id,
@@ -1483,7 +1499,7 @@ async function handleReplyForActiveRun(
         // Customer typed something we couldn't accept (empty after trim,
         // or var_key missing — rare). Re-send the prompt so they try again.
         const cfg = currentNode.config as unknown as CollectInputNodeConfig;
-        await ritmoHumano(db, run);
+        await ritmoHumano(db, run, cfg.prompt_text ?? "");
         await engineSendText({
           accountId: run.account_id,
           userId: run.user_id,
