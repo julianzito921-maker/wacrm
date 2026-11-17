@@ -1,0 +1,58 @@
+name: Barrido de mensajería
+
+# Llama al único barrido de la capa de mensajería cada 10 minutos.
+#
+# Por qué: dentro del contenedor no hay nada programado. Este barrido
+# vacía la cola (reintentos), rescata las esperas de los flujos, reanuda
+# las automatizaciones, revisa las alertas de riesgo y vigila la CALIDAD
+# del número de WhatsApp (si baja a rojo, apaga la automatización sola).
+#
+# Necesita UN secreto en el repositorio:
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Name:  CRON_SECRET
+#   Value: el mismo valor de AUTOMATION_CRON_SECRET en Railway
+#
+# Si el secreto no está puesto, el paso se salta sin fallar: no rompe
+# nada y se ve en la pestaña Actions.
+
+on:
+  schedule:
+    # Cada 10 minutos. GitHub puede retrasarlo unos minutos en horas pico;
+    # para la calidad del número y los reintentos es más que suficiente.
+    - cron: '*/10 * * * *'
+  # También se puede lanzar a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+concurrency:
+  group: barrido-mensajeria
+  cancel-in-progress: false
+
+jobs:
+  barrer:
+    name: Llamar al barrido
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aviso si falta el secreto
+        if: ${{ secrets.CRON_SECRET == '' }}
+        run: |
+          echo "::warning:: falta el secreto CRON_SECRET en este repositorio; el barrido no se ejecutó"
+
+      - name: Llamar a /api/messaging/cron
+        if: ${{ secrets.CRON_SECRET != '' }}
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -o pipefail
+          codigo=$(curl -sS -o respuesta.json -w '%{http_code}' \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            --max-time 120 \
+            "https://wacrm-production-e3cd4a64.up.railway.app/api/messaging/cron")
+          echo "HTTP ${codigo}"
+          cat respuesta.json
+          # 401 = secreto equivocado; 503 = no hay secreto configurado en el
+          # servidor. Con esos avisos, el workflow falla para que GitHub lo
+          # notifique por correo.
+          if [ "${codigo}" != "200" ]; then
+            echo "::error::el barrido respondió ${codigo}. Revisa AUTOMATION_CRON_SECRET en Railway y CRON_SECRET aquí."
+            exit 1
+          fi
