@@ -41,7 +41,22 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "sectionMain": "Main",
+    "sectionOps": "Operations",
+    "sectionManage": "Management",
+    "liveChats": "Live chats",
+    "kanban": "Kanban",
+    "connections": "Connections",
+    "webhooks": "Webhooks",
+    "massSends": "Broadcasts",
+    "soon": "Soon",
+    "soonHint": "Not available in the CRM yet",
+    "workspace": "Workspace",
+    "workspaces": "Workspaces",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -58,7 +73,9 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "flows": "Flows",
+    "aiAgents": "AI agents"
   },
   "ModeToggle": {
     "switchMode": "Switch to {mode} mode"
@@ -1566,7 +1583,13 @@
         "metaCapiValueLabel": "Value (optional, required for Purchase)",
         "metaCapiCurrencyLabel": "Currency",
         "metaCapiHelp": "Sent to Meta only if the customer came from a click-to-WhatsApp ad (ctwa_clid). Otherwise it is noted on the contact and the flow continues.",
-        "metaCapiEvents": {"Purchase": "Purchase", "Lead": "Lead", "InitiateCheckout": "InitiateCheckout", "AddToCart": "AddToCart", "ViewContent": "ViewContent"},
+        "metaCapiEvents": {
+          "Purchase": "Purchase",
+          "Lead": "Lead",
+          "InitiateCheckout": "InitiateCheckout",
+          "AddToCart": "AddToCart",
+          "ViewContent": "ViewContent"
+        },
         "saveReplyPromptLabel": "Message before waiting (optional)",
         "saveReplyVarLabel": "Save the answer in",
         "saveReplyEsperaLabel": "Wait (minutes) before treating it as no reply",
@@ -1585,45 +1608,55 @@
           "blurb": "Entry point of the flow"
         },
         "send_message": {
-          "label": "Send message",
+          "label": "Message",
           "blurb": "Sends a WhatsApp text message"
         },
         "send_buttons": {
-          "label": "Send buttons",
+          "label": "Menu",
           "blurb": "Sends quick-reply buttons"
         },
         "send_list": {
-          "label": "Send list",
+          "label": "List menu",
           "blurb": "Sends a tappable list of options"
         },
         "send_media": {
-          "label": "Send media",
+          "label": "Media message",
           "blurb": "Sends an image, video, or document"
         },
         "collect_input": {
-          "label": "Collect input",
+          "label": "Capture input",
           "blurb": "Asks a question, saves the reply"
         },
-        "wait": {"label": "Wait", "blurb": "Smart Delay: wait seconds, minutes or hours before moving on"},
-        "save_reply": {"label": "Save reply", "blurb": "Stores the answer, with a branch for replied / no reply"},
-        "meta_capi": {"label": "Fire Meta CAPI", "blurb": "Sends a conversion event to Meta tied to the ad"},
+        "wait": {
+          "label": "Smart delay",
+          "blurb": "Smart Delay: wait seconds, minutes or hours before moving on"
+        },
+        "save_reply": {
+          "label": "Wait for reply",
+          "blurb": "Stores the answer, with a branch for replied / no reply"
+        },
+        "meta_capi": {
+          "label": "Pixel (Meta CAPI)",
+          "blurb": "Sends a conversion event to Meta tied to the ad"
+        },
         "condition": {
-          "label": "If / else",
+          "label": "Conditional",
           "blurb": "Branches on a rule"
         },
         "set_tag": {
-          "label": "Tag contact",
+          "label": "Tags",
           "blurb": "Adds or removes a contact tag"
         },
         "handoff": {
-          "label": "Handoff to agent",
+          "label": "Chat controller",
           "blurb": "Hands the conversation to a human"
         },
         "end": {
-          "label": "End",
-          "blurb": "Ends the flow"
+          "label": "End → AI agent",
+          "blurb": "Ends the flow and frees the chat for the DeepSeek agent"
         }
-      }
+      },
+      "canvasEmptyHint": "Drag a block from the panel or click one to start."
     },
     "validation": {
       "noIssues": "No issues. Ready to activate.",
@@ -1663,8 +1696,8 @@
       "modeRemove": "Remove",
       "tagPicked": "{mode} tag {tag}…",
       "tagNone": "{mode} tag (none picked)",
-        "seconds": "{count} s",
-        "minutes": "{count} min"
+      "seconds": "{count} s",
+      "minutes": "{count} min"
     },
     "header": {
       "backToFlows": "Back to Flows",
@@ -1679,6 +1712,99 @@
       "save": "Save",
       "descriptionPlaceholder": "Add a short description (internal — customers don't see this)",
       "descriptionLabel": "Flow description"
+    },
+    "catalog": {
+      "tabTools": "Tools",
+      "tabSimulate": "Simulate",
+      "search": "Search blocks...",
+      "available": "Available",
+      "comingSoon": "Coming soon",
+      "soon": "Soon",
+      "soonHint": "The flow engine does not run this block yet",
+      "dragHint": "Click to add or drag onto the canvas",
+      "noResults": "No block matches",
+      "collapse": "Hide panel",
+      "expand": "Show panel",
+      "mensaje": {
+        "label": "Message",
+        "blurb": "Text, image, video, document or voice"
+      },
+      "template": {
+        "label": "WhatsApp template",
+        "blurb": "Meta-approved template"
+      },
+      "etiquetas": {
+        "label": "Tags",
+        "blurb": "Add or remove a tag"
+      },
+      "pago": {
+        "label": "Payment/OXXO button",
+        "blurb": "Charge with a button or OXXO reference"
+      },
+      "menu": {
+        "label": "Menu",
+        "blurb": "Up to 3 reply buttons"
+      },
+      "menu_lista": {
+        "label": "List menu",
+        "blurb": "List of up to 10 options"
+      },
+      "esperar_respuesta": {
+        "label": "Wait for reply",
+        "blurb": "Saves the reply, with a timeout"
+      },
+      "capturar": {
+        "label": "Capture input",
+        "blurb": "Asks and stores it in a variable"
+      },
+      "controlador": {
+        "label": "Chat controller",
+        "blurb": "Hands the chat to a person"
+      },
+      "condicional": {
+        "label": "Conditional",
+        "blurb": "Branch by tag or variable"
+      },
+      "distribuidor": {
+        "label": "Distributor",
+        "blurb": "Splits contacts across paths"
+      },
+      "conexion": {
+        "label": "Flow connection",
+        "blurb": "Jump to another flow"
+      },
+      "pixel": {
+        "label": "Pixel (Meta CAPI)",
+        "blurb": "Conversion event to Meta"
+      },
+      "intervalo": {
+        "label": "Smart delay",
+        "blurb": "Wait from seconds up to 23 h"
+      },
+      "departamento": {
+        "label": "Department",
+        "blurb": "Assign a team area"
+      },
+      "integracion": {
+        "label": "Integration",
+        "blurb": "Call an external service"
+      },
+      "bloque_ia": {
+        "label": "AI block",
+        "blurb": "A one-off AI reply"
+      },
+      "agente_ia": {
+        "label": "AI agent",
+        "blurb": "Ends the flow: the DeepSeek agent takes over"
+      },
+      "kanban": {
+        "label": "Kanban",
+        "blurb": "Move the contact in the pipeline"
+      },
+      "manipulador": {
+        "label": "Manipulator",
+        "blurb": "Edit variables and fields"
+      }
     }
   },
   "Settings": {

@@ -57,7 +57,7 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Copy, Plus, Trash2 } from 'lucide-react';
+import { Copy, Trash2 } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
@@ -78,26 +78,18 @@ import {
 } from '@/lib/flows/edges';
 import { autoLayout, shouldAutoLayout } from '@/lib/flows/layout';
 import {
+  DND_BLOQUE,
   NODE_META,
   NodeIconChip,
-  groupNodeTypesByCategory,
+  colorDeSalida,
   nodeColors,
   summarizeNode,
   type BuilderNode,
-  type NodeType,
 } from './shared';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { useFlowEditor } from './flow-editor-state';
 import { FlowEdge } from './flow-edge';
 import { NodeConfigForm } from './forms/node-config-form';
+import type { CargaArrastre } from './flow-palette';
 
 // React-Flow node `data` payload — the bits our custom renderer needs.
 interface NodeData extends Record<string, unknown> {
@@ -108,31 +100,16 @@ interface NodeData extends Record<string, unknown> {
   isFlashed: boolean;
 }
 
-const NODE_WIDTH = 240;
+const NODE_WIDTH = 260;
 // Best-effort default; actual height varies by summary length but
 // dagre needs SOMETHING to compute rank spacing. Underestimating is
 // safer than over (tighter layout that still doesn't overlap).
-const NODE_HEIGHT = 90;
+const NODE_HEIGHT = 150; // tarjeta con encabezado de color + vista previa (rediseño 22-nov)
 
 // ============================================================
 // Custom node — one card per flow node, styled to match the list
 // view's collapsed card so the two views feel like the same product.
 // ============================================================
-
-// Echo the design's green/red branch ports for the condition node's
-// true / false slots; every other slot inherits the node's own hue.
-// The true/false hues are derived from the start (emerald) and handoff
-// (rose) node colors so all branch/port colors stay single-sourced in
-// NODE_HUE — a palette tweak there can't leave these stale.
-function slotColor(nodeType: NodeType, slotId: string, fallback: string) {
-  if (nodeType === 'condition' && slotId === 'true') {
-    return nodeColors('start').solid;
-  }
-  if (nodeType === 'condition' && slotId === 'false') {
-    return nodeColors('handoff').solid;
-  }
-  return fallback;
-}
 
 function FlowNodeCard({ data, selected }: NodeProps) {
   const t = useTranslations('Flows.builder');
@@ -171,7 +148,8 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         } as React.CSSProperties
       }
       className={cn(
-        'bg-card relative max-w-[260px] min-w-[220px] rounded-xl border px-3.5 py-3 text-left shadow-[0_2px_6px_rgba(0,0,0,0.18)] transition-[box-shadow,border-color]',
+        // Tarjeta oscura (#16192C) con encabezado del color de su categoría.
+        'bg-card relative max-w-[280px] min-w-[250px] rounded-xl border text-left shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8)] transition-[box-shadow,border-color]',
         selected
           ? 'border-[var(--nc)]'
           : 'border-border hover:border-[var(--nc-ring)]',
@@ -189,16 +167,21 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         />
       )}
 
-      <div className="flex items-center gap-2">
-        <NodeIconChip
-          type={node.node_type}
-          size={24}
-          iconSize={14}
-          className="rounded-md"
-        />
+      <div
+        className="flex items-center gap-2 rounded-t-[11px] border-b px-3 py-2"
+        style={{
+          background: 'color-mix(in oklch, var(--nc) 24%, var(--card))',
+          borderColor: 'color-mix(in oklch, var(--nc) 40%, transparent)',
+        }}
+      >
         <span
-          className="truncate text-[10.5px] font-semibold tracking-wider uppercase"
-          style={{ color: c.text }}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+          style={{ background: 'var(--nc)', color: '#fff' }}
+        >
+          <meta.icon size={13} />
+        </span>
+        <span
+          className="text-foreground truncate text-[10.5px] font-semibold tracking-wider uppercase"
         >
           {t(`nodes.${node.node_type}.label`)}
         </span>
@@ -243,11 +226,12 @@ function FlowNodeCard({ data, selected }: NodeProps) {
           </span>
         )}
       </div>
-      <div className="text-muted-foreground mt-2 truncate font-mono text-[11px]">
+      <div className="px-3.5 pt-2.5 pb-3">
+      <div className="text-muted-foreground truncate font-mono text-[10.5px]">
         {node.node_key}
       </div>
       {summary && (
-        <div className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed">
+        <div className="text-foreground/85 bg-background/40 border-border mt-1.5 line-clamp-3 rounded-md border px-2 py-1.5 text-xs leading-relaxed">
           {summary}
         </div>
       )}
@@ -259,15 +243,20 @@ function FlowNodeCard({ data, selected }: NodeProps) {
               key={slot.id}
               className="text-muted-foreground relative flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px]"
             >
-              <span className="truncate" title={slot.label}>
-                {slot.label}
+              <span className="flex min-w-0 items-center gap-1.5" title={slot.label}>
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ background: colorDeSalida(node.node_type, slot.id) }}
+                />
+                <span className="truncate">{slot.label}</span>
               </span>
               <Handle
                 type="source"
                 id={slot.id}
                 position={Position.Right}
                 style={{
-                  borderColor: slotColor(node.node_type, slot.id, c.solid),
+                  borderColor: colorDeSalida(node.node_type, slot.id),
+                  background: colorDeSalida(node.node_type, slot.id),
                 }}
                 // Override default absolute positioning so the handle
                 // sits flush with the right edge of the card instead
@@ -280,13 +269,15 @@ function FlowNodeCard({ data, selected }: NodeProps) {
         </div>
       )}
 
+      </div>
+
       {!isMultiSlot && slots.length === 1 && (
         <Handle
           type="source"
           id={slots[0].id}
           position={Position.Right}
-          style={{ borderColor: c.solid }}
-          className="!bg-card !h-2.5 !w-2.5 !border-2"
+          style={{ borderColor: c.solid, background: c.solid }}
+          className="!h-2.5 !w-2.5 !border-2"
         />
       )}
     </div>
@@ -409,6 +400,7 @@ function FlowCanvasInner() {
   // React-Flow escupe errores de handles inexistentes.
   const rfEdges = useMemo(() => {
     const canvasEdges = deriveCanvasEdges(rfNodes.map((n) => n.data.node));
+    const tipoDe = new Map(rfNodes.map((n) => [n.id, n.data.node.node_type]));
 
     // sourceHandle is now wired up — the FlowNodeCard renders a Handle
     // per slot whose id matches the scheme in edges.ts, so React-Flow
@@ -425,7 +417,12 @@ function FlowCanvasInner() {
       labelBgStyle: { fill: 'var(--card)' },
       labelBgPadding: [4, 2] as [number, number],
       labelBgBorderRadius: 4,
-      style: { stroke: 'var(--border)', strokeWidth: 1.5 },
+      // Verde = respuesta / éxito, rojo = no se cumple, ámbar = timeout;
+      // el resto, el color de la categoría del nodo de origen.
+      style: {
+        stroke: colorDeSalida(tipoDe.get(e.source) ?? 'send_message', e.sourceHandle),
+        strokeWidth: 2,
+      },
     }));
 
     return rfEdges;
@@ -555,23 +552,44 @@ function FlowCanvasInner() {
     setSelectedNodeKey(null);
   }, [selectedNodeKey, removeNode]);
 
+  // Soltar un bloque del panel flotante: el nodo nace donde se suelta.
+  const { addNode } = useFlowEditor();
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(DND_BLOQUE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      const crudo = e.dataTransfer.getData(DND_BLOQUE);
+      if (!crudo) return;
+      e.preventDefault();
+      let carga: CargaArrastre;
+      try {
+        carga = JSON.parse(crudo) as CargaArrastre;
+      } catch {
+        return;
+      }
+      const punto = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const key = addNode(carga.tipo);
+      if (carga.medio) updateNodeConfig(key, { media_type: carga.medio });
+      updateNodePosition(key, punto.x - NODE_WIDTH / 2, punto.y - 24);
+    },
+    [addNode, reactFlow, updateNodeConfig, updateNodePosition]
+  );
+
   const handleSetEntry = useCallback(() => {
     if (!selectedNodeKey) return;
     setState((s) => ({ ...s, entry_node_id: selectedNodeKey }));
   }, [selectedNodeKey, setState]);
 
-  if (rfNodes.length === 0) {
-    return (
-      <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-3 text-sm">
-        <p>{t('noNodesYet')}</p>
-        <CanvasAddNodeButton t={t} />
-      </div>
-    );
-  }
-
   return (
     <>
-      <div className="h-full w-full overflow-hidden">
+      <div
+        className="bg-canvas h-full w-full overflow-hidden"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
@@ -606,12 +624,17 @@ function FlowCanvasInner() {
           {/* Dot grid, matching the design's faint canvas backdrop. */}
           <Background
             variant={BackgroundVariant.Dots}
-            gap={22}
-            size={1.4}
-            color="var(--border)"
+            gap={20}
+            size={1.5}
+            color="var(--canvas-dot)"
+            bgColor="var(--canvas)"
           />
+          {/* Zoom flotante abajo a la izquierda; se corre a la derecha del
+              panel de bloques para no quedar debajo de él. */}
           <Controls
-            className="!border-border !bg-card [&_button]:!border-border [&_button]:!bg-card [&_button:hover]:!bg-muted [&_button_svg]:!fill-foreground !overflow-hidden !rounded-xl !border !shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)]"
+            position="bottom-left"
+            style={{ left: 288 }}
+            className="!border-sidebar-border !bg-sidebar/90 [&_button]:!border-sidebar-border [&_button]:!bg-transparent [&_button:hover]:!bg-sidebar-accent [&_button_svg]:!fill-foreground !overflow-hidden !rounded-xl !border !shadow-[0_10px_28px_-10px_rgba(0,0,0,0.7)] backdrop-blur-md"
             showInteractive={false}
           />
           <MiniMap
@@ -622,12 +645,18 @@ function FlowCanvasInner() {
             }
             nodeStrokeWidth={0}
             nodeBorderRadius={3}
-            maskColor="color-mix(in oklch, var(--background) 70%, transparent)"
-            className="!border-border !bg-card !rounded-xl !border !shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)]"
+            position="bottom-right"
+            bgColor="var(--sidebar)"
+            maskColor="color-mix(in srgb, var(--canvas) 72%, transparent)"
+            className="!border-sidebar-border !rounded-xl !border !shadow-[0_10px_28px_-10px_rgba(0,0,0,0.7)]"
           />
-          <Panel position="top-left" className="!top-4 !left-4">
-            <CanvasAddNodeButton t={t} />
-          </Panel>
+          {rfNodes.length === 0 && (
+            <Panel position="top-center" className="!top-1/3">
+              <p className="text-muted-foreground border-sidebar-border bg-sidebar/80 rounded-lg border px-4 py-2.5 text-sm backdrop-blur-md">
+                {t('canvasEmptyHint')}
+              </p>
+            </Panel>
+          )}
         </ReactFlow>
       </div>
 
@@ -737,113 +766,5 @@ function NodeEditSheet({
         </SheetFooter>
       </SheetContent>
     </Sheet>
-  );
-}
-
-// ============================================================
-// Floating add-node button — bottom-right of the canvas. Mirrors
-// the list view's AddNodeButton (same dropdown menu, same NodeType
-// list, same icons via NODE_META) but drops the new node into the
-// center of the visible viewport rather than appending to a list.
-// ============================================================
-
-const ADD_NODE_TYPES: NodeType[] = [
-  'start',
-  'send_buttons',
-  'send_list',
-  'send_message',
-  'send_media',
-  'collect_input',
-  'condition',
-  'set_tag',
-  'wait',
-  'save_reply',
-  'meta_capi',
-  'handoff',
-  'end',
-];
-
-function CanvasAddNodeButton({ t }: { t: ReturnType<typeof useTranslations> }) {
-  const reactFlow = useReactFlow();
-  const { addNode, updateNodePosition } = useFlowEditor();
-
-  const handleAdd = (type: NodeType) => {
-    const key = addNode(type);
-    // Place the new node at the visible canvas center. The Panel's
-    // own DOM lives inside ReactFlow so we can climb up to find the
-    // .react-flow root and read its bounding rect. If we can't find
-    // it (test envs, etc.), addNode's default (0, 0) is the fallback
-    // and the user can drag the node into view.
-    const root = document.querySelector('.react-flow') as HTMLElement | null;
-    if (!root) return;
-    const rect = root.getBoundingClientRect();
-    const center = reactFlow.screenToFlowPosition({
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-    });
-    // NODE_WIDTH / NODE_HEIGHT are the dagre layout defaults; offset
-    // so the card sits visually centered rather than top-left at the
-    // viewport center.
-    updateNodePosition(
-      key,
-      center.x - NODE_WIDTH / 2,
-      center.y - NODE_HEIGHT / 2
-    );
-  };
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className="bg-primary text-primary-foreground hover:bg-primary-hover inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-medium shadow-[0_6px_20px_-8px_rgba(0,0,0,0.5)] transition-colors"
-        aria-label={t('addNode')}
-      >
-        <Plus className="h-4 w-4" />
-        {t('addNode')}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="border-border bg-popover w-[268px] p-1.5"
-      >
-        {groupNodeTypesByCategory(ADD_NODE_TYPES).map((group, i) => (
-          // DropdownMenuGroup (base-ui Menu.Group) is REQUIRED: the
-          // DropdownMenuLabel below is base-ui's Menu.GroupLabel, which
-          // throws at render without a Menu.Group ancestor. A plain <div>
-          // here crashed the page when this menu opened (issue #336).
-          <Fragment key={group.id}>
-            {i > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-muted-foreground px-2 py-1.5 text-[11px] font-semibold tracking-wider uppercase">
-                {t(`categories.${group.id}`)}
-              </DropdownMenuLabel>
-              {group.types.map((t_type) => {
-                const meta = NODE_META[t_type];
-                return (
-                  <DropdownMenuItem
-                    key={t_type}
-                    onClick={() => handleAdd(t_type)}
-                    className="gap-3 py-2"
-                  >
-                    <NodeIconChip
-                      type={t_type}
-                      size={28}
-                      iconSize={16}
-                      className="rounded-md"
-                    />
-                    <span className="flex flex-col">
-                      <span className="text-popover-foreground text-[13px] font-semibold">
-                        {t(`nodes.${t_type}.label`)}
-                      </span>
-                      <span className="text-muted-foreground text-[11.5px]">
-                        {t(`nodes.${t_type}.blurb`)}
-                      </span>
-                    </span>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuGroup>
-          </Fragment>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

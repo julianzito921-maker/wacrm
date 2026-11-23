@@ -41,7 +41,22 @@
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
     "menuSettings": "설정",
-    "menuSignOut": "로그아웃"
+    "menuSignOut": "로그아웃",
+    "sectionMain": "주요",
+    "sectionOps": "운영",
+    "sectionManage": "관리",
+    "liveChats": "실시간 채팅",
+    "kanban": "칸반",
+    "connections": "연결",
+    "webhooks": "웹훅",
+    "massSends": "대량 발송",
+    "soon": "곧 제공",
+    "soonHint": "아직 CRM에서 사용할 수 없습니다",
+    "workspace": "워크스페이스",
+    "workspaces": "워크스페이스",
+    "theme": "테마",
+    "themeLight": "라이트",
+    "themeDark": "다크"
   },
   "Header": {
     "dashboard": "대시보드",
@@ -58,7 +73,9 @@
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
     "menuSettings": "설정",
-    "menuSignOut": "로그아웃"
+    "menuSignOut": "로그아웃",
+    "flows": "플로우",
+    "aiAgents": "AI 에이전트"
   },
   "ModeToggle": {
     "switchMode": "{mode} 모드로 전환"
@@ -1566,7 +1583,13 @@
         "metaCapiValueLabel": "값(선택, 구매는 필수)",
         "metaCapiCurrencyLabel": "통화",
         "metaCapiHelp": "고객이 WhatsApp 클릭 광고(ctwa_clid)로 들어온 경우에만 Meta로 보냅니다. 아니면 연락처에 기록하고 흐름을 계속합니다.",
-        "metaCapiEvents": {"Purchase": "구매 (Purchase)", "Lead": "리드 (Lead)", "InitiateCheckout": "결제 시작 (InitiateCheckout)", "AddToCart": "장바구니 추가 (AddToCart)", "ViewContent": "콘텐츠 조회 (ViewContent)"},
+        "metaCapiEvents": {
+          "Purchase": "구매 (Purchase)",
+          "Lead": "리드 (Lead)",
+          "InitiateCheckout": "결제 시작 (InitiateCheckout)",
+          "AddToCart": "장바구니 추가 (AddToCart)",
+          "ViewContent": "콘텐츠 조회 (ViewContent)"
+        },
         "saveReplyPromptLabel": "대기 전 보낼 메시지 (선택)",
         "saveReplyVarLabel": "응답을 저장할 위치",
         "saveReplyEsperaLabel": "무응답으로 볼 때까지 대기(분)",
@@ -1585,45 +1608,55 @@
           "blurb": "플로우의 진입점"
         },
         "send_message": {
-          "label": "메시지 보내기",
+          "label": "메시지",
           "blurb": "WhatsApp 텍스트 메시지를 보냅니다"
         },
         "send_buttons": {
-          "label": "버튼 보내기",
+          "label": "메뉴",
           "blurb": "빠른 응답 버튼을 보냅니다"
         },
         "send_list": {
-          "label": "목록 보내기",
+          "label": "목록 메뉴",
           "blurb": "탭 가능한 옵션 목록을 보냅니다"
         },
         "send_media": {
-          "label": "미디어 보내기",
+          "label": "미디어 메시지",
           "blurb": "이미지, 동영상, 문서를 보냅니다"
         },
         "collect_input": {
           "label": "입력 수집",
           "blurb": "질문을 하고 응답을 저장합니다"
         },
-        "wait": {"label": "대기", "blurb": "스마트 지연: 초·분·시간 단위로 기다린 뒤 진행"},
-        "save_reply": {"label": "응답 저장", "blurb": "답변을 저장하고, 응답/무응답 분기를 둡니다"},
-        "meta_capi": {"label": "Meta CAPI 전송", "blurb": "광고와 연결된 전환 이벤트를 Meta로 보냅니다"},
+        "wait": {
+          "label": "스마트 지연",
+          "blurb": "스마트 지연: 초·분·시간 단위로 기다린 뒤 진행"
+        },
+        "save_reply": {
+          "label": "응답 대기",
+          "blurb": "답변을 저장하고, 응답/무응답 분기를 둡니다"
+        },
+        "meta_capi": {
+          "label": "픽셀 (Meta CAPI)",
+          "blurb": "광고와 연결된 전환 이벤트를 Meta로 보냅니다"
+        },
         "condition": {
-          "label": "만약 / 아니면",
+          "label": "조건",
           "blurb": "규칙에 따라 분기합니다"
         },
         "set_tag": {
-          "label": "연락처 태그 지정",
+          "label": "태그",
           "blurb": "연락처 태그를 추가하거나 제거합니다"
         },
         "handoff": {
-          "label": "상담원에게 인계",
+          "label": "채팅 컨트롤러",
           "blurb": "대화를 사람에게 넘깁니다"
         },
         "end": {
-          "label": "종료",
-          "blurb": "플로우를 종료합니다"
+          "label": "종료 → AI 에이전트",
+          "blurb": "플로우를 끝내고 채팅을 DeepSeek 에이전트에 넘깁니다"
         }
-      }
+      },
+      "canvasEmptyHint": "패널에서 블록을 끌어오거나 클릭해 시작하세요."
     },
     "validation": {
       "noIssues": "문제가 없습니다. 활성화할 준비가 되었습니다.",
@@ -1663,8 +1696,8 @@
       "modeRemove": "제거",
       "tagPicked": "{tag} 태그 {mode}…",
       "tagNone": "태그 {mode} (선택된 태그 없음)",
-        "seconds": "{count}초",
-        "minutes": "{count}분"
+      "seconds": "{count}초",
+      "minutes": "{count}분"
     },
     "header": {
       "backToFlows": "플로우로 돌아가기",
@@ -1679,6 +1712,99 @@
       "save": "저장",
       "descriptionPlaceholder": "짧은 설명을 추가하세요 (내부용 — 고객에게는 보이지 않습니다)",
       "descriptionLabel": "플로우 설명"
+    },
+    "catalog": {
+      "tabTools": "도구",
+      "tabSimulate": "시뮬레이션",
+      "search": "블록 검색...",
+      "available": "사용 가능",
+      "comingSoon": "곧 제공",
+      "soon": "곧",
+      "soonHint": "플로우 엔진이 아직 이 블록을 실행하지 않습니다",
+      "dragHint": "클릭해 추가하거나 캔버스로 끌어오세요",
+      "noResults": "일치하는 블록이 없습니다",
+      "collapse": "패널 숨기기",
+      "expand": "패널 보기",
+      "mensaje": {
+        "label": "메시지",
+        "blurb": "텍스트, 이미지, 동영상, 문서 또는 음성"
+      },
+      "template": {
+        "label": "WhatsApp 템플릿",
+        "blurb": "Meta 승인 템플릿"
+      },
+      "etiquetas": {
+        "label": "태그",
+        "blurb": "태그 추가 또는 제거"
+      },
+      "pago": {
+        "label": "결제/OXXO 버튼",
+        "blurb": "버튼 또는 OXXO 참조로 결제"
+      },
+      "menu": {
+        "label": "메뉴",
+        "blurb": "최대 3개의 답장 버튼"
+      },
+      "menu_lista": {
+        "label": "목록 메뉴",
+        "blurb": "최대 10개 옵션 목록"
+      },
+      "esperar_respuesta": {
+        "label": "응답 대기",
+        "blurb": "응답 저장, 시간 초과 포함"
+      },
+      "capturar": {
+        "label": "입력 수집",
+        "blurb": "질문하고 변수에 저장"
+      },
+      "controlador": {
+        "label": "채팅 컨트롤러",
+        "blurb": "채팅을 담당자에게 넘김"
+      },
+      "condicional": {
+        "label": "조건",
+        "blurb": "태그나 변수로 분기"
+      },
+      "distribuidor": {
+        "label": "분배기",
+        "blurb": "연락처를 여러 경로로 분배"
+      },
+      "conexion": {
+        "label": "플로우 연결",
+        "blurb": "다른 플로우로 이동"
+      },
+      "pixel": {
+        "label": "픽셀 (Meta CAPI)",
+        "blurb": "Meta로 전환 이벤트 전송"
+      },
+      "intervalo": {
+        "label": "스마트 지연",
+        "blurb": "초부터 23시간까지 대기"
+      },
+      "departamento": {
+        "label": "부서",
+        "blurb": "팀 부서 지정"
+      },
+      "integracion": {
+        "label": "통합",
+        "blurb": "외부 서비스 호출"
+      },
+      "bloque_ia": {
+        "label": "AI 블록",
+        "blurb": "AI로 한 번 답변"
+      },
+      "agente_ia": {
+        "label": "AI 에이전트",
+        "blurb": "플로우 종료: DeepSeek 에이전트가 이어받음"
+      },
+      "kanban": {
+        "label": "칸반",
+        "blurb": "파이프라인에서 연락처 이동"
+      },
+      "manipulador": {
+        "label": "조작기",
+        "blurb": "변수와 필드 편집"
+      }
     }
   },
   "Settings": {

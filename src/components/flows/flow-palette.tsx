@@ -1,118 +1,270 @@
 "use client";
 
 /**
- * Barra de herramientas del editor de flujos (columna izquierda).
+ * Panel flotante de bloques (rediseño del 22-nov-2026).
  *
- * Arriba, los accesos rápidos que más se usan —texto, imagen, vídeo,
- * documento y voz— porque son el 90 % de un embudo de WhatsApp: un
- * clic añade el paso y el editor lo abre.
+ * Vive DENTRO del lienzo, arriba a la izquierda, sobre un fondo
+ * `--sidebar` translúcido. Dos pestañas:
+ *   - Herramientas: buscador «Buscar bloques…» y el catálogo completo.
+ *     Los bloques que el motor ya ejecuta se agregan con un clic o se
+ *     arrastran al lienzo (y caen donde se sueltan). Los demás se ven
+ *     como «Próximamente» y no se pueden agregar.
+ *   - Simular: la vista previa del flujo tal como le llega a la clienta.
  *
- * Abajo, el resto de pasos (botones, lista, preguntar, condición,
- * etiqueta, pasa a agente, fin) agrupados como en los demás menús del
- * editor, para no tener dos catálogos distintos.
+ * El bloque «Mensaje» trae atajos de imagen, video, documento y nota de
+ * voz (nodo send_media), que son la mayoría de un embudo de WhatsApp.
  */
 
-import {
-  FileText,
-  Image as ImageIcon,
-  Mic,
-  MessageSquarePlus,
-  Video,
-} from "lucide-react";
-
-import { useFlowEditor } from "./flow-editor-state";
-import {
-  NODE_META,
-  NodeIconChip,
-  groupNodeTypesByCategory,
-  type NodeType,
-} from "./shared";
-import { cn } from "@/lib/utils";
+import { useMemo, useState } from "react";
+import { ChevronsLeft, ChevronsRight, FlaskConical, Search, Wrench } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-interface Acceso {
-  clave: string;
+import { cn } from "@/lib/utils";
+import { useFlowEditor } from "./flow-editor-state";
+import { FlowPreview } from "./flow-preview";
+import {
+  ATAJOS_MEDIA,
+  CATALOGO_BLOQUES,
+  DND_BLOQUE,
+  nodeColors,
+  type Bloque,
+  type NodeType,
+} from "./shared";
+
+type Medio = (typeof ATAJOS_MEDIA)[number]["medio"];
+
+/** Lo que viaja en el arrastre: el lienzo lo lee al soltar. */
+export interface CargaArrastre {
   tipo: NodeType;
-  /** Solo para los nodos de archivo: fija el tipo de medio al crear. */
-  medio?: "image" | "video" | "document" | "audio";
-  icon: typeof ImageIcon;
+  medio?: Medio;
 }
 
-const ACCESOS: Acceso[] = [
-  { clave: "paletteText", tipo: "send_message", icon: MessageSquarePlus },
-  { clave: "paletteImage", tipo: "send_media", medio: "image", icon: ImageIcon },
-  { clave: "paletteVideo", tipo: "send_media", medio: "video", icon: Video },
-  { clave: "paletteDocument", tipo: "send_media", medio: "document", icon: FileText },
-  { clave: "paletteAudio", tipo: "send_media", medio: "audio", icon: Mic },
-];
+const TONO: Record<Bloque["tono"], string> = {
+  violeta: "#8b6bff",
+  azul: "#4b8bff",
+};
 
-export function FlowPalette({ className }: { className?: string }) {
+export function FlowPalette({
+  className,
+  onEditarDesdeSimulacion,
+}: {
+  className?: string;
+  /** «Editar» en la simulación: lleva al nodo en la vista Lista. */
+  onEditarDesdeSimulacion?: (key: string) => void;
+}) {
   const t = useTranslations("Flows.builder");
+  const tc = useTranslations("Flows.catalog");
   const { addNode, updateNodeConfig, requestFlash } = useFlowEditor();
+  const [pestana, setPestana] = useState<"herramientas" | "simular">("herramientas");
+  const [busqueda, setBusqueda] = useState("");
+  const [plegado, setPlegado] = useState(false);
 
-  const agregar = (tipo: NodeType, medio?: Acceso["medio"]) => {
+  const agregar = (tipo: NodeType, medio?: Medio) => {
     const key = addNode(tipo);
-    // El nodo de archivo nace como imagen; si el atajo pedía otro
-    // medio, se ajusta antes de que el usuario lo abra.
+    // El nodo de archivo nace como imagen; el atajo fija el medio pedido.
     if (medio) updateNodeConfig(key, { media_type: medio });
     requestFlash(key);
   };
 
-  const resto = groupNodeTypesByCategory(
-    (Object.keys(NODE_META) as NodeType[]).filter((n) => n !== "start" && n !== "send_media"),
+  const alArrastrar = (e: React.DragEvent, carga: CargaArrastre) => {
+    e.dataTransfer.setData(DND_BLOQUE, JSON.stringify(carga));
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
+  const filtro = busqueda.trim().toLowerCase();
+  const bloques = useMemo(
+    () =>
+      CATALOGO_BLOQUES.filter(
+        (b) =>
+          !filtro ||
+          tc(`${b.id}.label`).toLowerCase().includes(filtro) ||
+          tc(`${b.id}.blurb`).toLowerCase().includes(filtro),
+      ),
+    [filtro, tc],
   );
+  const listos = bloques.filter((b) => b.tipo);
+  const proximos = bloques.filter((b) => !b.tipo);
+
+  if (plegado) {
+    return (
+      <button
+        type="button"
+        onClick={() => setPlegado(false)}
+        title={tc("expand")}
+        aria-label={tc("expand")}
+        className={cn(
+          "pointer-events-auto flex h-10 w-10 items-center justify-center rounded-xl border border-sidebar-border bg-sidebar/90 text-muted-foreground shadow-lg backdrop-blur-md transition-colors hover:text-foreground",
+          className,
+        )}
+      >
+        <ChevronsRight className="h-4 w-4" />
+      </button>
+    );
+  }
 
   return (
     <aside
       className={cn(
-        "flex flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-card p-3",
+        "pointer-events-auto flex w-[264px] flex-col overflow-hidden rounded-xl border border-sidebar-border bg-sidebar/90 shadow-[0_18px_48px_-18px_rgba(0,0,0,0.7)] backdrop-blur-md",
         className,
       )}
     >
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {t("paletteTitle")}
-      </p>
-
-      <div className="grid gap-1.5">
-        {ACCESOS.map((a) => {
-          const Icono = a.icon;
-          return (
-            <button
-              key={a.clave}
-              type="button"
-              onClick={() => agregar(a.tipo, a.medio)}
-              className="flex items-center gap-2 rounded-lg border border-border bg-card-2 px-2.5 py-2 text-left text-[12.5px] font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-muted"
-            >
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <Icono className="h-3.5 w-3.5" />
-              </span>
-              {t(a.clave)}
-            </button>
-          );
-        })}
-      </div>
-
-      <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {t("paletteAll")}
-      </p>
-
-      <div className="grid gap-2">
-        {resto.map((grupo) => (
-          <div key={grupo.id} className="grid gap-1">
-            {grupo.types.map((tipo) => (
+      {/* ---- pestañas ---- */}
+      <div className="flex items-center gap-1 border-b border-sidebar-border p-1.5">
+        <div className="grid flex-1 grid-cols-2 gap-1 rounded-lg bg-background/50 p-0.5">
+          {(
+            [
+              { id: "herramientas", icon: Wrench, label: tc("tabTools") },
+              { id: "simular", icon: FlaskConical, label: tc("tabSimulate") },
+            ] as const
+          ).map((p) => {
+            const activa = pestana === p.id;
+            return (
               <button
-                key={tipo}
+                key={p.id}
                 type="button"
-                onClick={() => agregar(tipo)}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-pressed={activa}
+                onClick={() => setPestana(p.id)}
+                className={cn(
+                  "inline-flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] font-semibold transition-colors",
+                  activa
+                    ? "bg-primary text-primary-foreground shadow-[0_4px_14px_-6px_var(--primary)]"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
               >
-                <NodeIconChip type={tipo} size={22} iconSize={13} />
-                {t(`nodes.${tipo}.label`)}
+                <p.icon className="h-3.5 w-3.5" />
+                {p.label}
               </button>
-            ))}
-          </div>
-        ))}
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={() => setPlegado(true)}
+          title={tc("collapse")}
+          aria-label={tc("collapse")}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+        >
+          <ChevronsLeft className="h-4 w-4" />
+        </button>
       </div>
+
+      {pestana === "simular" ? (
+        <div className="relative min-h-0 flex-1">
+          <FlowPreview onEdit={(key) => onEditarDesdeSimulacion?.(key)} />
+        </div>
+      ) : (
+        <>
+          {/* ---- buscador ---- */}
+          <div className="border-b border-sidebar-border p-2">
+            <label className="flex items-center gap-2 rounded-lg border border-sidebar-border bg-background/60 px-2.5 py-1.5 focus-within:border-primary">
+              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder={tc("search")}
+                aria-label={tc("search")}
+                className="min-w-0 flex-1 bg-transparent text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/70"
+              />
+            </label>
+          </div>
+
+          {/* ---- catálogo ---- */}
+          <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+            {listos.length > 0 && (
+              <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+                {tc("available")}
+              </p>
+            )}
+            {listos.map((b) => {
+              const color = nodeColors(b.tipo!).solid;
+              return (
+                <div key={b.id}>
+                  <button
+                    type="button"
+                    draggable
+                    onDragStart={(e) => alArrastrar(e, { tipo: b.tipo! })}
+                    onClick={() => agregar(b.tipo!)}
+                    title={tc("dragHint")}
+                    className="group flex w-full cursor-grab items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent active:cursor-grabbing"
+                  >
+                    <span
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                      style={{ background: `color-mix(in oklch, ${color} 16%, transparent)`, color }}
+                    >
+                      <b.icon className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12.5px] font-medium text-foreground">
+                        {tc(`${b.id}.label`)}
+                      </span>
+                      <span className="block truncate text-[10.5px] text-muted-foreground">
+                        {tc(`${b.id}.blurb`)}
+                      </span>
+                    </span>
+                  </button>
+                  {b.id === "mensaje" && (
+                    <div className="mb-1 ml-[42px] flex gap-1">
+                      {ATAJOS_MEDIA.map((a) => (
+                        <button
+                          key={a.medio}
+                          type="button"
+                          draggable
+                          onDragStart={(e) =>
+                            alArrastrar(e, { tipo: "send_media", medio: a.medio })
+                          }
+                          onClick={() => agregar("send_media", a.medio)}
+                          title={t(a.clave)}
+                          aria-label={t(a.clave)}
+                          className="flex h-6 w-6 cursor-grab items-center justify-center rounded-md border border-sidebar-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+                        >
+                          <a.icon className="h-3 w-3" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {proximos.length > 0 && (
+              <p className="px-2 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+                {tc("comingSoon")}
+              </p>
+            )}
+            {proximos.map((b) => (
+              <div
+                key={b.id}
+                aria-disabled="true"
+                title={tc("soonHint")}
+                className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-2 py-1.5 opacity-55"
+              >
+                <span
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                  style={{
+                    background: `color-mix(in oklch, ${TONO[b.tono]} 14%, transparent)`,
+                    color: TONO[b.tono],
+                  }}
+                >
+                  <b.icon className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-muted-foreground">
+                  {tc(`${b.id}.label`)}
+                </span>
+                <span className="rounded-full border border-sidebar-border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {tc("soon")}
+                </span>
+              </div>
+            ))}
+
+            {bloques.length === 0 && (
+              <p className="px-2 py-6 text-center text-[12px] text-muted-foreground">
+                {tc("noResults")}
+              </p>
+            )}
+          </div>
+        </>
+      )}
     </aside>
   );
 }

@@ -106,7 +106,19 @@ export function FlowPreview({ onEdit }: { onEdit: (key: string) => void }) {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#efe7db] px-4 py-6">
+    <div
+      className="h-full overflow-y-auto bg-[#efe7db] px-4 py-6"
+      // El fondo imita el chat de WhatsApp (claro) en cualquier tema: el
+      // texto también tiene que ser el de WhatsApp, no el del modo oscuro.
+      style={
+        {
+          "--foreground": "#111b21",
+          "--muted-foreground": "#54656f",
+          "--card": "#ffffff",
+          "--border": "#d1d7db",
+        } as React.CSSProperties
+      }
+    >
       <div className="mx-auto w-full max-w-2xl space-y-4">
         <p className="text-center text-[11.5px] text-muted-foreground">{t("previewHint")}</p>
 

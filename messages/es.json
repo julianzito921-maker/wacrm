@@ -41,7 +41,22 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "sectionMain": "Principal",
+    "sectionOps": "Operaciones",
+    "sectionManage": "Gestión",
+    "liveChats": "Chats en vivo",
+    "kanban": "Kanban",
+    "connections": "Conexiones",
+    "webhooks": "Webhooks",
+    "massSends": "Envíos masivos",
+    "soon": "Pronto",
+    "soonHint": "Todavía no disponible en el CRM",
+    "workspace": "Espacio de trabajo",
+    "workspaces": "Espacios de trabajo",
+    "theme": "Tema",
+    "themeLight": "Claro",
+    "themeDark": "Oscuro"
   },
   "Header": {
     "dashboard": "Panel",
@@ -58,7 +73,9 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "flows": "Flujos",
+    "aiAgents": "Agentes de IA"
   },
   "ModeToggle": {
     "switchMode": "Cambiar al modo {mode}"
@@ -1566,7 +1583,13 @@
         "metaCapiValueLabel": "Valor (opcional, obligatorio en Compra)",
         "metaCapiCurrencyLabel": "Moneda",
         "metaCapiHelp": "Se manda a Meta solo si la clienta llegó de un anuncio de clic a WhatsApp (ctwa_clid). Si no, se anota en el contacto y el flujo sigue.",
-        "metaCapiEvents": {"Purchase": "Compra (Purchase)", "Lead": "Cliente potencial (Lead)", "InitiateCheckout": "Inicio de pago (InitiateCheckout)", "AddToCart": "Agregar al carrito (AddToCart)", "ViewContent": "Vio contenido (ViewContent)"},
+        "metaCapiEvents": {
+          "Purchase": "Compra (Purchase)",
+          "Lead": "Cliente potencial (Lead)",
+          "InitiateCheckout": "Inicio de pago (InitiateCheckout)",
+          "AddToCart": "Agregar al carrito (AddToCart)",
+          "ViewContent": "Vio contenido (ViewContent)"
+        },
         "saveReplyPromptLabel": "Mensaje antes de esperar (opcional)",
         "saveReplyVarLabel": "Guardar la respuesta en",
         "saveReplyEsperaLabel": "Esperar (minutos) antes de darla por no contestada",
@@ -1585,45 +1608,55 @@
           "blurb": "Punto de entrada del flujo"
         },
         "send_message": {
-          "label": "Enviar mensaje",
+          "label": "Mensaje",
           "blurb": "Envía un mensaje de texto de WhatsApp"
         },
         "send_buttons": {
-          "label": "Enviar botones",
+          "label": "Menú",
           "blurb": "Envía botones de respuesta rápida"
         },
         "send_list": {
-          "label": "Enviar lista",
+          "label": "Menú de lista",
           "blurb": "Envía una lista de opciones para tocar"
         },
         "send_media": {
-          "label": "Enviar archivo",
+          "label": "Mensaje multimedia",
           "blurb": "Envía una imagen, video o documento"
         },
         "collect_input": {
-          "label": "Capturar respuesta",
+          "label": "Capturar dato",
           "blurb": "Hace una pregunta y guarda la respuesta"
         },
-        "wait": {"label": "Esperar", "blurb": "Smart Delay: espera segundos, minutos u horas antes de seguir"},
-        "save_reply": {"label": "Guardar respuesta", "blurb": "Guarda lo que conteste, con salida si contesta y si no"},
-        "meta_capi": {"label": "Disparar Meta CAPI", "blurb": "Manda un evento de conversión a Meta ligado al anuncio"},
+        "wait": {
+          "label": "Intervalo inteligente",
+          "blurb": "Smart Delay: espera segundos, minutos u horas antes de seguir"
+        },
+        "save_reply": {
+          "label": "Esperar respuesta",
+          "blurb": "Guarda lo que conteste, con salida si contesta y si no"
+        },
+        "meta_capi": {
+          "label": "Pixel (Meta CAPI)",
+          "blurb": "Manda un evento de conversión a Meta ligado al anuncio"
+        },
         "condition": {
-          "label": "Si / si no",
+          "label": "Condicional",
           "blurb": "Ramifica según una regla"
         },
         "set_tag": {
-          "label": "Etiquetar contacto",
+          "label": "Etiquetas",
           "blurb": "Agrega o quita una etiqueta del contacto"
         },
         "handoff": {
-          "label": "Transferir a agente",
+          "label": "Controlador de chat",
           "blurb": "Pasa la conversación a una persona"
         },
         "end": {
-          "label": "Fin",
-          "blurb": "Termina el flujo"
+          "label": "Fin → Agente de IA",
+          "blurb": "Termina el flujo y libera el chat para el Agente DeepSeek"
         }
-      }
+      },
+      "canvasEmptyHint": "Arrastra un bloque desde el panel o haz clic en uno para empezar."
     },
     "validation": {
       "noIssues": "Sin problemas. Listo para activar.",
@@ -1663,8 +1696,8 @@
       "modeRemove": "Quitar",
       "tagPicked": "{mode} etiqueta {tag}…",
       "tagNone": "{mode} etiqueta (ninguna elegida)",
-        "seconds": "{count} s",
-        "minutes": "{count} min"
+      "seconds": "{count} s",
+      "minutes": "{count} min"
     },
     "header": {
       "backToFlows": "Volver a flujos",
@@ -1679,6 +1712,99 @@
       "save": "Guardar",
       "descriptionPlaceholder": "Agrega una breve descripción (interna; los clientes no la ven)",
       "descriptionLabel": "Descripción del flujo"
+    },
+    "catalog": {
+      "tabTools": "Herramientas",
+      "tabSimulate": "Simular",
+      "search": "Buscar bloques...",
+      "available": "Disponibles",
+      "comingSoon": "Próximamente",
+      "soon": "Pronto",
+      "soonHint": "Este bloque todavía no lo ejecuta el motor de flujos",
+      "dragHint": "Clic para agregar o arrástralo al lienzo",
+      "noResults": "Ningún bloque coincide",
+      "collapse": "Ocultar panel",
+      "expand": "Mostrar panel",
+      "mensaje": {
+        "label": "Mensaje",
+        "blurb": "Texto, imagen, video, documento o voz"
+      },
+      "template": {
+        "label": "Template WhatsApp",
+        "blurb": "Plantilla aprobada por Meta"
+      },
+      "etiquetas": {
+        "label": "Etiquetas",
+        "blurb": "Agrega o quita una etiqueta"
+      },
+      "pago": {
+        "label": "Botón Pago/OXXO",
+        "blurb": "Cobro con botón o referencia OXXO"
+      },
+      "menu": {
+        "label": "Menú",
+        "blurb": "Hasta 3 botones de respuesta"
+      },
+      "menu_lista": {
+        "label": "Menú de lista",
+        "blurb": "Lista de hasta 10 opciones"
+      },
+      "esperar_respuesta": {
+        "label": "Esperar respuesta",
+        "blurb": "Guarda la respuesta, con timeout"
+      },
+      "capturar": {
+        "label": "Capturar dato",
+        "blurb": "Pregunta y guarda en una variable"
+      },
+      "controlador": {
+        "label": "Controlador de chat",
+        "blurb": "Pasa el chat a una persona"
+      },
+      "condicional": {
+        "label": "Condicional",
+        "blurb": "Ramifica por etiqueta o variable"
+      },
+      "distribuidor": {
+        "label": "Distribuidor",
+        "blurb": "Reparte contactos entre caminos"
+      },
+      "conexion": {
+        "label": "Conexión de flujo",
+        "blurb": "Salta a otro flujo"
+      },
+      "pixel": {
+        "label": "Pixel (Meta CAPI)",
+        "blurb": "Evento de conversión a Meta"
+      },
+      "intervalo": {
+        "label": "Intervalo inteligente",
+        "blurb": "Smart Delay de segundos a 23 h"
+      },
+      "departamento": {
+        "label": "Departamento",
+        "blurb": "Asigna un área del equipo"
+      },
+      "integracion": {
+        "label": "Integración",
+        "blurb": "Llama a un servicio externo"
+      },
+      "bloque_ia": {
+        "label": "Bloque de IA",
+        "blurb": "Una respuesta puntual con IA"
+      },
+      "agente_ia": {
+        "label": "Agente de IA",
+        "blurb": "Fin del flujo: sigue el Agente DeepSeek"
+      },
+      "kanban": {
+        "label": "Kanban",
+        "blurb": "Mueve el contacto en el pipeline"
+      },
+      "manipulador": {
+        "label": "Manipulador",
+        "blurb": "Edita variables y campos"
+      }
     }
   },
   "Settings": {

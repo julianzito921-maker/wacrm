@@ -76,6 +76,7 @@ import { useFlowEditor, type BuilderState } from './flow-editor-state';
 
 export function FlowBuilder() {
   const t = useTranslations('Flows.builder');
+  const tHeader = useTranslations('Flows.header');
   const {
     state,
     setState,
@@ -167,6 +168,22 @@ export function FlowBuilder() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-7">
+      {/* Descripción interna del flujo. Desde el rediseño, la barra
+          superior del editor mide 56 px y ya no tiene renglón para ella. */}
+      <section className="border-border bg-card rounded-lg border p-4">
+        <label className="text-foreground mb-2 block text-sm font-semibold">
+          {tHeader('descriptionLabel')}
+        </label>
+        <input
+          value={state.description}
+          onChange={(e) =>
+            setState((s) => ({ ...s, description: e.target.value }))
+          }
+          placeholder={tHeader('descriptionPlaceholder')}
+          className="border-border bg-muted text-foreground placeholder:text-muted-foreground/70 focus:border-primary w-full rounded-md border px-3 py-2 text-sm outline-none"
+        />
+      </section>
+
       <TriggerPanel
         state={state}
         setState={setState}

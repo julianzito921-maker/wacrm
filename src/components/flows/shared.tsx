@@ -17,19 +17,32 @@
  */
 
 import {
-  Flag,
+  Bot,
+  Building2,
+  CreditCard,
+  FileBadge,
+  FileText,
   GitFork,
+  Headset,
+  Image as ImageIcon,
   Inbox,
+  KanbanSquare,
+  Link2,
   ListChecks,
   ListPlus,
   MessageCircle,
   MessageSquareReply,
+  Mic,
   Paperclip,
   PlayCircle,
+  Plug,
+  Shuffle,
+  SlidersHorizontal,
+  Sparkles,
   Tag,
   Target,
   Timer,
-  UserPlus,
+  Video,
   Workflow,
 } from 'lucide-react';
 
@@ -171,13 +184,13 @@ export const NODE_META: Record<
   },
   handoff: {
     slugSeed: 'Handoff to agent',
-    icon: UserPlus,
+    icon: Headset,
     color: 'text-amber-400',
     category: 'flow',
   },
   end: {
     slugSeed: 'End',
-    icon: Flag,
+    icon: Bot,
     color: 'text-muted-foreground',
     category: 'flow',
   },
@@ -210,20 +223,25 @@ export function groupNodeTypesByCategory(
 // complement it. `nodeColors()` derives the soft/ring/text variants.
 // ============================================================
 
+// Rediseño del 22-nov-2026: el color sigue a la CATEGORÍA del bloque.
+//   morado  → mensajes (lo que se le manda a la clienta)
+//   ámbar   → esperas y condiciones
+//   turquesa→ Meta CAPI / conversiones
+//   azul    → IA y control del chat
 const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
-  start: { l: 0.62, c: 0.13, h: 162 }, // emerald — the start, echoes WhatsApp green
-  send_message: { l: 0.6, c: 0.18, h: 293 }, // violet — the workhorse
-  send_buttons: { l: 0.62, c: 0.16, h: 254 }, // cobalt
-  send_list: { l: 0.62, c: 0.15, h: 277 }, // indigo
-  send_media: { l: 0.65, c: 0.12, h: 210 }, // sky
-  collect_input: { l: 0.65, c: 0.1, h: 185 }, // teal — capture
-  wait: { l: 0.68, c: 0.14, h: 45 }, // naranja — temporizador
-  save_reply: { l: 0.66, c: 0.11, h: 175 }, // verde azulado — guarda respuesta
-  condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
-  set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
-  handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
-  meta_capi: { l: 0.6, c: 0.16, h: 240 }, // azul Meta — evento de conversión
-  end: { l: 0.55, c: 0.01, h: 260 }, // neutral grey — terminal
+  start: { l: 0.66, c: 0.15, h: 155 }, // verde — el disparador
+  send_message: { l: 0.56, c: 0.24, h: 285 }, // morado #6C47FF
+  send_media: { l: 0.6, c: 0.21, h: 290 }, // morado
+  send_buttons: { l: 0.6, c: 0.2, h: 300 }, // morado rosado — menú
+  send_list: { l: 0.6, c: 0.2, h: 300 }, // morado rosado — menú
+  set_tag: { l: 0.64, c: 0.17, h: 320 }, // magenta — etiquetas
+  wait: { l: 0.76, c: 0.16, h: 70 }, // ámbar — intervalo inteligente
+  save_reply: { l: 0.76, c: 0.16, h: 70 }, // ámbar — esperar respuesta
+  collect_input: { l: 0.74, c: 0.15, h: 60 }, // ámbar
+  condition: { l: 0.74, c: 0.16, h: 55 }, // ámbar anaranjado — condicional
+  meta_capi: { l: 0.72, c: 0.13, h: 180 }, // turquesa — conversiones
+  handoff: { l: 0.66, c: 0.15, h: 230 }, // azul cielo — controlador de chat
+  end: { l: 0.62, c: 0.18, h: 258 }, // azul — pasa al Agente de IA
 };
 
 export interface NodeColors {
@@ -472,4 +490,106 @@ export function summarizeNode(
       return note.length > 0 ? truncate(note) : null;
     }
   }
+}
+
+// ============================================================
+// Catálogo visual de bloques (panel flotante del lienzo).
+//
+// Rediseño del 22-nov-2026. Cada bloque del catálogo apunta a un tipo de
+// nodo que el motor YA sabe ejecutar (`tipo`), o queda como «Próximamente»
+// (sin `tipo`): se ve en el catálogo pero no se puede agregar, para no
+// prometer algo que el motor todavía no hace.
+// ============================================================
+
+export type BloqueId =
+  | 'mensaje'
+  | 'template'
+  | 'etiquetas'
+  | 'pago'
+  | 'menu'
+  | 'menu_lista'
+  | 'esperar_respuesta'
+  | 'capturar'
+  | 'controlador'
+  | 'condicional'
+  | 'distribuidor'
+  | 'conexion'
+  | 'pixel'
+  | 'intervalo'
+  | 'departamento'
+  | 'integracion'
+  | 'bloque_ia'
+  | 'agente_ia'
+  | 'kanban'
+  | 'manipulador';
+
+export interface Bloque {
+  id: BloqueId;
+  icon: typeof Workflow;
+  /** Tipo de nodo que crea. Sin él, el bloque está «Próximamente». */
+  tipo?: NodeType;
+  /** Tono del ícono cuando el bloque todavía no existe en el motor. */
+  tono: 'violeta' | 'azul';
+}
+
+export const CATALOGO_BLOQUES: Bloque[] = [
+  { id: 'mensaje', icon: MessageCircle, tipo: 'send_message', tono: 'violeta' },
+  { id: 'template', icon: FileBadge, tono: 'violeta' },
+  { id: 'etiquetas', icon: Tag, tipo: 'set_tag', tono: 'violeta' },
+  { id: 'pago', icon: CreditCard, tono: 'violeta' },
+  { id: 'menu', icon: ListPlus, tipo: 'send_buttons', tono: 'violeta' },
+  { id: 'menu_lista', icon: ListChecks, tipo: 'send_list', tono: 'violeta' },
+  { id: 'esperar_respuesta', icon: MessageSquareReply, tipo: 'save_reply', tono: 'violeta' },
+  { id: 'capturar', icon: Inbox, tipo: 'collect_input', tono: 'violeta' },
+  { id: 'controlador', icon: Headset, tipo: 'handoff', tono: 'azul' },
+  { id: 'condicional', icon: GitFork, tipo: 'condition', tono: 'violeta' },
+  { id: 'distribuidor', icon: Shuffle, tono: 'violeta' },
+  { id: 'conexion', icon: Link2, tono: 'violeta' },
+  { id: 'pixel', icon: Target, tipo: 'meta_capi', tono: 'azul' },
+  { id: 'intervalo', icon: Timer, tipo: 'wait', tono: 'violeta' },
+  { id: 'departamento', icon: Building2, tono: 'azul' },
+  { id: 'integracion', icon: Plug, tono: 'azul' },
+  { id: 'bloque_ia', icon: Sparkles, tono: 'azul' },
+  { id: 'agente_ia', icon: Bot, tipo: 'end', tono: 'azul' },
+  { id: 'kanban', icon: KanbanSquare, tono: 'azul' },
+  { id: 'manipulador', icon: SlidersHorizontal, tono: 'violeta' },
+];
+
+/** Atajos de multimedia dentro del bloque «Mensaje» (nodo send_media). */
+export const ATAJOS_MEDIA: {
+  medio: 'image' | 'video' | 'document' | 'audio';
+  icon: typeof Workflow;
+  clave: string;
+}[] = [
+  { medio: 'image', icon: ImageIcon, clave: 'paletteImage' },
+  { medio: 'video', icon: Video, clave: 'paletteVideo' },
+  { medio: 'document', icon: FileText, clave: 'paletteDocument' },
+  { medio: 'audio', icon: Mic, clave: 'paletteAudio' },
+];
+
+/** Tipo MIME del arrastre de un bloque desde el panel hasta el lienzo. */
+export const DND_BLOQUE = 'application/x-wacrm-bloque';
+
+// ============================================================
+// Color de cada arista según su salida (rediseño del 22-nov-2026):
+//   verde → éxito / respondió / se cumple la condición
+//   rojo  → la condición no se cumple
+//   ámbar → no contestó a tiempo (timeout)
+//   resto → el color de la categoría del nodo de origen
+// ============================================================
+
+export const COLOR_EXITO = '#22c55e';
+export const COLOR_NEGATIVO = '#ef4444';
+export const COLOR_TIMEOUT = '#f5a524';
+
+export function colorDeSalida(tipoOrigen: NodeType, salida: string | null | undefined): string {
+  if (tipoOrigen === 'condition') {
+    if (salida === 'true') return COLOR_EXITO;
+    if (salida === 'false') return COLOR_NEGATIVO;
+  }
+  if (tipoOrigen === 'save_reply') {
+    if (salida === 'contesto') return COLOR_EXITO;
+    if (salida === 'no_contesto') return COLOR_TIMEOUT;
+  }
+  return nodeColors(tipoOrigen).solid;
 }
