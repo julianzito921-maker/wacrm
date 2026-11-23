@@ -80,6 +80,7 @@ interface PutBody {
   trigger_config?: Record<string, unknown>
   entry_node_id?: string | null
   fallback_policy?: Record<string, unknown>
+  connection_id?: string | null
   nodes?: Array<{
     node_key: string
     node_type: string
@@ -98,8 +99,9 @@ export async function PUT(
   // Writes require at least `agent` — the RLS flows_update policy demands
   // it, but this route mutates via the service-role client which bypasses
   // RLS, so the role must be enforced here (a viewer passes ownership).
+  let roleCtx: Awaited<ReturnType<typeof requireRole>>
   try {
-    await requireRole('agent')
+    roleCtx = await requireRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -146,6 +148,21 @@ export async function PUT(
     flowPatch.entry_node_id = body.entry_node_id
   if (body.fallback_policy !== undefined)
     flowPatch.fallback_policy = body.fallback_policy
+  if (body.connection_id !== undefined) {
+    const connectionId = body.connection_id
+    if (connectionId) {
+      const { data: conexion } = await supabaseAdmin()
+        .from('whatsapp_connections')
+        .select('id')
+        .eq('id', connectionId)
+        .eq('account_id', roleCtx.accountId)
+        .maybeSingle()
+      if (!conexion) {
+        return NextResponse.json({ error: 'invalid_connection' }, { status: 400 })
+      }
+    }
+    flowPatch.connection_id = connectionId
+  }
 
   if (body.nodes !== undefined) {
     const { error: graphErr } = await guard.supabase.rpc('replace_flow_graph', {

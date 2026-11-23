@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
-import { enviarPlantilla } from '@/lib/messaging/send'
+import {
+  enviarPlantilla,
+  EnvioBloqueadoError,
+  EnvioCalentamientoError,
+  extraerErrorMeta,
+} from '@/lib/messaging/send'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { credencialesPrimarias } from '@/lib/whatsapp/connections'
+import { conexionBloqueaMasivo } from '@/lib/whatsapp/warmup'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body'
 import {
@@ -24,6 +31,7 @@ interface BroadcastResult {
   status: 'sent' | 'failed'
   whatsapp_message_id?: string
   error?: string
+  code?: string | null
 }
 
 /**
@@ -123,23 +131,55 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    let creds = await credencialesPrimarias(supabase, accountId)
+    if (!creds) {
+      const { data: config, error: configError } = await supabase
+        .from('whatsapp_config')
+        .select('*')
+        .eq('account_id', accountId)
+        .single()
 
-    if (configError || !config) {
-      return NextResponse.json(
-        {
-          error:
-            t('common.whatsappNotConfiguredSetup'),
-        },
-        { status: 400 }
-      )
+      if (configError || !config) {
+        return NextResponse.json(
+          {
+            error:
+              t('common.whatsappNotConfiguredSetup'),
+          },
+          { status: 400 }
+        )
+      }
+      creds = {
+        connectionId: null,
+        phoneNumberId: config.phone_number_id,
+        accessToken: decrypt(config.access_token),
+      }
     }
 
-    const accessToken = decrypt(config.access_token)
+    if (creds.connectionId) {
+      const { data: conexion } = await supabase
+        .from('whatsapp_connections')
+        .select('health_status, restriction_scope, quality_rating')
+        .eq('id', creds.connectionId)
+        .maybeSingle()
+      if (conexion) {
+        const bloqueo = conexionBloqueaMasivo(
+          conexion as {
+            health_status?: string | null
+            restriction_scope?: string | null
+            quality_rating?: string | null
+          },
+        )
+        if (bloqueo.bloqueado) {
+          return NextResponse.json(
+            {
+              error: bloqueo.motivo ?? 'Conexión restringida por Meta',
+              code: 'connection_restricted',
+            },
+            { status: 409 },
+          )
+        }
+      }
+    }
 
     // Load the template row once so sendTemplateMessage can build
     // header + button components on each iteration. Loading inside
@@ -163,6 +203,37 @@ export async function POST(request: Request) {
     }
     const templateRow = resolvedTemplate.row
 
+    // Opt-out: un broadcast es marketing. Se resuelve el contacto por
+    // teléfono normalizado para bloquear antes de tocar Meta y para que
+    // la política de salida reciba `contactId`.
+    const phones = recipients
+      .map((r) => sanitizePhoneForMeta(r.phone))
+      .filter((p) => isValidE164(p))
+    const contactoPorTelefono = new Map<
+      string,
+      {
+        id: string
+        opted_out?: boolean
+        marketing_opted_out?: boolean
+        consent_status?: string | null
+      }
+    >()
+    if (phones.length > 0) {
+      const { data: contactos } = await supabase
+        .from('contacts')
+        .select('id, phone_normalized, opted_out, marketing_opted_out, consent_status')
+        .in('phone_normalized', phones)
+      for (const c of (contactos ?? []) as Array<{
+        id: string
+        phone_normalized?: string | null
+        opted_out?: boolean
+        marketing_opted_out?: boolean
+        consent_status?: string | null
+      }>) {
+        if (c.phone_normalized) contactoPorTelefono.set(c.phone_normalized, c)
+      }
+    }
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
@@ -183,8 +254,25 @@ export async function POST(request: Request) {
       // Retry with phone variants on "not in allowed list" so numbers
       // that differ only in a trunk-prefix 0 still reach recipients.
       const variants = phoneVariants(sanitized)
+      const contacto = contactoPorTelefono.get(sanitized) ?? null
+      if (
+        contacto &&
+        (contacto.opted_out ||
+          contacto.marketing_opted_out ||
+          contacto.consent_status === 'denied')
+      ) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: 'Opt-out de marketing o consentimiento denegado',
+          code: 'opt_out',
+        })
+        failedCount++
+        continue
+      }
       let sentMessageId: string | null = null
       let lastError: string | null = null
+      let lastCode: string | null = null
 
       for (const variant of variants) {
         try {
@@ -192,11 +280,14 @@ export async function POST(request: Request) {
             ctx: {
               accountId,
               userId,
+              contactId: contacto?.id ?? null,
+              connectionId: creds.connectionId,
               source: 'difusion',
+              templateCategory: templateRow?.category ?? 'Marketing',
               reason: `difusión: ${template_name}`,
             },
-            phoneNumberId: config.phone_number_id,
-            accessToken,
+            phoneNumberId: creds.phoneNumberId,
+            accessToken: creds.accessToken,
             to: variant,
             templateName: template_name,
             language: resolvedTemplate.language,
@@ -208,14 +299,36 @@ export async function POST(request: Request) {
           lastError = null
           break
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : t('common.unknownError')
-          if (!isRecipientNotAllowedError(errorMessage)) {
-            lastError = errorMessage
-            break
+          if (error instanceof EnvioCalentamientoError) {
+            return NextResponse.json(
+              {
+                error: error.message,
+                code: 'warmup_limit',
+                retry_after_ms: Math.max(
+                  60_000,
+                  new Date(error.reintentarEn).getTime() - Date.now(),
+                ),
+              },
+              { status: 429 },
+            )
           }
-          lastError = errorMessage
-          // retry with next variant
+          const meta = extraerErrorMeta(error)
+          lastError = meta.message
+          lastCode = meta.code
+          if (error instanceof EnvioBloqueadoError) {
+            lastCode = error.motivo
+          }
+          if (meta.code === '130429') {
+            return NextResponse.json(
+              {
+                error: meta.message,
+                code: '130429',
+                retry_after_ms: 60_000,
+              },
+              { status: 429 },
+            )
+          }
+          if (!isRecipientNotAllowedError(meta.message)) break
         }
       }
 
@@ -235,6 +348,7 @@ export async function POST(request: Request) {
           phone: recipient.phone,
           status: 'failed',
           error: lastError || t('common.unknownError'),
+          code: lastCode,
         })
         failedCount++
       }

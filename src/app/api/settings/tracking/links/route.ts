@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { credencialesDeConexion } from '@/lib/whatsapp/connections'
 import { getPhoneNumberHealth } from '@/lib/whatsapp/meta-api'
 import {
   LINK_PLATFORMS,
@@ -14,7 +16,23 @@ import {
 } from '@/lib/tracking/links'
 
 const CAMPOS =
-  'id, name, slug, platform, phone_number, prefilled_text, default_utm, active, created_at'
+  'id, name, slug, platform, phone_number, prefilled_text, default_utm, active, created_at, connection_id, domain'
+
+interface ConexionLink {
+  id: string
+  phone_number: string | null
+  display_phone_number: string | null
+  custom_domain: string | null
+  phone_number_id: string
+  active: boolean
+}
+
+interface ConfigLink {
+  id: string
+  phone_number_id: string
+  access_token: string
+  status: string
+}
 
 interface FilaEnlace {
   id: string
@@ -26,6 +44,8 @@ interface FilaEnlace {
   default_utm: Record<string, string> | null
   active: boolean
   created_at: string
+  connection_id: string | null
+  domain: string | null
 }
 
 function utmLimpio(input: unknown): Record<string, string> {
@@ -45,9 +65,10 @@ function baseUrl(request: Request): string {
 }
 
 function publico(fila: FilaEnlace, base: string) {
+  const origen = fila.domain ? `https://${fila.domain}` : base
   return {
     ...fila,
-    url: construirUrlEnlace(base, fila.slug, fila.default_utm ?? {}),
+    url: construirUrlEnlace(origen, fila.slug, fila.default_utm ?? {}),
   }
 }
 
@@ -87,22 +108,76 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'invalid_platform' }, { status: 400 })
     }
 
-    // Número real de la conexión de WhatsApp de la cuenta.
-    const { data: cfg } = await ctx.supabase
-      .from('whatsapp_config')
-      .select('id, phone_number_id, access_token, status')
-      .eq('account_id', ctx.accountId)
-      .maybeSingle()
-    if (!cfg || cfg.status !== 'connected') {
-      return NextResponse.json({ error: 'whatsapp_disconnected' }, { status: 409 })
+    // Isla: explícita o la default. Si no hay conexión, solo se permite
+    // el modo legacy cuando la cuenta tiene una única configuración.
+    const connectionId = String(body.connection_id ?? '').trim() || null
+    let connection: ConexionLink | null = null
+    let cfg: ConfigLink | null = null
+
+    if (connectionId) {
+      const { data } = await ctx.supabase
+        .from('whatsapp_connections')
+        .select('id, phone_number, display_phone_number, custom_domain, phone_number_id, active')
+        .eq('id', connectionId)
+        .eq('account_id', ctx.accountId)
+        .maybeSingle()
+      if (!data || (data as { active?: boolean }).active === false) {
+        return NextResponse.json({ error: 'connection_disabled' }, { status: 409 })
+      }
+      connection = data as ConexionLink | null
+    } else {
+      const { data } = await ctx.supabase
+        .from('whatsapp_connections')
+        .select('id, phone_number, display_phone_number, custom_domain, phone_number_id, active')
+        .eq('account_id', ctx.accountId)
+        .eq('active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: true })
+        .limit(2)
+      const lista = (data ?? []) as Array<{ id: string }>
+      if (lista.length > 1) {
+        return NextResponse.json({ error: 'connection_required' }, { status: 400 })
+      }
+      connection = (lista[0] as ConexionLink) ?? null
     }
+
+    if (!connection) {
+      const { data } = await ctx.supabase
+        .from('whatsapp_config')
+        .select('id, phone_number_id, access_token, status')
+        .eq('account_id', ctx.accountId)
+        .maybeSingle()
+      cfg = (data as ConfigLink | null) ?? null
+      if (!cfg || cfg.status !== 'connected') {
+        return NextResponse.json({ error: 'whatsapp_disconnected' }, { status: 409 })
+      }
+    }
+
     let telefono: string | null = null
     try {
-      const info = await getPhoneNumberHealth({
-        phoneNumberId: cfg.phone_number_id as string,
-        accessToken: decrypt(cfg.access_token as string),
-      })
-      telefono = normalizarTelefono(info.display_phone_number)
+      if (connection) {
+        telefono = normalizarTelefono(
+          connection.phone_number ?? connection.display_phone_number ?? '',
+        )
+        if (!telefono) {
+          const creds = await credencialesDeConexion(
+            supabaseAdmin(),
+            connection.id,
+          )
+          if (!creds) throw new Error('sin credenciales')
+          const info = await getPhoneNumberHealth({
+            phoneNumberId: creds.phoneNumberId,
+            accessToken: creds.accessToken,
+          })
+          telefono = normalizarTelefono(info.display_phone_number)
+        }
+      } else if (cfg) {
+        const info = await getPhoneNumberHealth({
+          phoneNumberId: cfg.phone_number_id,
+          accessToken: decrypt(cfg.access_token),
+        })
+        telefono = normalizarTelefono(info.display_phone_number)
+      }
     } catch (err) {
       console.error(
         '[tracking/links] no se pudo leer el número:',
@@ -113,6 +188,7 @@ export async function POST(request: Request) {
     if (!telefono) {
       return NextResponse.json({ error: 'phone_unavailable' }, { status: 502 })
     }
+
 
     const pedido = String(body.slug ?? '').trim()
     const baseSlug = slugValido(pedido) ? pedido : slugify(pedido || name)
@@ -129,7 +205,9 @@ export async function POST(request: Request) {
           name,
           slug,
           platform,
-          whatsapp_config_id: cfg.id,
+          connection_id: connection?.id ?? null,
+          domain: connection?.custom_domain ?? null,
+          whatsapp_config_id: cfg?.id ?? null,
           phone_number: telefono,
           prefilled_text: prefilled,
           default_utm: defaultUtm,

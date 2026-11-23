@@ -128,7 +128,11 @@ export async function resolveAudienceContacts(
   resolveCsv: (rows: CsvAudienceRow[]) => Promise<Contact[]>,
 ): Promise<Contact[]> {
   const excluded = await fetchExcludedIds(db, audience);
-  const keep = (contact: Contact) => !excluded.has(contact.id);
+  const keep = (contact: Contact) =>
+    !excluded.has(contact.id) &&
+    !contact.opted_out &&
+    !contact.marketing_opted_out &&
+    contact.consent_status !== 'denied';
 
   if (audience.type === 'all') {
     return (await fetchAllContacts(db)).filter(keep);
@@ -142,7 +146,7 @@ export async function resolveAudienceContacts(
   if (!ids) return [];
   const wanted = [...ids].filter((id) => !excluded.has(id));
   if (wanted.length === 0) return [];
-  return fetchContactsByIds(db, wanted);
+  return (await fetchContactsByIds(db, wanted)).filter(keep);
 }
 
 export async function countAudience(
@@ -158,7 +162,10 @@ export async function countAudience(
   if (audience.type === 'all') {
     const { count, error } = await db
       .from('contacts')
-      .select('id', { count: 'exact', head: true });
+      .select('id', { count: 'exact', head: true })
+      .eq('opted_out', false)
+      .eq('marketing_opted_out', false)
+      .or('consent_status.is.null,consent_status.neq.denied');
     if (error) throw new Error(`Failed to count contacts: ${error.message}`);
     const total = count ?? 0;
     const excluded = await fetchExcludedIds(db, audience);
@@ -172,7 +179,13 @@ export async function countAudience(
   const ids = await fetchAudienceContactIds(db, audience);
   if (!ids) return null;
   const excluded = await fetchExcludedIds(db, audience);
-  let size = 0;
-  for (const id of ids) if (!excluded.has(id)) size++;
-  return size;
+  const wanted = [...ids].filter((id) => !excluded.has(id));
+  if (wanted.length === 0) return 0;
+  const contacts = await fetchContactsByIds(db, wanted);
+  return contacts.filter(
+    (c) =>
+      !c.opted_out &&
+      !c.marketing_opted_out &&
+      c.consent_status !== 'denied',
+  ).length;
 }

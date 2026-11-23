@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 
     const { data: deal } = await supabase
       .from('deals')
-      .select('id, contact_id, value, currency, stage_id')
+      .select('id, contact_id, conversation_id, value, currency, stage_id')
       .eq('id', dealId)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     const resultado = await enviarEventoMeta({
       accountId,
       contactId: deal.contact_id as string,
+      conversationId: (deal as { conversation_id?: string | null }).conversation_id ?? null,
       eventName: 'Purchase',
       eventId: `deal-${deal.id}-${deal.stage_id}-${Date.now()}`,
       value: Number.isFinite(valor) && valor > 0 ? valor : undefined,

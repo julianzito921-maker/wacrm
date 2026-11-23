@@ -351,7 +351,14 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
       };
     case "wait":
       // 15 s por defecto: tiempo de lectura humano sin frenar el embudo.
-      return { segundos: 15, next_node_key: "" };
+      return {
+        modo: "intervalo",
+        segundos: 15,
+        fecha_objetivo: "",
+        horario: { usar_cuenta: true, dias: [1, 2, 3, 4, 5], desde: "09:00", hasta: "18:00" },
+        fuera_ventana_next: "",
+        next_node_key: "",
+      };
     case "meta_capi":
       return { event_name: "Purchase", value: 99, currency: "MXN", next_node_key: "" };
     case "send_payment":
@@ -414,6 +421,105 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return { mode: "add", tag_id: "", next_node_key: "" };
     case "handoff":
       return { note: "" };
+    case "connect_flow":
+      return { target_flow_id: "" };
+    case "ai_block":
+      return {
+        credential_source: "account",
+        model: "",
+        message_template: "{{last_user_message}}",
+        output_var: "ai.response",
+        auto_send: false,
+        prompt: "",
+        understand_audio: false,
+        understand_image: false,
+        understand_pdf: false,
+        identify_receipt: false,
+        context_window: 10,
+        conditions: [],
+        receipt_next: "",
+        fallback_next: "",
+      };
+    case "manipulator":
+      return { target: "var", key: "", operation: "set", value: "", value_type: "text", next_node_key: "" };
+    case "distributor":
+      return { mode: "always_next", outputs: [] };
+    case "notification":
+      return { name: "Alerta", country_code: "52", phone: "", message: "", next_node_key: "" };
+    case "sale_approved":
+      return { pipeline_id: "", stage_id: "", amount_var: "", currency_var: "", send_capi: true, notify: true };
+    case "carousel":
+      return { intro_text: "", expires_days: 1, cards: [], timeout_next: "" };
+    case "department":
+      return { department_id: "", department_name: "", next_node_key: "" };
+    case "http_request":
+      return {
+        method: "GET",
+        url: "",
+        headers: [],
+        body_type: "none",
+        body: "",
+        timeout_ms: 15_000,
+        response_map: [],
+        status_var: "",
+        continue_on_error: true,
+        error_next: "",
+        next_node_key: "",
+      };
+    case "payment_gateway":
+      return {
+        provider: "stripe",
+        currency: "MXN",
+        amount_mode: "fixed",
+        amount: 99,
+        amount_var: "",
+        concept: "",
+        checkout_url: "",
+        message: "",
+        template_name: "",
+        template_language: "es_MX",
+        template_variables: {},
+        wait_minutes: 120,
+        approved_next: "",
+        rejected_next: "",
+        timeout_next: "",
+        send_capi: false,
+        notify: true,
+      };
+    case "ai_media":
+      return {
+        kind: "audio",
+        audio: {
+          provider: "edge",
+          voice: "es-MX-DaliaNeural",
+          text: "",
+          format: "mp3",
+        },
+        image: {
+          provider: "pollinations",
+          prompt: "",
+          enhance_prompt: true,
+          width: 1024,
+          height: 1024,
+          model: "flux",
+        },
+        output_var: "ai_media_url",
+        send_now: false,
+        next_node_key: "",
+      };
+    case "official_call":
+      return {
+        mode: "permission",
+        body_text: "¿Te puedo llamar por aquí para ayudarte mejor?",
+        template_name: "",
+        template_language: "es_MX",
+        template_variables: {},
+        wait_days: 7,
+        granted_next: "",
+        denied_next: "",
+        timeout_next: "",
+        call_bridge: "none",
+      };
     case "end":
       return {};
   }

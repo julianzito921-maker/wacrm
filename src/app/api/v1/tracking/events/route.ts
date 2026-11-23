@@ -52,6 +52,14 @@ export async function POST(request: Request) {
     const resultado = await enviarEventoMeta({
       accountId: ctx.accountId,
       contactId,
+      connectionId:
+        typeof body.connection_id === 'string' && body.connection_id.trim()
+          ? body.connection_id.trim()
+          : null,
+      conversationId:
+        typeof body.conversation_id === 'string' && body.conversation_id.trim()
+          ? body.conversation_id.trim()
+          : null,
       eventName,
       eventId,
       value: Number.isFinite(valor) && valor > 0 ? valor : undefined,

@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/flows/admin-client'
+﻿import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 export interface CredencialesMeta {
@@ -46,14 +46,17 @@ export function elegirCredenciales(
 
 export async function resolverCredencialesMeta(
   accountId: string,
+  pixelId?: string | null,
 ): Promise<CredencialesMeta | null> {
   const db = supabaseAdmin()
-  const { data } = await db
+  let query = db
     .from('tracking_pixels')
     .select('pixel_id, access_token, test_event_code')
     .eq('account_id', accountId)
     .eq('platform', 'meta')
     .eq('active', true)
+  if (pixelId) query = query.eq('pixel_id', pixelId)
+  const { data } = await query
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle()
@@ -84,7 +87,87 @@ export async function resolverCredencialesMeta(
   })
 }
 
-/** Moneda del evento: la del deal/llamada, si no la de la cuenta. */
+/** Credenciales CAPI atadas a una conexión/isla concreta. */
+export interface CredencialesConexionMeta extends CredencialesMeta {
+  connectionId: string
+  wabaId: string
+  /** Token de la WABA (para fallback de eventos si el píxel no trae uno). */
+  wabaToken: string | null
+}
+
+/**
+ * Resuelve el píxel de UNA conexión. Si la conexión no tiene
+ * tracking_pixel_id o el píxel no es de la cuenta, devuelve null: es
+ * preferible no enviar a mandar el evento al píxel de otra isla.
+ */
+export async function resolverCredencialesConexion(
+  accountId: string,
+  connectionId: string,
+  pixelIdOverride?: string | null,
+): Promise<CredencialesConexionMeta | null> {
+  const db = supabaseAdmin()
+  const { data: conn } = await db
+    .from('whatsapp_connections')
+    .select('id, account_id, waba_id, access_token, tracking_pixel_id, active')
+    .eq('id', connectionId)
+    .eq('account_id', accountId)
+    .eq('active', true)
+    .maybeSingle()
+  if (!conn) return null
+
+  const vinculado = (conn.tracking_pixel_id as string | null) ?? null
+  if (!vinculado) return null
+
+  const { data: pixel } = await db
+    .from('tracking_pixels')
+    .select('pixel_id, access_token, test_event_code')
+    .eq('id', vinculado)
+    .eq('account_id', accountId)
+    .eq('platform', 'meta')
+    .eq('active', true)
+    .maybeSingle()
+  if (!pixel?.pixel_id) return null
+
+  // El nodo puede repetir el mismo píxel (por UUID o por pixel_id), pero
+  // nunca elegir el de otra isla.
+  if (
+    pixelIdOverride &&
+    pixelIdOverride !== vinculado &&
+    pixelIdOverride !== pixel.pixel_id
+  ) {
+    return null
+  }
+
+  let pixelToken: string | null = null
+  if (pixel.access_token) {
+    try {
+      pixelToken = decrypt(pixel.access_token as string)
+    } catch {
+      pixelToken = null
+    }
+  }
+
+  let wabaToken: string | null = null
+  if (conn.access_token) {
+    try {
+      wabaToken = decrypt(conn.access_token as string)
+    } catch {
+      wabaToken = null
+    }
+  }
+  if (!conn.waba_id) return null
+
+  return {
+    pixelId: pixel.pixel_id as string,
+    token: pixelToken || process.env.META_EVENTS_TOKEN || null,
+    testEventCode: (pixel.test_event_code as string | null) ?? undefined,
+    origen: 'pixel',
+    connectionId: conn.id as string,
+    wabaId: conn.waba_id as string,
+    wabaToken,
+  }
+}
+
 export async function monedaDeCuenta(accountId: string): Promise<string> {
   const { data } = await supabaseAdmin()
     .from('accounts')

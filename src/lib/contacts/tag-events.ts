@@ -43,7 +43,12 @@ export async function addContactTagAndDispatch(
   try {
     const { data: tag } = await input.db.from('tags').select('name').eq('id', input.tagId).maybeSingle();
     if (tag && (tag.name === 'pagado' || tag.name === 'extra-pagado')) {
-      await enviarCompraMeta({ accountId: input.accountId, contactId: input.contactId, etiqueta: tag.name });
+      await enviarCompraMeta({
+        accountId: input.accountId,
+        contactId: input.contactId,
+        etiqueta: tag.name,
+        conversationId: input.context?.conversation_id ?? null,
+      });
     }
   } catch (err) {
     console.warn('[conversiones] no se pudo revisar la etiqueta:', err instanceof Error ? err.message : err);

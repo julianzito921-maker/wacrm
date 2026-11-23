@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
 
 const HEADERS: Record<string, string[]> = {
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     let query = supabase
       .from('sales')
       .select(
-        'id, client_name, amount, currency, payment_id, meta_ref, region, status, sold_at, lead_number, product_id, instance_id, contacts(name, lead_number), product_catalog(nombre), whatsapp_config(phone_number_id)',
+        'id, client_name, amount, currency, payment_id, meta_ref, region, status, sold_at, lead_number, product_id, instance_id, connection_id, contacts(name, lead_number), product_catalog(nombre), whatsapp_connections(name, phone_number, display_phone_number, phone_number_id)',
       )
       .eq('account_id', accountId)
       .eq('status', 'confirmed')
@@ -40,7 +40,7 @@ export async function GET(request: Request) {
     const product = url.searchParams.get('product');
     const agent = url.searchParams.get('agent');
     const currency = url.searchParams.get('currency');
-    if (instance) query = query.eq('instance_id', instance);
+    if (instance) query = query.eq('connection_id', instance);
     if (product) query = query.eq('product_id', product);
     if (agent) query = query.eq('created_by', agent);
     if (currency) query = query.eq('currency', currency);
@@ -53,12 +53,13 @@ export async function GET(request: Request) {
     for (const s of (data ?? []) as unknown as Array<Record<string, unknown>>) {
       const contact = s.contacts as { name?: string; lead_number?: number } | null;
       const productRow = s.product_catalog as { nombre?: string } | null;
-      const conn = s.whatsapp_config as { phone_number_id?: string } | null;
+      const conn = s.whatsapp_connections as { name?: string; phone_number?: string; display_phone_number?: string; phone_number_id?: string } | null;
       lines.push(
         [
-          conn?.phone_number_id
-            ? `WhatsApp ${String(conn.phone_number_id).slice(-4)}`
-            : 'Sin conexión',
+          conn?.name ??
+            (conn?.phone_number_id
+              ? `WhatsApp ${String(conn.phone_number_id).slice(-4)}`
+              : 'Sin conexión'),
           conn?.phone_number_id ?? '',
           s.lead_number ?? contact?.lead_number ?? '',
           s.client_name ?? contact?.name ?? '',

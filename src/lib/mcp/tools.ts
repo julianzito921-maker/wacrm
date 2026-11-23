@@ -530,7 +530,7 @@ export async function manageCrmEntities(
       const dealId = normalizarNombre(input.deal_id, 'deal_id');
       const { data: deal } = await db
         .from('deals')
-        .select('id, contact_id, value, currency, stage_id, pipeline_id')
+        .select('id, contact_id, conversation_id, value, currency, stage_id, pipeline_id')
         .eq('id', dealId)
         .eq('account_id', ctx.accountId)
         .maybeSingle();
@@ -554,6 +554,7 @@ export async function manageCrmEntities(
         const r = await enviarEventoMeta({
           accountId: ctx.accountId,
           contactId: deal.contact_id as string,
+          conversationId: (deal as { conversation_id?: string | null }).conversation_id ?? null,
           eventName: 'Purchase',
           eventId: `mcp-deal-${dealId}-${s.id}-${Date.now()}`,
           value: Number(deal.value) > 0 ? Number(deal.value) : undefined,

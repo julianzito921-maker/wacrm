@@ -43,7 +43,8 @@ export async function resolveConversationByPhone(
   db: SupabaseClient,
   accountId: string,
   phone: string,
-  name?: string | null
+  name?: string | null,
+  connectionId?: string | null,
 ): Promise<ResolvedConversation> {
   // Raw integrator input: the leading `+` is required so the country
   // code is explicit — "4155551212" would otherwise be delivered to
@@ -58,18 +59,55 @@ export async function resolveConversationByPhone(
   }
 
   // Fail fast (and create nothing) when the account has no WhatsApp
-  // connected — the same error the send would raise anyway.
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('id')
-    .eq('account_id', accountId)
-    .maybeSingle();
-  if (!config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  // connected. Con varias islas, connection_id es obligatorio: nunca
+  // se elige "la primera" y se cruzan tokens.
+  let connId = connectionId ?? null;
+  if (connId) {
+    const { data: conn } = await db
+      .from('whatsapp_connections')
+      .select('id')
+      .eq('id', connId)
+      .eq('account_id', accountId)
+      .eq('active', true)
+      .maybeSingle();
+    if (!conn) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'La conexión indicada no está activa.',
+        400
+      );
+    }
+  } else {
+    const { data: conexiones } = await db
+      .from('whatsapp_connections')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('active', true)
+      .limit(2);
+    const lista = (conexiones ?? []) as Array<{ id: string }>;
+    if (lista.length > 1) {
+      throw new SendMessageError(
+        'connection_required',
+        'Indica connection_id: la cuenta tiene varias islas.',
+        400
+      );
+    }
+    if (lista.length === 1) {
+      connId = lista[0].id;
+    } else {
+      const { data: config } = await db
+        .from('whatsapp_config')
+        .select('id')
+        .eq('account_id', accountId)
+        .maybeSingle();
+      if (!config) {
+        throw new SendMessageError(
+          'whatsapp_not_configured',
+          'WhatsApp not configured. Please set up your WhatsApp integration first.',
+          400
+        );
+      }
+    }
   }
 
   // Audit user for created rows = the single account-wide default used
@@ -144,7 +182,8 @@ export async function resolveConversationByPhone(
     db,
     accountId,
     contactId,
-    ownerUserId
+    ownerUserId,
+    connId
   );
 
   return {
@@ -165,13 +204,15 @@ async function findOrCreateConversationRow(
   db: SupabaseClient,
   accountId: string,
   contactId: string,
-  ownerUserId: string
+  ownerUserId: string,
+  connectionId: string | null,
 ): Promise<{ id: string; created: boolean }> {
   const { data: existing, error: findErr } = await db
     .from('conversations')
     .select('id')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .eq('connection_id', connectionId)
     .order('created_at', { ascending: true })
     .limit(1);
 
@@ -190,6 +231,7 @@ async function findOrCreateConversationRow(
       account_id: accountId,
       user_id: ownerUserId,
       contact_id: contactId,
+      connection_id: connectionId,
     })
     .select('id')
     .single();
@@ -201,6 +243,7 @@ async function findOrCreateConversationRow(
         .select('id')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
+        .eq('connection_id', connectionId)
         .order('created_at', { ascending: true })
         .limit(1);
       if (raced && raced.length > 0) {

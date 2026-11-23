@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
@@ -34,6 +34,50 @@ export async function PATCH(
     }
     if (typeof body.status === 'string' && ['connected', 'disconnected'].includes(body.status)) {
       patch.status = body.status;
+    }
+    if (typeof body.warmup_enabled === 'boolean') {
+      patch.warmup_enabled = body.warmup_enabled;
+    }
+    if (typeof body.active === 'boolean') {
+      patch.active = body.active;
+    }
+    if (typeof body.custom_domain === 'string') {
+      const limpio = body.custom_domain
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/.*$/, '')
+        .replace(/\.$/, '');
+      if (limpio && !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(limpio)) {
+        return NextResponse.json({ error: 'invalid_domain' }, { status: 400 });
+      }
+      patch.custom_domain = limpio || null;
+    }
+    if (typeof body.tracking_pixel_id === 'string') {
+      const pixelId = body.tracking_pixel_id.trim() || null;
+      if (pixelId) {
+        const { data: pixel } = await ctx.supabase
+          .from('tracking_pixels')
+          .select('id')
+          .eq('id', pixelId)
+          .eq('account_id', ctx.accountId)
+          .eq('platform', 'meta')
+          .maybeSingle();
+        if (!pixel) {
+          return NextResponse.json({ error: 'invalid_pixel' }, { status: 400 });
+        }
+      }
+      patch.tracking_pixel_id = pixelId;
+    }
+    if (body.is_default === true) {
+      await supabaseAdmin()
+        .from('whatsapp_connections')
+        .update({ is_default: false })
+        .eq('account_id', ctx.accountId)
+        .eq('is_default', true);
+      patch.is_default = true;
+    } else if (body.is_default === false) {
+      patch.is_default = false;
     }
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: 'nothing_to_update' }, { status: 400 });

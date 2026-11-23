@@ -21,9 +21,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BroadcastError, type BroadcastPlan } from '@/lib/whatsapp/broadcast-core';
 import { DELIVERY_LOCK_STALE_MS } from '@/lib/whatsapp/broadcast-delivery-lease';
 import { chunk } from '@/lib/supabase/paged-query';
+import { credencialesDeConexion, credencialesPrimarias } from '@/lib/whatsapp/connections';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import {
+  conexionBloqueaMasivo,
+  limiteCalentamiento,
+} from '@/lib/whatsapp/warmup';
 
 /** Which recipients a resume pass picks up. */
 export type ResumeScope = 'pending' | 'failed' | 'all';
@@ -116,13 +121,33 @@ export interface ResumePlan {
 interface RecipientRow {
   id: string;
   template_params: unknown;
-  contact: { phone?: string | null } | { phone?: string | null }[] | null;
+  contact:
+    | {
+        phone?: string | null;
+        opted_out?: boolean | null;
+        marketing_opted_out?: boolean | null;
+        consent_status?: string | null;
+      }
+    | Array<{
+        phone?: string | null;
+        opted_out?: boolean | null;
+        marketing_opted_out?: boolean | null;
+        consent_status?: string | null;
+      }>
+    | null;
 }
 
 /** Supabase renders an embedded to-one join as an object or a 1-array. */
 function contactPhone(row: RecipientRow): string | null {
   const c = Array.isArray(row.contact) ? row.contact[0] : row.contact;
   return c?.phone ?? null;
+}
+
+function contactOptOut(row: RecipientRow): boolean {
+  const c = Array.isArray(row.contact) ? row.contact[0] : row.contact;
+  return Boolean(
+    c?.opted_out || c?.marketing_opted_out || c?.consent_status === 'denied',
+  );
 }
 
 /**
@@ -144,7 +169,7 @@ export async function planBroadcastResume(
 ): Promise<ResumePlan> {
   const { data: broadcast, error: bcError } = await db
     .from('broadcasts')
-    .select('id, template_name, template_language')
+    .select('id, template_name, template_language, connection_id, status')
     .eq('id', broadcastId)
     .eq('account_id', accountId)
     .maybeSingle();
@@ -156,6 +181,7 @@ export async function planBroadcastResume(
   const statuses = scopeStatuses(scope);
   const sendable: RecipientRow[] = [];
   const unsendable: string[] = [];
+  const optOut: string[] = [];
   let inScopeCount: number | null = null;
   let scanned = 0;
 
@@ -171,7 +197,10 @@ export async function planBroadcastResume(
       error: recError,
     } = await db
       .from('broadcast_recipients')
-      .select('id, template_params, contact:contacts(phone)', { count: 'exact' })
+      .select(
+        'id, template_params, contact:contacts(phone, opted_out, marketing_opted_out, consent_status)',
+        { count: 'exact' },
+      )
       .eq('broadcast_id', broadcastId)
       .in('status', statuses)
       // Oldest first, so repeated capped passes chew through the backlog
@@ -193,6 +222,10 @@ export async function planBroadcastResume(
     // it failed now: leaving it 'pending' would keep the broadcast in
     // 'sending' forever, which is the very symptom being fixed.
     for (const row of rows) {
+      if (contactOptOut(row)) {
+        optOut.push(row.id);
+        continue;
+      }
       const sanitized = sanitizePhoneForMeta(contactPhone(row) ?? '');
       if (isValidE164(sanitized)) sendable.push(row);
       else unsendable.push(row.id);
@@ -207,13 +240,25 @@ export async function planBroadcastResume(
       .update({
         status: 'failed',
         error_message: 'No valid phone number on contact',
+        error_code: 'invalid_phone',
       })
       .in('id', ids);
   }
 
-  const slice = sendable.slice(0, RESUME_MAX_PER_REQUEST);
+  for (const ids of chunk(optOut)) {
+    await db
+      .from('broadcast_recipients')
+      .update({
+        status: 'failed',
+        error_message: 'Opt-out de marketing o consentimiento denegado',
+        error_code: 'opt_out',
+      })
+      .in('id', ids);
+  }
+
+  let slice = sendable.slice(0, RESUME_MAX_PER_REQUEST);
   const unloaded = Math.max(0, (inScopeCount ?? scanned) - scanned);
-  const remaining = sendable.length - slice.length + unloaded;
+  let remaining = sendable.length - slice.length + unloaded;
 
   if (slice.length === 0 && remaining === 0) {
     throw new BroadcastError(
@@ -225,17 +270,90 @@ export async function planBroadcastResume(
     );
   }
 
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-  if (configError || !config) {
-    throw new BroadcastError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  const connectionId = (broadcast as { connection_id?: string | null }).connection_id ?? null;
+  let creds = connectionId
+    ? await credencialesDeConexion(db, connectionId)
+    : await credencialesPrimarias(db, accountId);
+  if (!creds) {
+    const { data: config, error: configError } = await db
+      .from('whatsapp_config')
+      .select('*')
+      .eq('account_id', accountId)
+      .single();
+    if (configError || !config) {
+      throw new BroadcastError(
+        'whatsapp_not_configured',
+        'WhatsApp not configured. Please set up your WhatsApp integration first.',
+        400
+      );
+    }
+    creds = {
+      connectionId: null,
+      phoneNumberId: config.phone_number_id,
+      accessToken: decrypt(config.access_token),
+    };
+  }
+
+  let healthRow:
+    | {
+        health_status?: string | null;
+        restriction_scope?: string | null;
+        quality_rating?: string | null;
+        warmup_enabled?: boolean | null;
+        warmup_started_at?: string | null;
+      }
+    | null = null;
+  if (creds.connectionId) {
+    const { data } = await db
+      .from('whatsapp_connections')
+      .select(
+        'health_status, restriction_scope, quality_rating, warmup_enabled, warmup_started_at',
+      )
+      .eq('id', creds.connectionId)
+      .maybeSingle();
+    healthRow = (data as {
+      health_status?: string | null;
+      restriction_scope?: string | null;
+      quality_rating?: string | null;
+      warmup_enabled?: boolean | null;
+      warmup_started_at?: string | null;
+    } | null) ?? null;
+  }
+  if (healthRow) {
+    const bloqueo = conexionBloqueaMasivo(healthRow);
+    if (bloqueo.bloqueado) {
+      throw new BroadcastError(
+        'connection_restricted',
+        bloqueo.motivo ?? 'La conexión está restringida por Meta.',
+        409
+      );
+    }
+  }
+
+  if (healthRow?.warmup_enabled && creds?.connectionId) {
+    const limite = limiteCalentamiento(healthRow.warmup_started_at);
+    if (limite !== null) {
+      const dia = new Date().toISOString().slice(0, 10);
+      const { data: uso } = await db
+        .from('connection_warmup_sends')
+        .select('sent_count')
+        .eq('connection_id', creds.connectionId)
+        .eq('day', dia)
+        .maybeSingle();
+      const usados = Number((uso as { sent_count?: number } | null)?.sent_count) || 0;
+      const disponibles = Math.max(0, limite - usados);
+      if (slice.length > disponibles) {
+        remaining += slice.length - disponibles;
+        slice = slice.slice(0, disponibles);
+      }
+      if (slice.length === 0) {
+        throw new BroadcastError(
+          'warmup_limit',
+          `El calentamiento de esta conexión ya usó ${usados}/${limite} hoy. Reanuda mañana.`,
+          429
+        );
+      }
+    }
   }
 
   const resolvedTemplate = await resolveTemplateRow(
@@ -257,8 +375,9 @@ export async function planBroadcastResume(
     accountId,
     templateName: broadcast.template_name,
     templateLanguage: resolvedTemplate.language,
-    phoneNumberId: config.phone_number_id,
-    accessToken: decrypt(config.access_token),
+    connectionId: creds.connectionId,
+    phoneNumberId: creds.phoneNumberId,
+    accessToken: creds.accessToken,
     templateRow: resolvedTemplate.row,
     planned: slice.map((row) => ({
       recipientRowId: row.id,
@@ -284,6 +403,11 @@ export async function markBroadcastSending(
 ): Promise<void> {
   await db
     .from('broadcasts')
-    .update({ status: 'sending', updated_at: new Date().toISOString() })
+    .update({
+      status: 'sending',
+      paused_at: null,
+      pause_reason: null,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', broadcastId);
 }

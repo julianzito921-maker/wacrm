@@ -25,11 +25,23 @@ export async function GET(
 
   const { data: link } = await db
     .from('tracking_links')
-    .select('id, account_id, phone_number, prefilled_text, default_utm, active')
+    .select('id, account_id, connection_id, domain, phone_number, prefilled_text, default_utm, active, connection:whatsapp_connections(active)')
     .eq('slug', slug)
     .maybeSingle()
 
   if (!link?.active || !link.phone_number) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  }
+
+  // Dominio propio de la isla: si el enlace está atado a uno, el Host
+  // debe coincidir. Así un slug de Isla 1 no se sirve en el dominio de Isla 2.
+  const host = (request.headers.get('host') ?? '').split(':')[0].toLowerCase()
+  if (link.domain && host !== String(link.domain).toLowerCase()) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  }
+  const conexion = (link as { connection?: { active?: boolean } | Array<{ active?: boolean }> }).connection
+  const conexionActiva = Array.isArray(conexion) ? conexion[0]?.active : conexion?.active
+  if (conexionActiva === false) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 })
   }
 
@@ -54,6 +66,7 @@ export async function GET(
       const { error } = await db.from('tracking_clicks').insert({
         link_id: link.id,
         account_id: link.account_id,
+        connection_id: link.connection_id ?? null,
         click_token: candidato,
         params,
         referrer: request.headers.get('referer')?.slice(0, 500) ?? null,

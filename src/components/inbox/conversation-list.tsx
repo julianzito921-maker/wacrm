@@ -9,7 +9,7 @@ import {
 } from "@/lib/inbox/conversations";
 import { applyInboxFilter, type InboxFilter } from "@/lib/inbox/inbox-filters";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus, Tag } from "@/types";
+import type { Conversation, ConversationStatus, Department, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -100,6 +100,8 @@ export function ConversationList({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState("all");
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -168,6 +170,23 @@ export function ConversationList({
     };
   }, []);
 
+  // Departamentos de la cuenta para el filtro de la bandeja.
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("departments")
+        .select("id, account_id, name, color, is_active, sort_order")
+        .eq("is_active", true)
+        .order("sort_order");
+      if (!cancelled && data) setDepartments(data as Department[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation
   // are worth offering as an inbox filter.
@@ -193,6 +212,10 @@ export function ConversationList({
       result = result.filter((c) => c.connection_id === filtroConexion);
     }
 
+    if (selectedDepartmentId !== "all") {
+      result = result.filter((c) => c.department_id === selectedDepartmentId);
+    }
+
     // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
       result = result.filter((c) =>
@@ -214,7 +237,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, now, search, selectedTagIds, selectedCompany, filtroConexion]);
+  }, [conversations, filter, now, search, selectedTagIds, selectedCompany, filtroConexion, selectedDepartmentId]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -243,7 +266,8 @@ export function ConversationList({
     [onSelect]
   );
 
-  const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+  const STATUS_OPTIONS = FILTER_OPTIONS.filter((o) => ["pending", "open", "closed"].includes(o.value));
+  const SMART_OPTIONS = FILTER_OPTIONS.filter((o) => ["all", "unread", "waiting", "unassigned", "expiring"].includes(o.value));
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -278,17 +302,51 @@ export function ConversationList({
           </select>
         )}
 
+        {departments.length > 0 && (
+          <select
+            value={selectedDepartmentId}
+            onChange={(e) => setSelectedDepartmentId(e.target.value)}
+            className="border-border bg-muted text-foreground h-8 w-full rounded-md border px-2 text-xs"
+            aria-label={t("allDepartments")}
+          >
+            <option value="all">{t("allDepartments")}</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="grid grid-cols-3 gap-1">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setFilter(opt.value)}
+              className={cn(
+                "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                filter === opt.value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
         <div className="flex flex-wrap items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-                {activeFilter?.label ?? t("filterAll")}
+                {t("moreFilters")}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
               className="border-border bg-popover"
             >
-              {FILTER_OPTIONS.map((opt) => (
+              {SMART_OPTIONS.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
                   onClick={() => setFilter(opt.value)}

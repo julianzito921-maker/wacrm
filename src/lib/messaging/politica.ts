@@ -22,7 +22,7 @@
 // ============================================================
 
 import { supabaseAdmin } from "@/lib/flows/admin-client";
-import { admiteAutomatico, estaEnBaja, leerEstado } from "./estado";
+import { admiteAutomatico, estaEnBaja, estaEnBajaMarketing, leerEstado } from "./estado";
 import { automatizacionActiva } from "./interruptor";
 import type { ContextoSalida, TipoSalida } from "./send";
 
@@ -195,6 +195,14 @@ export async function decidirSalida(args: {
       return frenarAntes(
         "opt_out",
         "El contacto tiene baja voluntaria registrada (no me escribas).",
+      );
+    }
+    const esMarketing =
+      ctx.source === "difusion" || ctx.templateCategory === "Marketing";
+    if (esMarketing && ctx.contactId && (await estaEnBajaMarketing(ctx.contactId))) {
+      return frenarAntes(
+        "marketing_opt_out",
+        "El contacto pidió no recibir marketing (131050/user_preferences); UTILITY y servicio siguen permitidos.",
       );
     }
   }

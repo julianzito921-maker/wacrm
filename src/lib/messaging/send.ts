@@ -29,12 +29,15 @@ import {
   sendMediaMessage,
   sendTemplateMessage,
   sendTextMessage,
+  MetaApiError,
   type SendInteractiveButtonsArgs,
   type SendInteractiveListArgs,
   type SendMediaMessageArgs,
   type SendTemplateMessageArgs,
   type SendTextMessageArgs,
 } from "@/lib/whatsapp/meta-api";
+import { conexionBloqueaMasivo, reservarCupoCalentamiento } from "@/lib/whatsapp/warmup";
+import { marcarOptOutMarketing } from "./opt-out";
 
 /** De dónde salió el mensaje. Se usa para el panel de riesgo. */
 export type OrigenSalida =
@@ -59,6 +62,10 @@ export interface ContextoSalida {
   /** Por qué se manda, en una línea, para poder auditar después. */
   reason?: string;
   source: OrigenSalida;
+  /** Conexión de WhatsApp que envía (para salud y warm-up). */
+  connectionId?: string | null;
+  /** MARKETING/UTILITY/AUTHENTICATION de la plantilla, si aplica. */
+  templateCategory?: string | null;
   workflowId?: string | null;
   workflowNodeKey?: string | null;
   /** El evento entrante que lo provocó (wamid o id interno). */
@@ -102,6 +109,12 @@ export function extraerErrorMeta(err: unknown): {
   code: string | null;
   message: string;
 } {
+  if (err instanceof MetaApiError) {
+    return {
+      code: err.code !== null ? String(err.code) : null,
+      message: `${err.message}${err.details ? ` · ${err.details}` : ""}`.slice(0, 2000),
+    };
+  }
   const bruto = err instanceof Error ? err.message : String(err);
   // Meta contesta `{"error":{"message":"...","code":131047,...}}`. Se
   // intenta leer el JSON para quedarse con el código exacto; si no se
@@ -142,6 +155,11 @@ export function esSimulacion(): boolean {
  * crear una dependencia circular entre el punto único y el worker.
  */
 export function esFalloReintentable(mensaje: string): boolean {
+  // 131049 (límite de marketing por usuario) y 131050 (opt-out de
+  // marketing) no se reintentan: Meta los rechazaría igual y el
+  // reintento empeora la calidad del número.
+  if (/\b(131049|131050)\b/.test(mensaje)) return false;
+  if (/\b130429\b/.test(mensaje)) return true;
   if (mensaje.includes("Meta API error: 5") || mensaje.includes("429")) return true;
   return /fetch failed|ETIMEDOUT|ECONNRESET|socket hang up|network|timeout/i.test(mensaje);
 }
@@ -156,11 +174,36 @@ export class EnvioBloqueadoError extends Error {
   }
 }
 
+/** Se agotó el cupo diario de calentamiento de la conexión. */
+export class EnvioCalentamientoError extends Error {
+  readonly limite: number | null;
+  readonly dia: number | null;
+  readonly reintentarEn: string;
+  constructor(limite: number | null, dia: number | null) {
+    const manana = new Date();
+    manana.setUTCHours(24, 0, 0, 0);
+    super(
+      `Cupo de calentamiento agotado (día ${dia ?? "?"}, límite ${limite ?? "?"}/día).`,
+    );
+    this.name = "EnvioCalentamientoError";
+    this.limite = limite;
+    this.dia = dia;
+    this.reintentarEn = manana.toISOString();
+  }
+}
+
 async function registrar(fila: {
   ctx: ContextoSalida;
   tipo: TipoSalida;
   contenido?: string | null;
-  status: "sent" | "failed" | "blocked";
+  status:
+    | "sent"
+    | "failed"
+    | "blocked"
+    | "skipped_meta_limit"
+    | "skipped_opt_out"
+    | "skipped_warmup"
+    | "skipped_quality";
   whatsappMessageId?: string | null;
   apiResponse?: unknown;
   errorCode?: string | null;
@@ -174,9 +217,10 @@ async function registrar(fila: {
     await db.from("outbound_message_log").insert({
       account_id: fila.ctx.accountId,
       conversation_id: fila.ctx.conversationId ?? null,
+      connection_id: fila.ctx.connectionId ?? null,
       contact_id: fila.ctx.contactId ?? null,
-      message_row_id: fila.ctx.messageRowId ?? null,
       message_type: fila.tipo,
+      template_category: fila.ctx.templateCategory ?? null,
       content_preview: fila.contenido ? fila.contenido.slice(0, 500) : null,
       content_hash: fila.contenido ? hashContenido(fila.contenido) : null,
       reason: fila.ctx.reason ?? null,
@@ -243,6 +287,85 @@ export async function enviarSaliente(
   // para poder medir los topes antes de activarlos.
   const aviso = decision.motivo ? decision : null;
 
+  // Compuertas por conexión: salud (RED/restringido) y calentamiento.
+  // Solo aplican a marketing/masivos; un UTILITY o una respuesta 1:1 no
+  // se bloquea por calidad del número.
+  if (
+    ctx.connectionId &&
+    (ctx.source === "difusion" || ctx.templateCategory === "Marketing")
+  ) {
+    try {
+      const { data: conexion } = await supabaseAdmin()
+        .from("whatsapp_connections")
+        .select(
+          "health_status, restriction_scope, quality_rating, warmup_enabled, warmup_started_at",
+        )
+        .eq("id", ctx.connectionId)
+        .maybeSingle();
+      if (conexion) {
+        const bloqueo = conexionBloqueaMasivo(
+          conexion as {
+            health_status?: string | null;
+            restriction_scope?: string | null;
+            quality_rating?: string | null;
+          },
+        );
+        if (bloqueo.bloqueado) {
+          await registrar({
+            ctx,
+            tipo: envio.tipo,
+            contenido: envio.contenido,
+            status: "blocked",
+            blockedReason: "connection_health",
+            errorMessage: bloqueo.motivo,
+            latencyMs: Date.now() - inicio,
+          });
+          throw new EnvioBloqueadoError(
+            "connection_health",
+            bloqueo.motivo ?? "Conexión restringida por Meta.",
+          );
+        }
+
+        if (ctx.source === "difusion") {
+          const cupo = await reservarCupoCalentamiento(supabaseAdmin(), {
+            connectionId: ctx.connectionId,
+            warmupEnabled: Boolean(
+              (conexion as { warmup_enabled?: boolean }).warmup_enabled,
+            ),
+            warmupStartedAt:
+              (conexion as { warmup_started_at?: string | null })
+                .warmup_started_at ?? null,
+          });
+          if (!cupo.permitido) {
+            await registrar({
+              ctx,
+              tipo: envio.tipo,
+              contenido: envio.contenido,
+              status: "blocked",
+              blockedReason: "warmup_limit",
+              errorMessage: `Cupo diario de calentamiento agotado (día ${cupo.dia}, límite ${cupo.limite}).`,
+              latencyMs: Date.now() - inicio,
+            });
+            throw new EnvioCalentamientoError(cupo.limite, cupo.dia);
+          }
+        }
+      }
+    } catch (err) {
+      if (
+        err instanceof EnvioBloqueadoError ||
+        err instanceof EnvioCalentamientoError
+      ) {
+        throw err;
+      }
+      // Si no se pudo leer la conexión, no se frena por infraestructura;
+      // la política y el propio Meta siguen siendo la última palabra.
+      console.error(
+        "[messaging] no se pudo verificar la conexión:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   if (esSimulacion()) {
     // No se llama a Meta: se registra como si hubiera salido.
     const simulado = { messageId: `dryrun.${Date.now()}`, response: null };
@@ -285,29 +408,50 @@ export async function enviarSaliente(
     return r;
   } catch (err) {
     const { code, message } = extraerErrorMeta(err);
+    const status =
+      code === "131049"
+        ? "skipped_meta_limit"
+        : code === "131050"
+          ? "skipped_opt_out"
+          : "failed";
     await registrar({
       ctx,
       tipo: envio.tipo,
       contenido: envio.contenido,
-      status: "failed",
+      status,
       errorCode: code,
       errorMessage: message,
       latencyMs: Date.now() - inicio,
     });
 
-    // Fase 4: si el fallo es temporal (5xx, 429, red) y sabemos con qué
-    // argumentos rehacerlo, se encola el reintento. La clave de
-    // idempotencia es la misma, así que no puede duplicarse (§19).
-    if (envio.payloadParaCola && esFalloReintentable(message) && ctx.conversationId) {
+    // 131050: Meta confirma que la clienta no quiere marketing. No es
+    // una baja total: UTILITY y servicio siguen permitidos.
+    if (code === "131050" && ctx.contactId) {
+      await marcarOptOutMarketing({
+        contactId: ctx.contactId,
+        origen: "meta_131050",
+      }).catch(() => undefined);
+    }
+
+    // Fase 4: si el fallo es temporal (5xx, 429, 130429, red) y sabemos
+    // con qué argumentos rehacerlo, se encola el reintento. 131049 y
+    // 131050 nunca se reintentan. La clave de idempotencia es la misma,
+    // así que no puede duplicarse (§19).
+    const reintentar =
+      status === "failed" &&
+      esFalloReintentable(`${code ?? ""} ${message}`);
+    if (envio.payloadParaCola && reintentar && ctx.conversationId) {
       void insertarEnCola({
         account_id: ctx.accountId,
         conversation_id: ctx.conversationId,
+        connection_id: ctx.connectionId ?? null,
         contact_id: ctx.contactId ?? null,
         message_type: envio.tipo,
         payload: envio.payloadParaCola,
         content_preview: envio.contenido ? envio.contenido.slice(0, 500) : null,
         reason: ctx.reason ?? null,
         source: ctx.source,
+        template_category: ctx.templateCategory ?? null,
         workflow_id: ctx.workflowId ?? null,
         workflow_node_key: ctx.workflowNodeKey ?? null,
         source_event_id: ctx.sourceEventId ?? null,
@@ -364,7 +508,11 @@ export async function enviarMedio({ ctx, kind, caption, filename, ...args }: Arg
 }
 
 export async function enviarPlantilla({ ctx, ...args }: ArgsPlantilla) {
-  return enviarSaliente(ctx, {
+  const ctxConCategoria: ContextoSalida = {
+    ...ctx,
+    templateCategory: args.template?.category ?? ctx.templateCategory ?? null,
+  };
+  return enviarSaliente(ctxConCategoria, {
     tipo: "template",
     contenido: args.templateName,
     enviar: () => sendTemplateMessage(args),

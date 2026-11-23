@@ -29,7 +29,7 @@ function makeSupabaseMock() {
 
     const b: Record<string, unknown> = {}
     const chain = () => b
-    for (const m of ['select', 'order', 'limit']) b[m] = vi.fn(chain)
+    for (const m of ['select', 'order', 'limit', 'is']) b[m] = vi.fn(chain)
     b.eq = vi.fn((column: string, value: unknown) => {
       filters.push([column, value])
       if (pendingUpdate && column === 'id') {
@@ -71,6 +71,10 @@ let supabaseMock = makeSupabaseMock()
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
+}))
+
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => supabaseMock,
 }))
 
 vi.mock('@/lib/whatsapp/encryption', () => ({

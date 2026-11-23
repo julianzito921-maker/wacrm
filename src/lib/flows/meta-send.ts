@@ -422,6 +422,7 @@ interface SendInteractiveButtonsEngineArgs extends AuditoriaEnvio {
   bodyText: string
   buttons: InteractiveButton[]
   headerText?: string
+  headerImageUrl?: string
   footerText?: string
   /** Meta message_id to quote (reply preview). */
   contextMessageId?: string

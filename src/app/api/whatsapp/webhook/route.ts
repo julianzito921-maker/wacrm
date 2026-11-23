@@ -1,7 +1,7 @@
 ﻿import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import {
@@ -27,6 +27,11 @@ import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
 import { estadoPorEntrante, marcarConsentimiento } from '@/lib/messaging/estado'
+import { cancelarCorridasPorBaja } from '@/lib/messaging/opt-out'
+import {
+  handleHealthWebhookChange,
+  isHealthWebhookField,
+} from '@/lib/whatsapp/health-webhook'
 import { responderConAgente } from '@/lib/agente/responder'
 import { cancelarPendientes } from '@/lib/messaging/cola-store'
 import { tienePagoPendiente } from '@/lib/ventas/comprobante'
@@ -155,9 +160,14 @@ interface WhatsAppMessage {
    * to advance the per-contact run.
    */
   interactive?: {
-    type: 'button_reply' | 'list_reply'
+    type: 'button_reply' | 'list_reply' | 'call_permission_reply'
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
+    call_permission_reply?: {
+      response: 'accept' | 'reject'
+      is_permanent?: boolean
+      expiration_timestamp?: number
+    }
   }
   /**
    * Set when the customer taps a QUICK_REPLY button on a *template*
@@ -432,6 +442,40 @@ function metaTimestampToIso(timestamp: string): string | null {
   return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : null
 }
 
+/**
+ * WhatsApp Business Calling API: el payload real varía por evento
+ * (`connect`, `terminate`, `status`...). Solo actualizamos la sesión de
+ * llamada que ya creó el nodo `official_call`; si no existe, se ignora
+ * para no inventar llamadas que el CRM no originó.
+ */
+async function handleCallsWebhook(value: unknown) {
+  const v = value as {
+    calls?: Array<Record<string, unknown>>
+    events?: Array<Record<string, unknown>>
+  }
+  const eventos = v.calls ?? v.events ?? []
+  const db = supabaseAdmin()
+  for (const evento of eventos) {
+    const callId = String(evento.id ?? evento.call_id ?? '')
+    if (!callId) continue
+    const estado = String(evento.status ?? evento.event ?? '').toLowerCase()
+    const patch: Record<string, unknown> = {
+      call_id: callId,
+      updated_at: new Date().toISOString(),
+      metadata: evento,
+    }
+    if (estado.includes('connect') || estado.includes('accept')) {
+      patch.status = 'calling'
+    } else if (estado.includes('terminat') || estado.includes('end')) {
+      patch.status = 'completed'
+    } else if (estado.includes('fail') || estado.includes('reject')) {
+      patch.status = 'failed'
+      patch.error_code = String(evento.error_code ?? evento.reason ?? '')
+    }
+    await db.from('flow_call_sessions').update(patch).eq('call_id', callId)
+  }
+}
+
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
   if (!body.entry) return
 
@@ -445,6 +489,15 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       // `entry.id` is the WABA id for template events — the handler
       // needs it to resolve the owning account when the template has
       // no local row yet (#534).
+      if (isHealthWebhookField(change.field)) {
+        await handleHealthWebhookChange({
+          field: change.field,
+          value: change.value as unknown,
+          wabaId: entry.id,
+        })
+        continue
+      }
+
       if (isTemplateWebhookField(change.field)) {
         await handleTemplateWebhookChange(
           {
@@ -454,6 +507,14 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           },
           supabaseAdmin(),
         )
+        continue
+      }
+
+      // Eventos de la WhatsApp Business Calling API (llamada conectada,
+      // terminada, etc.). Se guardan en `flow_call_sessions`; el nodo
+      // official_call ya se reanuda con la respuesta de permiso.
+      if (change.field === 'calls') {
+        await handleCallsWebhook(change.value as unknown)
         continue
       }
 
@@ -767,7 +828,7 @@ async function processMessage(
   // Anuncio de origen (clic a WhatsApp): se guarda el ctwa_clid para el evento
   // de compra que luego se manda a Meta. Nunca lanza.
   if (message.referral?.ctwa_clid) {
-    await guardarReferenciaAnuncio({ accountId, userId: configOwnerUserId, contactId: contactRecord.id, referral: message.referral })
+    await guardarReferenciaAnuncio({ accountId, userId: configOwnerUserId, contactId: contactRecord.id, connectionId, referral: message.referral })
     // Consentimiento (§15): el clic en el anuncio de clic a WhatsApp es la
     // autorización para escribirle por este canal. Queda registrado con su
     // origen, su tipo y su fecha — y nunca pisa una baja.
@@ -943,6 +1004,7 @@ async function processMessage(
       conversationId: conversation.id,
       contactId: conversation.contact_id,
       texto: contentText ?? '',
+      botonId: interactiveReplyId,
     })
     // Fase 4: si la clienta contesta (o pide humano, o se da de baja), lo
     // que estuviera esperando en la cola ya no tiene sentido: se cancela.
@@ -951,6 +1013,9 @@ async function processMessage(
       estado.bajo ? 'opt_out' : estado.humano ? 'human_handoff' : 'user_replied'
     )
     if (estado.bajo) {
+      // La baja es global: también se cancelan flujos activos y la cola
+      // pendiente de todo el contacto, no solo de esta conversación.
+      await cancelarCorridasPorBaja(conversation.contact_id)
       console.info('[webhook] baja voluntaria registrada:', conversation.contact_id)
     } else if (estado.humano) {
       console.info('[webhook] traspaso a humano pedido:', conversation.contact_id)
@@ -1039,7 +1104,12 @@ async function processMessage(
     contactId: contactRecord.id,
     conversationId: conversation.id,
     connectionId,
-    message: mensajeParaFlujo(message, interactiveReplyId, contentText),
+    message: mensajeParaFlujo(
+      message,
+      interactiveReplyId,
+      contentText,
+      parseado.callPermission,
+    ),
     isFirstInboundMessage,
   })
   if (flujoEsDuenoDelMensaje(flowResult)) {
@@ -1281,6 +1351,16 @@ async function parseMessageContent(
    * tap with the right affordance. Null for everything else.
    */
   interactiveReplyId: string | null
+  /**
+   * Respuesta a una solicitud oficial de permiso de llamada. Se maneja
+   * aparte de `interactiveReplyId` porque no es un botón de menú.
+   */
+  callPermission: {
+    response: 'accept' | 'reject'
+    is_permanent: boolean
+    expiration_timestamp?: number | null
+    context_id?: string | null
+  } | null
 }> {
   // getMediaUrl signature is (mediaId, accessToken) — earlier code had
   // the args swapped, so every verification hit an invalid Meta URL and
@@ -1338,6 +1418,7 @@ async function parseMessageContent(
     mediaUrl: null,
     mediaType: null,
     interactiveReplyId: null,
+    callPermission: null,
   }
 
   switch (message.type) {
@@ -1438,6 +1519,22 @@ async function parseMessageContent(
       // Use the human-readable title as contentText so the inbox bubble
       // renders the tap legibly ("Existing customer"), and stash the
       // stable id separately so the Flows engine can route on it.
+      const permiso = message.interactive?.call_permission_reply
+      if (permiso?.response) {
+        return {
+          ...empty,
+          contentText:
+            permiso.response === 'accept'
+              ? '[Permiso de llamada: aceptado]'
+              : '[Permiso de llamada: rechazado]',
+          callPermission: {
+            response: permiso.response,
+            is_permanent: permiso.is_permanent === true,
+            expiration_timestamp: permiso.expiration_timestamp ?? null,
+            context_id: message.context?.id ?? null,
+          },
+        }
+      }
       const reply =
         message.interactive?.button_reply ?? message.interactive?.list_reply
       if (reply?.id) {

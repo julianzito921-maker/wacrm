@@ -14,7 +14,7 @@
  * sincronía con cualquier vista que esté editando.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
+import { toast } from "sonner";
 import { useFlowEditor, type BuilderState } from "./flow-editor-state";
 
 export function EditorHeader({ viewSwitch }: { viewSwitch?: ReactNode }) {
@@ -46,6 +48,41 @@ export function EditorHeader({ viewSwitch }: { viewSwitch?: ReactNode }) {
   } = useFlowEditor();
 
   const activo = state.status === "active";
+  const [conexiones, setConexiones] = useState<Array<{ id: string; name: string }>>([]);
+  const [connectionId, setConnectionId] = useState(flow.connection_id ?? "");
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("whatsapp_connections")
+        .select("id, name")
+        .eq("active", true)
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: true });
+      if (!cancelado) setConexiones((data ?? []) as Array<{ id: string; name: string }>);
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, []);
+
+  const cambiarConexion = async (valor: string) => {
+    setConnectionId(valor);
+    try {
+      const res = await fetch(`/api/flows/${flow.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connection_id: valor || null }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(t("connectionUpdated"));
+    } catch {
+      setConnectionId(flow.connection_id ?? "");
+      toast.error(t("connectionUpdateFailed"));
+    }
+  };
   // Para activar hay que pasar la validación; pausar siempre se puede.
   const bloqueado = activating || (!activo && !canActivate);
 
@@ -85,6 +122,20 @@ export function EditorHeader({ viewSwitch }: { viewSwitch?: ReactNode }) {
       )}
 
       {/* ---- centro ---- */}
+      <select
+        value={connectionId}
+        onChange={(e) => void cambiarConexion(e.target.value)}
+        className="hidden h-8 max-w-[220px] rounded-md border border-sidebar-border bg-card px-2 text-[11px] text-muted-foreground outline-none focus:border-primary md:block"
+        aria-label={t("listenConnection")}
+        title={t("listenConnection")}
+      >
+        <option value="">{t("listenAll")}</option>
+        {conexiones.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
       <div className="mx-auto hidden md:block">{viewSwitch}</div>
 
       {/* ---- derecha ---- */}

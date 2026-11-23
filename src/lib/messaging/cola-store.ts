@@ -21,6 +21,7 @@ export interface FilaParaEncolar {
   content_preview?: string | null;
   reason?: string | null;
   source: string;
+  template_category?: string | null;
   workflow_id?: string | null;
   workflow_node_key?: string | null;
   source_event_id?: string | null;

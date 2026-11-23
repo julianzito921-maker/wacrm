@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Type definitions for the Flows runtime.
  *
  * These mirror the Supabase schema added in migration 010 (`flows`,
@@ -149,6 +149,10 @@ export interface HandoffNodeConfig {
    * node fires. Leave unset to flip the status without assignment.
    */
   assign_to?: string;
+  /** Estado al que pasa la conversación. */
+  status?: "pending" | "open" | "closed";
+  /** Apaga/enciende la IA de la conversación. */
+  pause_ai?: boolean;
 }
 
 /**
@@ -160,6 +164,22 @@ export interface HandoffNodeConfig {
  * builder still surfaces the field so users can author flows that
  * v2 will start enforcing.
  */
+export type WaitNodeMode = "intervalo" | "fecha" | "horario";
+
+/** Ventana de días/horas hábiles del bloque «Intervalo inteligente». */
+export interface WaitSchedule {
+  /** Usa `accounts.business_hours` en vez del horario del nodo. */
+  usar_cuenta?: boolean;
+  /** Zona IANA; si falta, la de la cuenta. */
+  timezone?: string;
+  /** 1 = lunes … 7 = domingo. */
+  dias?: number[];
+  /** Hora local de apertura, formato HH:mm. */
+  desde?: string;
+  /** Hora local de cierre, formato HH:mm. Puede cruzar medianoche. */
+  hasta?: string;
+}
+
 export interface WaitNodeConfig {
   /**
    * Cuánto esperar antes de seguir con el mensaje siguiente, en
@@ -170,8 +190,22 @@ export interface WaitNodeConfig {
    *     estaciona con `flow_runs.next_run_at` y el cron de cada minuto
    *     la retoma. Si al vencer ya se cerró la ventana de 24 h de
    *     WhatsApp, la corrida termina sin mandar nada.
+   *
+   *   En modo `fecha` u `horario`, `segundos` se ignora y la espera se
+   *   calcula al entrar al nodo.
    */
-  segundos: number;
+  segundos?: number;
+  /** Cómo se programa la espera. Ausente = `intervalo` (compatibilidad). */
+  modo?: WaitNodeMode;
+  /** Modo `fecha`: instante ISO 8601 con offset. */
+  fecha_objetivo?: string;
+  /** Modo `horario`: ventana hábil propia o la de la cuenta. */
+  horario?: WaitSchedule;
+  /**
+   * Salida opcional cuando la espera venció fuera de la ventana de
+   * servicio de 24 h. Si falta, la corrida termina limpia como antes.
+   */
+  fuera_ventana_next?: string;
   /** Nodo al que sigue después de la espera. */
   next_node_key: string;
 }
@@ -274,26 +308,32 @@ export type ConditionSubject = "var" | "tag" | "contact_field";
  * profile fields, or stored vars. Always auto-advances — no Meta
  * call, no customer-side input.
  */
-export interface ConditionNodeConfig {
+export interface ConditionRule {
+  id: string;
   subject: ConditionSubject;
-  /**
-   * For `var`: the key in flow_runs.vars.
-   * For `tag`: the tag UUID (matched against contact_tags).
-   * For `contact_field`: one of 'name' | 'email' | 'phone' | 'company'.
-   */
+  /** var key, tag UUID or contact field. */
   subject_key: string;
   operator: ConditionOperator;
-  /** Compared against `subject` for `equals`/`contains`. Ignored for `present`/`absent`. */
   value?: string;
-  /** Node to advance to when the predicate evaluates true. */
+}
+
+export interface ConditionNodeConfig {
+  /** Todas (Y) o cualquiera (O). Los flujos viejos no lo traen: Y. */
+  logic?: "all" | "any";
+  rules?: ConditionRule[];
+  /** Formato viejo de una sola regla (compatibilidad). */
+  subject: ConditionSubject;
+  subject_key: string;
+  operator: ConditionOperator;
+  value?: string;
   true_next: string;
-  /** Node to advance to when it evaluates false. */
   false_next: string;
 }
 
 export interface SetTagNodeConfig {
   mode: "add" | "remove";
-  /** Tag UUID. The builder picks from the user's existing tags. */
+  /** Varias etiquetas; `tag_id` se conserva por compatibilidad. */
+  tag_ids?: string[];
   tag_id: string;
   next_node_key: string;
 }
@@ -325,7 +365,46 @@ export interface MetaCapiNodeConfig {
   value?: number;
   /** Moneda ISO; por defecto MXN. */
   currency?: string;
+  /** Píxel/dataset de la cuenta; si falta, el activo más antiguo. */
+  pixel_id?: string;
+  /** Page ID opcional, con variables {{...}}. */
+  page_id?: string;
+  /** Valor fijo o tomado de una variable. */
+  value_mode?: "fixed" | "variable";
+  value_var?: string;
   next_node_key: string;
+}
+
+/** Transfiere la corrida a otro flujo activo de la cuenta. */
+export interface ConnectFlowNodeConfig {
+  target_flow_id: string;
+}
+
+export interface AiBlockCondition {
+  id: string;
+  label: string;
+  next_node_key: string;
+}
+
+/**
+ * Bloque de IA (DeepSeek): prompt + comprensión de audio/imagen/PDF,
+ * comprobante, condicionales inteligentes y contexto.
+ */
+export interface AiBlockNodeConfig {
+  credential_source?: "account" | "flow";
+  model?: string;
+  message_template?: string;
+  output_var?: string;
+  auto_send?: boolean;
+  prompt?: string;
+  understand_audio?: boolean;
+  understand_image?: boolean;
+  understand_pdf?: boolean;
+  identify_receipt?: boolean;
+  context_window?: number;
+  conditions?: AiBlockCondition[];
+  receipt_next?: string;
+  fallback_next: string;
 }
 
 /**
@@ -406,6 +485,18 @@ export type FlowNodeConfig =
   | { node_type: "send_payment"; config: SendPaymentNodeConfig }
   | { node_type: "send_template"; config: SendTemplateNodeConfig }
   | { node_type: "move_kanban"; config: MoveKanbanNodeConfig }
+  | { node_type: "connect_flow"; config: ConnectFlowNodeConfig }
+  | { node_type: "ai_block"; config: AiBlockNodeConfig }
+  | { node_type: "manipulator"; config: ManipulatorNodeConfig }
+  | { node_type: "distributor"; config: DistributorNodeConfig }
+  | { node_type: "notification"; config: NotificationNodeConfig }
+  | { node_type: "sale_approved"; config: SaleApprovedNodeConfig }
+  | { node_type: "carousel"; config: CarouselNodeConfig }
+  | { node_type: "department"; config: DepartmentNodeConfig }
+  | { node_type: "http_request"; config: HttpRequestNodeConfig }
+  | { node_type: "payment_gateway"; config: PaymentGatewayNodeConfig }
+  | { node_type: "ai_media"; config: AiMediaNodeConfig }
+  | { node_type: "official_call"; config: OfficialCallNodeConfig }
   | { node_type: "end"; config: EndNodeConfig };
 
 export type FlowNodeType = FlowNodeConfig["node_type"];
@@ -448,6 +539,9 @@ export const NODOS_FIN_DE_RAMA: ReadonlySet<string> = new Set([
   "meta_capi",
   "send_template",
   "move_kanban",
+  "department",
+  "http_request",
+  "ai_media",
 ]);
 
 // ============================================================
@@ -469,6 +563,8 @@ export interface FlowRow {
   trigger_config: KeywordTriggerConfig | FirstInboundTriggerConfig | Record<string, unknown>;
   entry_node_id: string | null;
   fallback_policy: FlowFallbackPolicy;
+  /** Isla que escucha; null = todas las conexiones (migración 089). */
+  connection_id?: string | null;
   execution_count: number;
   last_executed_at: string | null;
   created_at: string;
@@ -520,6 +616,9 @@ export interface FlowRunRow {
     | "payment_timeout"
     | "reply_buffer"
     | "awaiting_reply"
+    | "carousel_timeout"
+    | "payment_gateway"
+    | "call_permission"
     | null;
 }
 
@@ -585,6 +684,20 @@ export type ParsedInbound =
       /** Pie de foto o nombre del archivo, como lo guardaba el webhook. */
       text: string;
       meta_message_id: string;
+    }
+  | {
+      /**
+       * Respuesta a una solicitud oficial de permiso de llamada
+       * (`call_permission_reply`). No es un botón normal: la maneja el
+       * bloque `official_call`.
+       */
+      kind: "call_permission";
+      response: "accept" | "reject";
+      is_permanent: boolean;
+      expiration_timestamp?: number | null;
+      /** wamid del mensaje de permiso que originó la respuesta. */
+      context_id?: string | null;
+      meta_message_id: string;
     };
 
 export interface DispatchInboundInput {
@@ -648,12 +761,68 @@ export const AUTO_ADVANCING_NODE_TYPES: ReadonlySet<string> = new Set([
   "meta_capi",
   "send_template",
   "move_kanban",
+  "department",
+  "http_request",
+  "ai_media",
 ]);
 
 /** Smart Delay: hasta aquí se espera en el mismo avance (15 s, para el «escribiendo…»). Más que eso nunca ocupa el webhook: lo retoma el cron. */
 export const WAIT_INLINE_MAX_SEGUNDOS = 15;
 /** Smart Delay: tope total (23 h), para no salir de la ventana de 24 h. */
 export const WAIT_MAX_SEGUNDOS = 23 * 3600;
+/** Espera programada (fecha/horario): tope de 31 días. */
+export const WAIT_PROGRAMADO_MAX_SEGUNDOS = 31 * 24 * 3600;
+
+/** Integración HTTP: timeout y tamaño máximo de respuesta. */
+export const HTTP_TIMEOUT_MS = 15_000;
+export const HTTP_TIMEOUT_MAX_MS = 30_000;
+export const HTTP_RESPONSE_MAX_BYTES = 256 * 1024;
+/** Cabeceras de la respuesta que se guardan al probar (vista previa). */
+export const HTTP_TEST_MAX_BYTES = 16 * 1024;
+
+/** Pasarela: espera máxima de 30 días y lista cerrada de proveedores. */
+export const PAYMENT_GATEWAY_MAX_MINUTOS = 30 * 24 * 60;
+export const PAYMENT_PROVIDERS: readonly PaymentProvider[] = [
+  "hotmart",
+  "whop",
+  "mercadopago",
+  "stripe",
+  "spei",
+];
+export const PAYMENT_CURRENCIES: readonly PaymentCurrency[] = ["MXN", "USD"];
+
+/** Claves reservadas de la corrida para pagos y llamadas. */
+export const VAR_PAYMENT_REF = "__payment_ref";
+export const VAR_PAYMENT_SESSION = "__payment_session";
+export const VAR_PAYMENT_STATUS = "__payment_status";
+export const VAR_CALL_SESSION = "__call_session";
+
+/** Llamada oficial: espera máxima del permiso. */
+export const CALL_PERMISSION_MAX_DIAS = 7;
+/** Países donde Meta no permite llamadas iniciadas por el negocio. */
+export const OFFICIAL_CALL_EXCLUDED_COUNTRIES: readonly string[] = [
+  "US",
+  "CA",
+  "EG",
+  "VN",
+  "NG",
+];
+
+/** Voces Edge-TTS en español mexicano. */
+export const AI_MEDIA_EDGE_VOICES = [
+  { id: "es-MX-DaliaNeural", label: "Dalia (femenina)" },
+  { id: "es-MX-JorgeNeural", label: "Jorge (masculina)" },
+] as const;
+export const AI_MEDIA_AUDIO_PROVIDERS: readonly AiAudioProvider[] = [
+  "edge",
+  "openai",
+];
+export const AI_MEDIA_IMAGE_PROVIDERS: readonly AiImageProvider[] = [
+  "pollinations",
+  "together",
+  "flux",
+  "openai",
+];
 /**
  * Ventana de servicio de WhatsApp con margen: pasado este tiempo desde el
  * último mensaje de la clienta, el flujo ya no manda mensajes libres.
@@ -666,4 +835,219 @@ export const MAX_AUTO_ADVANCING_CHAIN = MAX_NODES_PER_ADVANCE - 1;
 
 export function assertNever(x: never): never {
   throw new Error(`Unhandled node type: ${JSON.stringify(x)}`);
+}
+
+export interface ManipulatorNodeConfig {
+  target: 'var' | 'contact_field';
+  key: string;
+  operation: 'set' | 'add' | 'subtract' | 'clear';
+  value?: string;
+  value_type?: 'text' | 'number';
+  next_node_key: string;
+}
+
+export interface DistributorOutput {
+  id: string;
+  label: string;
+  next_node_key: string;
+}
+
+export interface DistributorNodeConfig {
+  mode: 'always_next' | 'avoid_repeat';
+  outputs: DistributorOutput[];
+}
+
+export interface NotificationNodeConfig {
+  name: string;
+  country_code?: string;
+  phone: string;
+  message: string;
+  next_node_key?: string;
+}
+
+export interface SaleApprovedNodeConfig {
+  pipeline_id: string;
+  stage_id: string;
+  product_id?: string;
+  name_var?: string;
+  amount_var: string;
+  currency_var?: string;
+  send_capi?: boolean;
+  notify?: boolean;
+  next_node_key?: string;
+}
+
+export interface CarouselButtonConfig {
+  id: string;
+  label: string;
+  type: 'reply' | 'url';
+  url?: string;
+  next_node_key?: string;
+}
+
+export interface CarouselCardConfig {
+  id: string;
+  text: string;
+  image_url?: string;
+  buttons: CarouselButtonConfig[];
+}
+
+export interface CarouselNodeConfig {
+  intro_text?: string;
+  expires_days: number;
+  cards: CarouselCardConfig[];
+  timeout_next?: string;
+}
+
+// ============================================================
+// Bloques finales (migración 095)
+// ============================================================
+
+/** Asigna el chat a un departamento configurado en la cuenta. */
+export interface DepartmentNodeConfig {
+  department_id: string;
+  /** Copia para el resumen del lienzo; no es la fuente de verdad. */
+  department_name?: string;
+  next_node_key: string;
+}
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+export type HttpBodyType = "none" | "json" | "form" | "raw";
+
+export interface HttpHeader {
+  key: string;
+  value: string;
+}
+
+export interface HttpResponseMap {
+  /** Ruta JSON, p. ej. `data.items[0].id`. */
+  path: string;
+  /** Clave de `flow_runs.vars` donde se guarda. */
+  var_key: string;
+}
+
+/**
+ * Integración HTTP. La URL, headers y body admiten fichas:
+ * `{{vars.x}}`, `{{contact.name}}`, `{{custom.campo}}` y
+ * `{{credential.nombre}}` (esta última se resuelve en el servidor).
+ */
+export interface HttpRequestNodeConfig {
+  method: HttpMethod;
+  url: string;
+  headers: HttpHeader[];
+  body_type: HttpBodyType;
+  body?: string;
+  timeout_ms?: number;
+  /** Credencial cifrada de `flow_credentials` para Authorization. */
+  credential_id?: string;
+  /** Nombre visible de la credencial (solo resumen). */
+  credential_name?: string;
+  response_map: HttpResponseMap[];
+  /** Guarda el código HTTP en `vars.<status_var>`. */
+  status_var?: string;
+  /** Si falla, sigue por `next_node_key` en vez de terminar. */
+  continue_on_error?: boolean;
+  error_next?: string;
+  next_node_key: string;
+}
+
+export type PaymentProvider =
+  | "hotmart"
+  | "whop"
+  | "mercadopago"
+  | "stripe"
+  | "spei";
+
+export type PaymentCurrency = "MXN" | "USD";
+export type PaymentAmountMode = "fixed" | "variable";
+
+/**
+ * Pasarela de pagos. Manda el checkout (o los datos SPEI) y estaciona
+ * la corrida hasta que el webhook —o la confirmación manual— la
+ * despierta.
+ */
+export interface PaymentGatewayNodeConfig {
+  provider: PaymentProvider;
+  currency: PaymentCurrency;
+  amount_mode: PaymentAmountMode;
+  amount?: number;
+  amount_var?: string;
+  concept?: string;
+  /** Enlace/checkout. Admite {{payment_ref}}, {{amount}}, {{currency}}. */
+  checkout_url?: string;
+  /** Texto que acompaña al enlace (o a los datos SPEI). */
+  message?: string;
+  /** Plantilla de respaldo si la ventana de 24 h está cerrada. */
+  template_name?: string;
+  template_language?: string;
+  template_variables?: Record<string, string>;
+  /** Espera máxima; 5 min – 30 días. */
+  wait_minutes: number;
+  approved_next: string;
+  rejected_next?: string;
+  timeout_next?: string;
+  etiqueta_al_aprobar?: string;
+  pipeline_id?: string;
+  stage_id?: string;
+  product_id?: string;
+  send_capi?: boolean;
+  notify?: boolean;
+}
+
+export type AiMediaKind = "audio" | "image";
+export type AiAudioProvider = "edge" | "openai";
+export type AiImageProvider = "pollinations" | "together" | "flux" | "openai";
+
+export interface AiMediaAudioConfig {
+  provider: AiAudioProvider;
+  /** Voz Edge-TTS o voz OpenAI. */
+  voice: string;
+  /** Texto a sintetizar; admite fichas. */
+  text: string;
+  /** `ogg` intenta nota de voz; si el proveedor no lo da, cae a mp3. */
+  format?: "mp3" | "ogg";
+}
+
+export interface AiMediaImageConfig {
+  provider: AiImageProvider;
+  prompt: string;
+  /** Reescribe el prompt con DeepSeek antes de generar. */
+  enhance_prompt?: boolean;
+  width?: number;
+  height?: number;
+  model?: string;
+}
+
+/** Genera audio/imagen y guarda la URL en `vars.<output_var>`. */
+export interface AiMediaNodeConfig {
+  kind: AiMediaKind;
+  audio?: AiMediaAudioConfig;
+  image?: AiMediaImageConfig;
+  /** Por defecto `ai_media_url`. */
+  output_var?: string;
+  /** Envía el medio en este mismo nodo (además de guardar la URL). */
+  send_now?: boolean;
+  next_node_key: string;
+}
+
+export type OfficialCallMode = "permission" | "call";
+export type OfficialCallBridge = "none" | "sip";
+
+/**
+ * Llamada oficial: solicita permiso con la WhatsApp Business Calling
+ * API. `mode="call"` solo dispara una llamada si la cuenta tiene un
+ * puente SIP configurado; nunca usa vías no oficiales.
+ */
+export interface OfficialCallNodeConfig {
+  mode: OfficialCallMode;
+  body_text: string;
+  template_name?: string;
+  template_language?: string;
+  template_variables?: Record<string, string>;
+  /** Días que se espera la respuesta del permiso (1–7). */
+  wait_days?: number;
+  granted_next: string;
+  denied_next?: string;
+  timeout_next?: string;
+  call_bridge?: OfficialCallBridge;
 }

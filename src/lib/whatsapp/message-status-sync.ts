@@ -5,6 +5,7 @@ import {
   isMessageStatus,
   statusesAdvanceableTo,
 } from './message-status'
+import { aplicarFalloEntregaMeta } from './delivery-errors'
 
 export interface MessageStatusFailure {
   code: number
@@ -158,6 +159,13 @@ export async function applyPendingMessageStatuses(
           }
         : null
     advanced.push(...(await advanceMessages(db, [row], target, failure)))
+    if (target === 'failed' && failure) {
+      await aplicarFalloEntregaMeta(db, {
+        accountId,
+        wamid,
+        failure,
+      })
+    }
   }
 
   const { error: clearError } = await db
@@ -181,7 +189,15 @@ export async function applyMessageStatus(
   const rows = await findAccountMessages(db, accountId, incoming.wamid)
   if (!rows) return []
   if (rows.length > 0) {
-    return advanceMessages(db, rows, incoming.status, incoming.failure)
+    const advanced = await advanceMessages(db, rows, incoming.status, incoming.failure)
+    if (incoming.status === 'failed' && incoming.failure) {
+      await aplicarFalloEntregaMeta(db, {
+        accountId,
+        wamid: incoming.wamid,
+        failure: incoming.failure,
+      })
+    }
+    return advanced
   }
 
   await storePendingStatus(db, accountId, incoming)

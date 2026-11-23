@@ -53,6 +53,16 @@ function cappedPostgrest(tables: Record<string, Row[]>) {
           );
           return builder;
         },
+        or(expression: string) {
+          // Solo el caso que usa countAudience hoy:
+          // consent_status.is.null,consent_status.neq.denied
+          if (expression.includes('consent_status')) {
+            filters.push(
+              (row) => row.consent_status == null || row.consent_status !== 'denied',
+            );
+          }
+          return builder;
+        },
         in(col: string, values: readonly unknown[]) {
           inValues += values.length;
           inChars += values.reduce<number>(
@@ -115,6 +125,9 @@ function contacts(n: number): Row[] {
   return Array.from({ length: n }, (_, i) => ({
     id: uuid('c', i),
     phone: `+1555${String(i).padStart(7, '0')}`,
+    opted_out: false,
+    marketing_opted_out: false,
+    consent_status: null,
   }));
 }
 
@@ -343,6 +356,7 @@ describe('countAudience', () => {
   it('counts a custom-field audience', async () => {
     const all = contacts(1500);
     const { db } = cappedPostgrest({
+      contacts: all,
       contact_custom_values: all.map((c, i) => ({
         id: uuid('v', i),
         contact_id: c.id,

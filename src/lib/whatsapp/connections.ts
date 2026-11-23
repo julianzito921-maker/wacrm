@@ -2,7 +2,7 @@
 import { decrypt } from './encryption';
 
 export const CAMPOS_CONEXION_PUBLICOS =
-  'id, name, phone_number, phone_number_id, waba_id, status, quality_rating, messaging_limit_tier, badge_color, last_synced_at, created_at';
+  'id, name, phone_number, display_phone_number, phone_number_id, waba_id, status, quality_rating, messaging_limit_tier, whatsapp_business_manager_messaging_limit, messaging_limit_updated_at, badge_color, health_status, restriction_scope, health_reason, restricted_until, last_health_event_at, warmup_enabled, warmup_started_at, tracking_pixel_id, custom_domain, is_default, active, last_synced_at, created_at';
 
 export interface ConnectionCredentials {
   connectionId: string | null;
@@ -55,12 +55,25 @@ export async function credencialesPrimarias(
   try {
     const { data } = await db
       .from('whatsapp_connections')
-      .select('id, phone_number_id, access_token')
+      .select('id, phone_number_id, access_token, is_default')
       .eq('account_id', accountId)
+      .eq('active', true)
+      .order('is_default', { ascending: false })
       .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    const deConexion = await credencialesDeFila(db, data as never);
+      .limit(2);
+    const lista = (data ?? []) as Array<{
+      id: string;
+      phone_number_id: string;
+      access_token: string;
+      is_default?: boolean;
+    }>;
+    if (lista.length > 1 && !lista[0].is_default) {
+      // Varias islas sin default: no se elige una al azar.
+      return null;
+    }
+    const deConexion = lista[0]
+      ? await credencialesDeFila(db, lista[0] as never)
+      : null;
     if (deConexion) return deConexion;
   } catch {
     // Tabla aún no disponible (tests/rollout): se usa el respaldo.

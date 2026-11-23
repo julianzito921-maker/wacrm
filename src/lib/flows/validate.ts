@@ -45,6 +45,7 @@ import {
   ESPERA_MAX_SEGUNDOS,
   MAX_AUTO_ADVANCING_CHAIN,
   META_CAPI_EVENTOS,
+  PAYMENT_GATEWAY_MAX_MINUTOS,
   WAIT_MAX_SEGUNDOS,
 } from "./types";
 
@@ -763,15 +764,58 @@ function validateNode(
     }
 
     case "wait": {
-      const cfg = node.config as { segundos?: number; next_node_key?: string };
-      const segundos = Number(cfg.segundos);
-      if (!Number.isFinite(segundos) || segundos < 1 || segundos > WAIT_MAX_SEGUNDOS) {
+      const cfg = node.config as {
+        segundos?: number;
+        modo?: "intervalo" | "fecha" | "horario";
+        fecha_objetivo?: string;
+        horario?: { dias?: number[]; desde?: string; hasta?: string; usar_cuenta?: boolean };
+        fuera_ventana_next?: string;
+        next_node_key?: string;
+      };
+      const modo = cfg.modo ?? "intervalo";
+      if (modo === "intervalo") {
+        const segundos = Number(cfg.segundos);
+        if (!Number.isFinite(segundos) || segundos < 1 || segundos > WAIT_MAX_SEGUNDOS) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "segundos",
+            message: t("waitSecondsRange"),
+          });
+        }
+      } else if (modo === "fecha") {
+        const fecha = cfg.fecha_objetivo ? new Date(cfg.fecha_objetivo) : null;
+        if (!fecha || Number.isNaN(fecha.getTime())) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "fecha_objetivo",
+            message: t("waitNeedsDate"),
+          });
+        }
+      } else if (modo === "horario") {
+        const dias = cfg.horario?.dias ?? [1, 2, 3, 4, 5];
+        const desde = cfg.horario?.desde;
+        const hasta = cfg.horario?.hasta;
+        if (dias.length === 0 || !desde || !hasta) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "horario",
+            message: t("waitNeedsSchedule"),
+          });
+        }
+      }
+      if (modo !== "intervalo" && !cfg.fuera_ventana_next) {
         issues.push({
-          severity: "error",
+          severity: "warning",
           scope: "node",
           node_key: node.node_key,
-          field: "segundos",
-          message: t("waitSecondsRange"),
+          field: "fuera_ventana_next",
+          message: t("waitOutsideWindow"),
         });
       }
       // Sin conexión = fin de rama: la corrida termina limpia (no es error).
@@ -782,6 +826,15 @@ function validateNode(
           node_key: node.node_key,
           field: "next_node_key",
           message: t("waitMissingNext", { key: cfg.next_node_key }),
+        });
+      }
+      if (cfg.fuera_ventana_next && !knownKeys.has(cfg.fuera_ventana_next)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "fuera_ventana_next",
+          message: t("waitMissingNext", { key: cfg.fuera_ventana_next }),
         });
       }
       break;
@@ -847,6 +900,8 @@ function validateNode(
       const cfg = node.config as {
         event_name?: string;
         value?: number;
+        value_mode?: "fixed" | "variable";
+        value_var?: string;
         next_node_key?: string;
       };
       if (
@@ -864,6 +919,7 @@ function validateNode(
       const valor = Number(cfg.value);
       if (
         cfg.event_name === "Purchase" &&
+        cfg.value_mode !== "variable" &&
         (!Number.isFinite(valor) || valor <= 0)
       ) {
         issues.push({
@@ -871,6 +927,15 @@ function validateNode(
           scope: "node",
           node_key: node.node_key,
           field: "value",
+          message: t("metaCapiPurchaseNeedsValue"),
+        });
+      }
+      if (cfg.event_name === "Purchase" && cfg.value_mode === "variable" && !cfg.value_var?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "value_var",
           message: t("metaCapiPurchaseNeedsValue"),
         });
       }
@@ -1057,6 +1122,7 @@ function validateNode(
       const cfg = node.config as {
         mode?: "add" | "remove";
         tag_id?: string;
+        tag_ids?: string[];
         next_node_key?: string;
       };
       if (!cfg.mode || !["add", "remove"].includes(cfg.mode)) {
@@ -1068,7 +1134,7 @@ function validateNode(
           message: t("setTagNeedsMode"),
         });
       }
-      if (!cfg.tag_id) {
+      if (!cfg.tag_id && (!cfg.tag_ids || cfg.tag_ids.length === 0)) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -1090,6 +1156,312 @@ function validateNode(
       break;
     }
 
+    case "connect_flow": {
+      const cfg = node.config as { target_flow_id?: string };
+      if (!cfg.target_flow_id?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "target_flow_id",
+          message: t("connectFlowNeedsTarget"),
+        });
+      }
+      break;
+    }
+
+    case "ai_block": {
+      const cfg = node.config as {
+        fallback_next?: string;
+        receipt_next?: string;
+        identify_receipt?: boolean;
+        context_window?: number;
+        conditions?: Array<{ id?: string; label?: string; next_node_key?: string }>;
+      };
+      if (cfg.fallback_next && !knownKeys.has(cfg.fallback_next)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "fallback_next",
+          message: t("aiBlockMissingNext", { key: cfg.fallback_next }),
+        });
+      }
+      if (cfg.identify_receipt && cfg.receipt_next && !knownKeys.has(cfg.receipt_next)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "receipt_next",
+          message: t("aiBlockMissingNext", { key: cfg.receipt_next }),
+        });
+      }
+      const condiciones = cfg.conditions ?? [];
+      if (condiciones.length > 10) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "conditions",
+          message: t("aiBlockMaxConditions"),
+        });
+      }
+      const ids = new Set<string>();
+      for (const c of condiciones) {
+        if (!c.id || ids.has(c.id)) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "conditions",
+            message: t("aiBlockDuplicateCondition"),
+          });
+        }
+        ids.add(c.id ?? "");
+        if (!c.next_node_key || !knownKeys.has(c.next_node_key)) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "conditions",
+            message: t("aiBlockMissingNext", { key: c.next_node_key ?? "" }),
+          });
+        }
+      }
+      const ventana = Number(cfg.context_window ?? 10);
+      if (!Number.isFinite(ventana) || ventana < 5 || ventana > 20) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "context_window",
+          message: t("aiBlockContextRange"),
+        });
+      }
+      break;
+    }
+
+    case "manipulator": {
+      const cfg = node.config as { key?: string; next_node_key?: string };
+      if (!cfg.key?.trim()) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "key", message: t("manipulatorNeedsKey") });
+      }
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("manipulatorMissingNext", { key: cfg.next_node_key }) });
+      }
+      break;
+    }
+    case "distributor": {
+      const cfg = node.config as { outputs?: Array<{ next_node_key?: string }> };
+      const outputs = cfg.outputs ?? [];
+      if (outputs.length === 0) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "outputs", message: t("distributorNeedsOutputs") });
+      }
+      for (const o of outputs) {
+        if (!o.next_node_key || !knownKeys.has(o.next_node_key)) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "outputs", message: t("distributorMissingNext", { key: o.next_node_key ?? "" }) });
+        }
+      }
+      break;
+    }
+    case "notification": {
+      const cfg = node.config as { phone?: string; message?: string; next_node_key?: string };
+      if (!cfg.phone?.replace(/D/g, "")) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "phone", message: t("notificationNeedsPhone") });
+      }
+      if (!cfg.message?.trim()) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "message", message: t("notificationNeedsMessage") });
+      }
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("notificationMissingNext", { key: cfg.next_node_key }) });
+      }
+      break;
+    }
+    case "sale_approved": {
+      const cfg = node.config as { pipeline_id?: string; stage_id?: string; amount_var?: string; next_node_key?: string };
+      if (!cfg.pipeline_id || !cfg.stage_id) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "stage_id", message: t("saleNeedsStage") });
+      }
+      if (!cfg.amount_var?.trim()) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "amount_var", message: t("saleNeedsAmount") });
+      }
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("saleMissingNext", { key: cfg.next_node_key }) });
+      }
+      break;
+    }
+    case "carousel": {
+      const cfg = node.config as { expires_days?: number; cards?: Array<{ buttons?: Array<{ type?: string; next_node_key?: string }> }>; timeout_next?: string };
+      const cards = cfg.cards ?? [];
+      if (cards.length === 0) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "cards", message: t("carouselNeedsCards") });
+      }
+      if (cards.length > 10) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "cards", message: t("carouselMaxCards") });
+      }
+      const dias = Number(cfg.expires_days ?? 1);
+      if (!Number.isFinite(dias) || dias < 1 || dias > 31) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "expires_days", message: t("carouselDaysRange") });
+      }
+      for (const card of cards) {
+        const buttons = card.buttons ?? [];
+        if (buttons.length > 3) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "cards", message: t("carouselMaxButtons") });
+        }
+        for (const b of buttons) {
+          if (b.type !== "url" && (!b.next_node_key || !knownKeys.has(b.next_node_key))) {
+            issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "cards", message: t("carouselMissingNext", { key: b.next_node_key ?? "" }) });
+          }
+        }
+      }
+      if (cfg.timeout_next && !knownKeys.has(cfg.timeout_next)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "timeout_next", message: t("carouselMissingNext", { key: cfg.timeout_next }) });
+      }
+      break;
+    }
+    case "department": {
+      const cfg = node.config as { department_id?: string; next_node_key?: string };
+      if (!cfg.department_id) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "department_id", message: t("departmentNeedsDepartment") });
+      }
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockMissingNext", { key: cfg.next_node_key }) });
+      }
+      break;
+    }
+    case "http_request": {
+      const cfg = node.config as {
+        method?: string;
+        url?: string;
+        body_type?: string;
+        body?: string;
+        error_next?: string;
+        next_node_key?: string;
+      };
+      if (!cfg.url?.trim() || !/^https?:\/\//i.test(cfg.url.trim())) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "url", message: t("httpNeedsUrl") });
+      }
+      if (!cfg.method || !["GET", "POST", "PUT", "DELETE"].includes(cfg.method)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "method", message: t("httpNeedsMethod") });
+      }
+      if (cfg.body_type === "json" && cfg.body?.trim()) {
+        try {
+          JSON.parse(cfg.body);
+        } catch {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "body", message: t("httpBadJson") });
+        }
+      }
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockMissingNext", { key: cfg.next_node_key }) });
+      }
+      if (cfg.error_next && !knownKeys.has(cfg.error_next)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "error_next", message: t("blockMissingNext", { key: cfg.error_next }) });
+      }
+      break;
+    }
+    case "payment_gateway": {
+      const cfg = node.config as {
+        provider?: string;
+        currency?: string;
+        amount_mode?: string;
+        amount?: number;
+        amount_var?: string;
+        checkout_url?: string;
+        wait_minutes?: number;
+        approved_next?: string;
+        rejected_next?: string;
+        timeout_next?: string;
+      };
+      if (!cfg.provider || !["hotmart", "whop", "mercadopago", "stripe", "spei"].includes(cfg.provider)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "provider", message: t("gatewayNeedsProvider") });
+      }
+      if (!cfg.currency || !["MXN", "USD"].includes(cfg.currency)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "currency", message: t("gatewayNeedsCurrency") });
+      }
+      if (cfg.amount_mode === "variable") {
+        if (!cfg.amount_var?.trim()) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "amount_var", message: t("gatewayNeedsAmountVar") });
+        }
+      } else if (!(Number(cfg.amount) > 0)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "amount", message: t("gatewayNeedsAmount") });
+      }
+      if (cfg.provider !== "spei" && !cfg.checkout_url?.trim()) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "checkout_url", message: t("gatewayNeedsCheckout") });
+      }
+      const wait = Number(cfg.wait_minutes);
+      if (!Number.isFinite(wait) || wait < 5 || wait > PAYMENT_GATEWAY_MAX_MINUTOS) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "wait_minutes", message: t("gatewayWaitRange") });
+      }
+      if (!cfg.approved_next) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "approved_next", message: t("gatewayNeedsApprovedNext") });
+      } else if (!knownKeys.has(cfg.approved_next)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "approved_next", message: t("blockMissingNext", { key: cfg.approved_next }) });
+      }
+      for (const [campo, valor] of [["rejected_next", cfg.rejected_next], ["timeout_next", cfg.timeout_next]] as const) {
+        if (valor && !knownKeys.has(valor)) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: campo, message: t("blockMissingNext", { key: valor }) });
+        }
+      }
+      break;
+    }
+    case "ai_media": {
+      const cfg = node.config as {
+        kind?: "audio" | "image";
+        audio?: { text?: string; voice?: string };
+        image?: { prompt?: string };
+        next_node_key?: string;
+      };
+      if (cfg.kind === "audio") {
+        if (!cfg.audio?.text?.trim()) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "audio.text", message: t("aiMediaNeedsText") });
+        }
+        if (!cfg.audio?.voice?.trim()) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "audio.voice", message: t("aiMediaNeedsVoice") });
+        }
+      } else if (cfg.kind === "image") {
+        if (!cfg.image?.prompt?.trim()) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "image.prompt", message: t("aiMediaNeedsPrompt") });
+        }
+      } else {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "kind", message: t("aiMediaNeedsKind") });
+      }
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockMissingNext", { key: cfg.next_node_key }) });
+      }
+      break;
+    }
+    case "official_call": {
+      const cfg = node.config as {
+        mode?: string;
+        body_text?: string;
+        template_name?: string;
+        wait_days?: number;
+        granted_next?: string;
+        denied_next?: string;
+        timeout_next?: string;
+      };
+      if (!cfg.body_text?.trim() && !cfg.template_name?.trim()) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "body_text", message: t("officialCallNeedsText") });
+      }
+      if (cfg.mode && cfg.mode !== "permission" && cfg.mode !== "call") {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "mode", message: t("officialCallNeedsMode") });
+      }
+      const dias = Number(cfg.wait_days ?? 7);
+      if (!Number.isFinite(dias) || dias < 1 || dias > 7) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "wait_days", message: t("officialCallWaitRange") });
+      }
+      if (!cfg.granted_next) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "granted_next", message: t("officialCallNeedsGranted") });
+      } else if (!knownKeys.has(cfg.granted_next)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "granted_next", message: t("blockMissingNext", { key: cfg.granted_next }) });
+      }
+      for (const [campo, valor] of [["denied_next", cfg.denied_next], ["timeout_next", cfg.timeout_next]] as const) {
+        if (valor && !knownKeys.has(valor)) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: campo, message: t("blockMissingNext", { key: valor }) });
+        }
+      }
+      break;
+    }
     case "handoff":
     case "end":
       // Terminal nodes have no outgoing edges; nothing to validate
@@ -1140,13 +1512,52 @@ function outgoingEdges(node: NodeInput): string[] {
     case "send_message":
     case "send_media":
     case "collect_input":
-    case "wait":
     case "meta_capi":
     case "send_template":
     case "move_kanban":
-    case "set_tag": {
+    case "set_tag":
+    case "department":
+    case "ai_media": {
       const cfg = node.config as { next_node_key?: string };
       return cfg.next_node_key ? [cfg.next_node_key] : [];
+    }
+    case "wait": {
+      const cfg = node.config as {
+        next_node_key?: string;
+        fuera_ventana_next?: string;
+      };
+      return [cfg.next_node_key, cfg.fuera_ventana_next].filter(
+        (k): k is string => !!k,
+      );
+    }
+    case "http_request": {
+      const cfg = node.config as {
+        next_node_key?: string;
+        error_next?: string;
+      };
+      return [cfg.next_node_key, cfg.error_next].filter(
+        (k): k is string => !!k,
+      );
+    }
+    case "payment_gateway": {
+      const cfg = node.config as {
+        approved_next?: string;
+        rejected_next?: string;
+        timeout_next?: string;
+      };
+      return [cfg.approved_next, cfg.rejected_next, cfg.timeout_next].filter(
+        (k): k is string => !!k,
+      );
+    }
+    case "official_call": {
+      const cfg = node.config as {
+        granted_next?: string;
+        denied_next?: string;
+        timeout_next?: string;
+      };
+      return [cfg.granted_next, cfg.denied_next, cfg.timeout_next].filter(
+        (k): k is string => !!k,
+      );
     }
     case "send_payment": {
       const cfg = node.config as { aprobado_next?: string; rechazado_next?: string };
@@ -1189,6 +1600,43 @@ function outgoingEdges(node: NodeInput): string[] {
           if (r.next_node_key) out.push(r.next_node_key);
         }
       }
+      return out;
+    }
+    case "manipulator":
+    case "notification":
+    case "sale_approved": {
+      const cfg = node.config as { next_node_key?: string };
+      return cfg.next_node_key ? [cfg.next_node_key] : [];
+    }
+    case "distributor": {
+      const cfg = node.config as { outputs?: Array<{ next_node_key?: string }> };
+      return (cfg.outputs ?? []).map((o) => o.next_node_key).filter((k): k is string => !!k);
+    }
+    case "carousel": {
+      const cfg = node.config as { cards?: Array<{ buttons?: Array<{ type?: string; next_node_key?: string }> }>; timeout_next?: string };
+      const out: string[] = [];
+      for (const card of cfg.cards ?? []) {
+        for (const b of card.buttons ?? []) {
+          if (b.type !== "url" && b.next_node_key) out.push(b.next_node_key);
+        }
+      }
+      if (cfg.timeout_next) out.push(cfg.timeout_next);
+      return out;
+    }
+    case "connect_flow":
+      return [];
+    case "ai_block": {
+      const cfg = node.config as {
+        conditions?: Array<{ next_node_key?: string }>;
+        receipt_next?: string;
+        fallback_next?: string;
+        identify_receipt?: boolean;
+      };
+      const out = (cfg.conditions ?? [])
+        .map((c) => c.next_node_key)
+        .filter((k): k is string => !!k);
+      if (cfg.identify_receipt && cfg.receipt_next) out.push(cfg.receipt_next);
+      if (cfg.fallback_next) out.push(cfg.fallback_next);
       return out;
     }
     case "handoff":

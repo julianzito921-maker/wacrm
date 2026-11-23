@@ -21,7 +21,23 @@ export function mensajeParaFlujo(
   message: MensajeMeta,
   interactiveReplyId: string | null | undefined,
   contentText: string | null | undefined,
+  callPermission?: {
+    response: "accept" | "reject";
+    is_permanent: boolean;
+    expiration_timestamp?: number | null;
+    context_id?: string | null;
+  } | null,
 ): ParsedInbound {
+  if (callPermission) {
+    return {
+      kind: "call_permission",
+      response: callPermission.response,
+      is_permanent: callPermission.is_permanent,
+      expiration_timestamp: callPermission.expiration_timestamp ?? null,
+      context_id: callPermission.context_id ?? null,
+      meta_message_id: message.id,
+    };
+  }
   if (interactiveReplyId) {
     return {
       kind: "interactive_reply",

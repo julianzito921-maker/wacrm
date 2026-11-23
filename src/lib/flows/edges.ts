@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Derive canvas edges from the flow's node list.
  *
  * Edges live INSIDE each node's `config` JSONB (each button row /
@@ -23,6 +23,7 @@
  */
 
 import type { BuilderNode } from "@/components/flows/shared";
+import { aplicarConexionAiBlock } from "./bloques-avanzados";
 
 export interface CanvasEdge {
   /** Stable per-edge id — required by React-Flow. */
@@ -44,7 +45,6 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
   for (const node of nodes) {
     const cfg = node.config;
     switch (node.node_type) {
-      case "wait":
       case "start":
       case "send_message":
       case "send_media":
@@ -52,7 +52,9 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
       case "meta_capi":
       case "send_template":
       case "move_kanban":
-      case "set_tag": {
+      case "set_tag":
+      case "department":
+      case "ai_media": {
         const next = (cfg as { next_node_key?: string }).next_node_key;
         if (next && knownKeys.has(next)) {
           edges.push({
@@ -60,6 +62,98 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
             source: node.node_key,
             target: next,
             sourceHandle: "next",
+          });
+        }
+        break;
+      }
+
+      case "wait": {
+        const c = cfg as { next_node_key?: string; fuera_ventana_next?: string };
+        if (c.next_node_key && knownKeys.has(c.next_node_key)) {
+          edges.push({
+            id: `${node.node_key}--next--${c.next_node_key}`,
+            source: node.node_key,
+            target: c.next_node_key,
+            sourceHandle: "next",
+          });
+        }
+        if (c.fuera_ventana_next && knownKeys.has(c.fuera_ventana_next)) {
+          edges.push({
+            id: `${node.node_key}--fuera_ventana--${c.fuera_ventana_next}`,
+            source: node.node_key,
+            target: c.fuera_ventana_next,
+            sourceHandle: "fuera_ventana",
+            label: "fuera de ventana",
+          });
+        }
+        break;
+      }
+
+      case "http_request": {
+        const c = cfg as { next_node_key?: string; error_next?: string };
+        if (c.next_node_key && knownKeys.has(c.next_node_key)) {
+          edges.push({
+            id: `${node.node_key}--next--${c.next_node_key}`,
+            source: node.node_key,
+            target: c.next_node_key,
+            sourceHandle: "next",
+          });
+        }
+        if (c.error_next && knownKeys.has(c.error_next)) {
+          edges.push({
+            id: `${node.node_key}--error--${c.error_next}`,
+            source: node.node_key,
+            target: c.error_next,
+            sourceHandle: "error",
+            label: "si falla",
+          });
+        }
+        break;
+      }
+
+      case "payment_gateway": {
+        const c = cfg as {
+          approved_next?: string;
+          rejected_next?: string;
+          timeout_next?: string;
+        };
+        const slots: Array<[string, string | undefined, string]> = [
+          ["approved", c.approved_next, "pago aprobado"],
+          ["rejected", c.rejected_next, "pago rechazado"],
+          ["timeout", c.timeout_next, "sin pago"],
+        ];
+        for (const [handle, target, label] of slots) {
+          if (!target || !knownKeys.has(target)) continue;
+          edges.push({
+            id: `${node.node_key}--${handle}--${target}`,
+            source: node.node_key,
+            target,
+            sourceHandle: handle,
+            label,
+          });
+        }
+        break;
+      }
+
+      case "official_call": {
+        const c = cfg as {
+          granted_next?: string;
+          denied_next?: string;
+          timeout_next?: string;
+        };
+        const slots: Array<[string, string | undefined, string]> = [
+          ["granted", c.granted_next, "permiso concedido"],
+          ["denied", c.denied_next, "permiso denegado"],
+          ["timeout", c.timeout_next, "sin respuesta"],
+        ];
+        for (const [handle, target, label] of slots) {
+          if (!target || !knownKeys.has(target)) continue;
+          edges.push({
+            id: `${node.node_key}--${handle}--${target}`,
+            source: node.node_key,
+            target,
+            sourceHandle: handle,
+            label,
           });
         }
         break;
@@ -236,12 +330,39 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
     case "send_message":
     case "send_media":
     case "collect_input":
-    case "wait":
     case "meta_capi":
     case "send_template":
     case "move_kanban":
     case "set_tag":
+    case "department":
+    case "ai_media":
       return [{ id: "next", label: "Next" }];
+
+    case "wait":
+      return [
+        { id: "next", label: "Next" },
+        { id: "fuera_ventana", label: "Fuera de ventana" },
+      ];
+
+    case "http_request":
+      return [
+        { id: "next", label: "Next" },
+        { id: "error", label: "Si falla" },
+      ];
+
+    case "payment_gateway":
+      return [
+        { id: "approved", label: "Pago aprobado" },
+        { id: "rejected", label: "Pago rechazado" },
+        { id: "timeout", label: "Sin pago" },
+      ];
+
+    case "official_call":
+      return [
+        { id: "granted", label: "Permiso concedido" },
+        { id: "denied", label: "Permiso denegado" },
+        { id: "timeout", label: "Sin respuesta" },
+      ];
 
     case "send_payment":
       return [
@@ -303,8 +424,28 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
       return slots;
     }
 
+    case "connect_flow":
+      return [];
+
+    case "ai_block": {
+      const c = cfg as {
+        conditions?: Array<{ id?: string; label?: string }>;
+        identify_receipt?: boolean;
+      };
+      const slots: OutgoingSlot[] = (c.conditions ?? [])
+        .filter((x) => typeof x.id === "string" && x.id)
+        .map((x) => ({ id: `cond:${x.id}`, label: x.label || x.id! }));
+      if (c.identify_receipt) {
+        slots.push({ id: "receipt", label: "Comprobante válido" });
+      }
+      slots.push({ id: "fallback", label: "Sin coincidencia" });
+      return slots;
+    }
+
     case "handoff":
     case "end":
+      return [];
+    default:
       return [];
   }
 }
@@ -329,12 +470,35 @@ export function applyEdgeConnection(
     case "send_message":
     case "send_media":
     case "collect_input":
-    case "wait":
     case "meta_capi":
     case "send_template":
     case "move_kanban":
     case "set_tag":
+    case "department":
+    case "ai_media":
       if (sourceHandle === "next") return { next_node_key: targetKey };
+      return null;
+
+    case "wait":
+      if (sourceHandle === "next") return { next_node_key: targetKey };
+      if (sourceHandle === "fuera_ventana") return { fuera_ventana_next: targetKey };
+      return null;
+
+    case "http_request":
+      if (sourceHandle === "next") return { next_node_key: targetKey };
+      if (sourceHandle === "error") return { error_next: targetKey };
+      return null;
+
+    case "payment_gateway":
+      if (sourceHandle === "approved") return { approved_next: targetKey };
+      if (sourceHandle === "rejected") return { rejected_next: targetKey };
+      if (sourceHandle === "timeout") return { timeout_next: targetKey };
+      return null;
+
+    case "official_call":
+      if (sourceHandle === "granted") return { granted_next: targetKey };
+      if (sourceHandle === "denied") return { denied_next: targetKey };
+      if (sourceHandle === "timeout") return { timeout_next: targetKey };
       return null;
 
     case "send_payment":
@@ -401,8 +565,55 @@ export function applyEdgeConnection(
       return matched ? { sections: next } : null;
     }
 
+    case "distributor": {
+      if (!sourceHandle.startsWith("out:")) return null;
+      const id = sourceHandle.slice(4);
+      const c = node.config as { outputs?: Array<{ id?: string; next_node_key?: string }> };
+      const outputs = c.outputs ?? [];
+      if (!outputs.some((o) => o.id === id)) return null;
+      return { outputs: outputs.map((o) => (o.id === id ? { ...o, next_node_key: targetKey } : o)) };
+    }
+
+    case "carousel": {
+      const c = node.config as {
+        cards?: Array<{ id?: string; buttons?: Array<{ id?: string; next_node_key?: string; type?: string }> }>;
+        timeout_next?: string;
+      };
+      if (sourceHandle === "timeout") return { timeout_next: targetKey };
+      if (!sourceHandle.startsWith("car_")) return null;
+      const resto = sourceHandle.slice(4);
+      const sep = resto.lastIndexOf("_");
+      if (sep < 0) return null;
+      const cardId = resto.slice(0, sep);
+      const buttonId = resto.slice(sep + 1);
+      const cards = c.cards ?? [];
+      if (!cards.some((card) => card.id === cardId && (card.buttons ?? []).some((b) => b.id === buttonId))) {
+        return null;
+      }
+      return {
+        cards: cards.map((card) =>
+          card.id === cardId
+            ? {
+                ...card,
+                buttons: (card.buttons ?? []).map((b) =>
+                  b.id === buttonId ? { ...b, next_node_key: targetKey } : b,
+                ),
+              }
+            : card,
+        ),
+      };
+    }
+
+    case "connect_flow":
+      return null;
+
+    case "ai_block":
+      return aplicarConexionAiBlock(node.config as Record<string, unknown>, sourceHandle, targetKey);
+
     case "handoff":
     case "end":
+      return null;
+    default:
       return null;
   }
 }
@@ -453,14 +664,65 @@ function patchedConfigWithoutKey(
     case "send_message":
     case "send_media":
     case "collect_input":
-    case "wait":
     case "meta_capi":
     case "send_template":
     case "move_kanban":
-    case "set_tag": {
+    case "set_tag":
+    case "department":
+    case "ai_media": {
       const next = (cfg as { next_node_key?: string }).next_node_key;
       if (next !== deletedKey) return null;
       return { ...cfg, next_node_key: "" };
+    }
+
+    case "wait": {
+      const c = cfg as { next_node_key?: string; fuera_ventana_next?: string };
+      const nextMatch = c.next_node_key === deletedKey;
+      const ventanaMatch = c.fuera_ventana_next === deletedKey;
+      if (!nextMatch && !ventanaMatch) return null;
+      return {
+        ...cfg,
+        ...(nextMatch ? { next_node_key: "" } : {}),
+        ...(ventanaMatch ? { fuera_ventana_next: "" } : {}),
+      };
+    }
+
+    case "http_request": {
+      const c = cfg as { next_node_key?: string; error_next?: string };
+      const nextMatch = c.next_node_key === deletedKey;
+      const errorMatch = c.error_next === deletedKey;
+      if (!nextMatch && !errorMatch) return null;
+      return {
+        ...cfg,
+        ...(nextMatch ? { next_node_key: "" } : {}),
+        ...(errorMatch ? { error_next: "" } : {}),
+      };
+    }
+
+    case "payment_gateway": {
+      const c = cfg as {
+        approved_next?: string;
+        rejected_next?: string;
+        timeout_next?: string;
+      };
+      const patch: Record<string, unknown> = {};
+      if (c.approved_next === deletedKey) patch.approved_next = "";
+      if (c.rejected_next === deletedKey) patch.rejected_next = "";
+      if (c.timeout_next === deletedKey) patch.timeout_next = "";
+      return Object.keys(patch).length ? { ...cfg, ...patch } : null;
+    }
+
+    case "official_call": {
+      const c = cfg as {
+        granted_next?: string;
+        denied_next?: string;
+        timeout_next?: string;
+      };
+      const patch: Record<string, unknown> = {};
+      if (c.granted_next === deletedKey) patch.granted_next = "";
+      if (c.denied_next === deletedKey) patch.denied_next = "";
+      if (c.timeout_next === deletedKey) patch.timeout_next = "";
+      return Object.keys(patch).length ? { ...cfg, ...patch } : null;
     }
 
     case "condition": {
@@ -515,8 +777,16 @@ function patchedConfigWithoutKey(
       return dirty ? { ...cfg, sections: next } : null;
     }
 
+    case "connect_flow":
+      return null;
+
+    case "ai_block":
+      return null;
+
     case "handoff":
     case "end":
+      return null;
+    default:
       return null;
   }
 }

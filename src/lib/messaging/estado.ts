@@ -73,6 +73,20 @@ const BAJA = [
   /no\s+me\s+molestes/i,
   /no\s+m[aá]s\s+(mensajes|ms?s)/i,
   /quita(m|r)?me\s+de\s+(la\s+lista|tu\s+lista)/i,
+  // 2026: fórmulas que usa la clienta al tocar el botón de baja o al
+  // escribir para dejar de recibir campañas.
+  /dejar?\s+de\s+recibir/i,
+  /no\s+(me\s+)?(env[ií]en|manden|escriban)/i,
+  /no\s+quiero\s+recibir/i,
+  /cancelar\s+(la\s+)?suscripci[oó]n/i,
+  /darme\s+de\s+baja/i,
+  /opt[\s-]?out/i,
+];
+
+/** IDs estables que puede mandar un botón de baja de una plantilla. */
+const BOTON_BAJA = [
+  /^(opt[_-]?out|baja|stop|unsubscribe|dejar[_-]?de[_-]?recibir)$/i,
+  /(opt[_-]?out|unsubscribe|dejar[_-]?de[_-]?recibir)/i,
 ];
 
 export function pideHumano(texto: string): boolean {
@@ -81,6 +95,15 @@ export function pideHumano(texto: string): boolean {
 
 export function pideBaja(texto: string): boolean {
   return BAJA.some((r) => r.test(texto));
+}
+
+/** ¿El botón que tocó es de baja? Mira el id y, si falta, el título. */
+export function esBotonBaja(
+  botonId: string | null | undefined,
+  titulo?: string | null,
+): boolean {
+  if (botonId && BOTON_BAJA.some((r) => r.test(botonId))) return true;
+  return Boolean(titulo && pideBaja(titulo));
 }
 
 // ---------------------------------------------------------------------------
@@ -182,14 +205,19 @@ export async function estadoPorEntrante(args: {
   contactId: string;
   texto: string;
   accountId: string;
+  botonId?: string | null;
 }): Promise<{ estado: EstadoConversacion; bajo: boolean; humano: boolean }> {
   const { conversationId, contactId, texto } = args;
   const actual = await leerEstado(conversationId);
 
-  if (pideBaja(texto)) {
-    await marcarBaja(contactId, texto);
+  if (pideBaja(texto) || esBotonBaja(args.botonId, texto)) {
+    await marcarBaja(
+      contactId,
+      texto,
+      args.botonId ? "button" : "keyword",
+    );
     await fijarEstado(conversationId, "OPT_OUT");
-    await etiquetar(args.accountId, contactId, "pide-humano", true);
+    await etiquetar(args.accountId, contactId, "baja", true);
     return { estado: "OPT_OUT", bajo: true, humano: false };
   }
 
@@ -276,16 +304,26 @@ export async function marcarConsentimiento(
   }
 }
 
-export async function marcarBaja(contactId: string, motivo: string): Promise<void> {
+export async function marcarBaja(
+  contactId: string,
+  motivo: string,
+  source: "keyword" | "button" | "manual" | "meta" = "keyword",
+): Promise<void> {
   try {
     const db = supabaseAdmin();
+    const ahora = new Date().toISOString();
     await db
       .from("contacts")
       .update({
-        opt_out_at: new Date().toISOString(),
+        opted_out: true,
+        marketing_opted_out: true,
+        opt_out_at: ahora,
         opt_out_reason: motivo.slice(0, 300),
+        opt_out_source: source,
+        marketing_opt_out_at: ahora,
+        marketing_opt_out_source: source,
         consent_status: "denied",
-        consent_timestamp: new Date().toISOString(),
+        consent_timestamp: ahora,
       })
       .eq("id", contactId);
   } catch (err) {
@@ -299,9 +337,16 @@ export async function marcarBaja(contactId: string, motivo: string): Promise<voi
 async function quitarBaja(contactId: string): Promise<void> {
   try {
     const db = supabaseAdmin();
+    // La clienta vuelve a escribir: se reabre el servicio, pero el
+    // opt-out de marketing sigue siendo pegajoso hasta un opt-in
+    // explícito (o user_preferences).
     await db
       .from("contacts")
-      .update({ opt_out_at: null, opt_out_reason: null })
+      .update({
+        opted_out: false,
+        opt_out_at: null,
+        opt_out_reason: null,
+      })
       .eq("id", contactId);
   } catch {
     // Silencio a propósito.
@@ -314,10 +359,31 @@ export async function estaEnBaja(contactId: string): Promise<boolean> {
     const db = supabaseAdmin();
     const { data } = await db
       .from("contacts")
-      .select("opt_out_at")
+      .select("opt_out_at, opted_out")
       .eq("id", contactId)
       .maybeSingle();
-    return Boolean((data as { opt_out_at?: string | null } | null)?.opt_out_at);
+    const fila = data as { opt_out_at?: string | null; opted_out?: boolean } | null;
+    return Boolean(fila?.opted_out || fila?.opt_out_at);
+  } catch {
+    return false;
+  }
+}
+
+/** ¿La clienta pidió no recibir marketing? (permite UTILITY/servicio) */
+export async function estaEnBajaMarketing(contactId: string): Promise<boolean> {
+  try {
+    const db = supabaseAdmin();
+    const { data } = await db
+      .from("contacts")
+      .select("opt_out_at, opted_out, marketing_opted_out")
+      .eq("id", contactId)
+      .maybeSingle();
+    const fila = data as {
+      opt_out_at?: string | null;
+      opted_out?: boolean;
+      marketing_opted_out?: boolean;
+    } | null;
+    return Boolean(fila?.marketing_opted_out || fila?.opted_out || fila?.opt_out_at);
   } catch {
     return false;
   }

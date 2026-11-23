@@ -38,9 +38,12 @@ const flow = {
 };
 
 describe("nodos esperar y guardar respuesta", () => {
-  it("esperar tiene una salida y guardar respuesta dos", () => {
+  it("esperar tiene salida normal y salida opcional fuera de ventana; guardar respuesta dos", () => {
     const nodos = arbol();
-    expect(outgoingSlots(nodos[1]).map((s) => s.id)).toEqual(["next"]);
+    expect(outgoingSlots(nodos[1]).map((s) => s.id)).toEqual([
+      "next",
+      "fuera_ventana",
+    ]);
     expect(outgoingSlots(nodos[2]).map((s) => s.id)).toEqual([
       "contesto",
       "no_contesto",

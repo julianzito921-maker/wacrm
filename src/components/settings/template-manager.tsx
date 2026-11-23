@@ -26,6 +26,7 @@ import {
 import { useAuth } from '@/hooks/use-auth';
 import { fetchAccountTemplates } from '@/lib/settings/account-catalog';
 import { canEditTemplateCategory } from '@/lib/whatsapp/template-category-edit';
+import { analizarPlantilla } from '@/lib/whatsapp/template-policy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -153,6 +154,51 @@ export function TemplateManager() {
   const editingTemplate = templates.find((template) => template.id === editingId);
   const categoryLocked =
     editingTemplate !== undefined && !canEditTemplateCategory(editingTemplate.status);
+
+  const avisosPolitica = useMemo(
+    () =>
+      analizarPlantilla({
+        name: form.name || 'plantilla',
+        category: form.category,
+        language: form.language || 'es_MX',
+        header_type: form.header_format === 'none' ? undefined : (form.header_format as import("@/types").MessageTemplate["header_type"]),
+        header_content: form.header_content,
+        body_text: form.body_text,
+        footer_text: form.footer_text,
+        buttons: form.buttons.length > 0 ? form.buttons : undefined,
+      }),
+    [
+      form.name,
+      form.category,
+      form.language,
+      form.header_format,
+      form.header_content,
+      form.body_text,
+      form.footer_text,
+      form.buttons,
+    ],
+  );
+
+  function agregarBotonBaja() {
+    setForm((prev) => {
+      if (
+        prev.buttons.some(
+          (b) =>
+            b.type === 'QUICK_REPLY' &&
+            /dejar de recibir|baja|stop|unsubscribe/i.test(b.text ?? ''),
+        )
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        buttons: [
+          ...prev.buttons,
+          { type: 'QUICK_REPLY', text: 'Dejar de recibir mensajes' },
+        ],
+      };
+    });
+  }
   // Template selected for the confirm-delete dialog. The destructive
   // action goes through this two-step so a slip on the trash icon
   // doesn't take the template off Meta as well as locally.
@@ -746,6 +792,36 @@ export function TemplateManager() {
                   </p>
                 )}
               </div>
+
+              {avisosPolitica.length > 0 ? (
+                <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-700 dark:text-amber-300">
+                  <p className="font-medium">{t('policyWarnTitle')}</p>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {avisosPolitica.map((a, i) => (
+                      <li key={i}>
+                        {a.code === 'commerce_term'
+                          ? t('policyTerm', {
+                              term: a.term ?? '',
+                              category: a.category ?? '',
+                            })
+                          : t('policyMarketingOptOut')}
+                      </li>
+                    ))}
+                  </ul>
+                  {avisosPolitica.some(
+                    (a) => a.code === 'marketing_without_opt_out',
+                  ) ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={agregarBotonBaja}
+                    >
+                      {t('policyAddOptOut')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="space-y-2">
                 <Label className="text-muted-foreground">{t('language')}</Label>

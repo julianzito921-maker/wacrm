@@ -204,6 +204,15 @@ async function handleStatusUpdate(
       `[template-webhook] status update matched ${data.length} rows for meta_template_id ${metaTemplateId} — investigate.`,
     )
   }
+
+  if (['REJECTED', 'PAUSED', 'DISABLED'].includes(status)) {
+    await avisarPlantillaBloqueada({
+      supabase,
+      metaTemplateId,
+      status,
+      reason: value.reason ?? null,
+    })
+  }
 }
 
 async function handleQualityUpdate(
@@ -293,6 +302,74 @@ interface StubParams {
  * reusable from a webhook context without refactoring that route.
  * The stub is enough for the status / quality to show up in the UI;
  * components arrive on the next manual sync.
+ */
+async function avisarPlantillaBloqueada(args: {
+  supabase: SupabaseClient
+  metaTemplateId: string
+  status: string
+  reason: string | null
+}): Promise<void> {
+  try {
+    const { data } = await args.supabase
+      .from('message_templates')
+      .select('account_id, name, category')
+      .eq('meta_template_id', args.metaTemplateId)
+      .maybeSingle()
+    const tpl = data as { account_id?: string; name?: string; category?: string } | null
+    if (!tpl?.account_id) return
+
+    const { data: admins } = await args.supabase
+      .from('profiles')
+      .select('user_id')
+      .eq('account_id', tpl.account_id)
+      .in('account_role', ['owner', 'admin'])
+    const destinatarios = new Set(
+      ((admins ?? []) as Array<{ user_id: string }>).map((a) => a.user_id),
+    )
+    if (destinatarios.size === 0) {
+      const { data: cuenta } = await args.supabase
+        .from('accounts')
+        .select('owner_user_id')
+        .eq('id', tpl.account_id)
+        .maybeSingle()
+      const owner = (cuenta as { owner_user_id?: string } | null)?.owner_user_id
+      if (owner) destinatarios.add(owner)
+    }
+
+    for (const userId of destinatarios) {
+      await args.supabase.from('notifications').insert({
+        account_id: tpl.account_id,
+        user_id: userId,
+        type: 'template_status',
+        title: `Plantilla ${args.status.toLowerCase()}`,
+        body: `${tpl.name ?? args.metaTemplateId}${args.reason ? `: ${args.reason}` : ''}`,
+      } as never)
+    }
+
+    if (['PAUSED', 'DISABLED', 'REJECTED'].includes(args.status) && tpl.name) {
+      await args.supabase
+        .from('broadcasts')
+        .update({
+          status: 'paused',
+          paused_at: new Date().toISOString(),
+          pause_reason: `template_${args.status.toLowerCase()}`,
+        })
+        .eq('account_id', tpl.account_id)
+        .eq('template_name', tpl.name)
+        .in('status', ['sending', 'scheduled'])
+    }
+  } catch (err) {
+    console.error(
+      '[template-webhook] no se pudo avisar de la plantilla:',
+      err instanceof Error ? err.message : err,
+    )
+  }
+}
+
+/**
+ * Stub para una plantilla que Meta conoce pero el CRM todavía no.
+ * Resuelve la cuenta por WABA y crea la fila mínima; el sync posterior
+ * rellena los componentes.
  */
 async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
   const { kind, metaTemplateId, name, wabaId, supabase } = p

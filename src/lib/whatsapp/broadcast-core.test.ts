@@ -81,7 +81,30 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
         };
         return chain;
       }
-      if (table === 'broadcasts' || table === 'broadcast_recipients') {
+      if (table === 'contacts') {
+        return {
+          select: () => ({
+            in: () => Promise.resolve({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'broadcasts') {
+        return {
+          update: () => ({
+            eq: () => Promise.resolve({ error: null }),
+          }),
+          insert: () => {
+            calls.usedDirectInsert++;
+            return {
+              select: () => ({
+                single: () =>
+                  Promise.resolve({ data: { id: 'orphan' }, error: null }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'broadcast_recipients') {
         calls.usedDirectInsert++;
         return {
           insert: () => ({

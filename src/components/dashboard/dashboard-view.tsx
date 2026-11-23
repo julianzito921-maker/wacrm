@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -136,6 +136,7 @@ interface SalesData {
   series: SalesPoint[];
   hourly: HourPoint[];
   by_instance: BreakdownRow[];
+  by_connection?: BreakdownRow[];
   by_state: BreakdownRow[];
   by_product: BreakdownRow[];
   history: HistoryRow[];
@@ -168,8 +169,12 @@ interface Product {
 }
 interface Connection {
   id: string;
+  name: string | null;
+  phone_number: string | null;
+  display_phone_number: string | null;
   phone_number_id: string;
   status: string;
+  active: boolean;
 }
 interface Agent {
   user_id: string;
@@ -302,9 +307,11 @@ export function DashboardView() {
           .order('orden', { ascending: true })
           .order('nombre', { ascending: true }),
         supabase
-          .from('whatsapp_config')
-          .select('id, phone_number_id, status')
-          .eq('account_id', accountId),
+          .from('whatsapp_connections')
+          .select('id, name, phone_number, display_phone_number, phone_number_id, status, active')
+          .eq('account_id', accountId)
+          .order('is_default', { ascending: false })
+          .order('created_at', { ascending: true }),
         supabase
           .from('profiles')
           .select('user_id, full_name, email')
@@ -326,10 +333,11 @@ export function DashboardView() {
     setFailed(false);
     try {
       if (tab === 'sales') {
-        const { data, error } = await supabase.rpc('dashboard_sales', {
+        const { data, error } = await supabase.rpc('dashboard_sales_v2', {
           p_from: fromISO,
           p_to: toISO,
-          p_instance_id: instance === 'all' ? null : instance,
+          p_connection_id: instance === 'all' ? null : instance,
+          p_instance_id: null,
           p_product_id: product === 'all' ? null : product,
           p_agent_id: agent === 'all' ? null : agent,
           p_currency: currency || null,
@@ -471,7 +479,7 @@ export function DashboardView() {
             <SelectItem value="all">{t('filters.allConnections')}</SelectItem>
             {connections.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                WhatsApp …{c.phone_number_id.slice(-4)}
+                {c.name ?? `WhatsApp …${c.phone_number_id.slice(-4)}`}
               </SelectItem>
             ))}
           </SelectContent>
@@ -706,7 +714,7 @@ export function DashboardView() {
               <BreakdownCard
                 title={t('sales.breakdown.byInstance')}
                 subtitle={t('sales.breakdown.byInstanceHint')}
-                rows={(salesData?.by_instance ?? []).map((r) => ({
+                rows={(salesData?.by_connection ?? salesData?.by_instance ?? []).map((r) => ({
                   key: r.id,
                   label: r.label ?? r.id,
                   count: r.count,
@@ -719,7 +727,7 @@ export function DashboardView() {
               <BreakdownCard
                 title={t('sales.breakdown.revenueByInstance')}
                 subtitle={t('sales.breakdown.revenueByInstanceHint')}
-                rows={(salesData?.by_instance ?? []).map((r) => ({
+                rows={(salesData?.by_connection ?? salesData?.by_instance ?? []).map((r) => ({
                   key: r.id,
                   label: r.label ?? r.id,
                   count: r.count,
@@ -1661,7 +1669,7 @@ function SaleDialog({
       };
       if (!sale) {
         payload.contact_id = contact?.id;
-        payload.instance_id = instanceId === 'default' ? null : instanceId;
+        payload.connection_id = instanceId === 'default' ? null : instanceId;
       }
       payload.id = sale?.id;
       const res = await fetch('/api/dashboard/sales', {
@@ -1826,7 +1834,7 @@ function SaleDialog({
                   <SelectItem value="default">{t('sales.sale.defaultInstance')}</SelectItem>
                   {connections.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      WhatsApp …{c.phone_number_id.slice(-4)}
+                {c.name ?? `WhatsApp …${c.phone_number_id.slice(-4)}`}
                     </SelectItem>
                   ))}
                 </SelectContent>

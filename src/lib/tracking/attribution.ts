@@ -1,4 +1,4 @@
-﻿import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { guardarValor } from '@/lib/ventas/contact-values'
 import {
   CLICK_ID_KEYS,
@@ -9,6 +9,8 @@ import {
 
 export interface AtribucionEntrante {
   source: string | null
+  /** Isla que originó el clic; si falta, se usa la tabla legacy. */
+  connectionId?: string | null
   linkId?: string | null
   clickId?: string | null
   ctwaClid?: string | null
@@ -34,6 +36,47 @@ export async function upsertContactAttribution(
   try {
     const db = supabaseAdmin()
     const ahora = new Date().toISOString()
+
+    if (args.connectionId) {
+      const { data: existenteIsla } = await db
+        .from('contact_attribution_islas')
+        .select('first_seen_at')
+        .eq('contact_id', args.contactId)
+        .eq('connection_id', args.connectionId)
+        .maybeSingle()
+      const { error: errorIsla } = await db
+        .from('contact_attribution_islas')
+        .upsert(
+          {
+            contact_id: args.contactId,
+            connection_id: args.connectionId,
+            account_id: args.accountId,
+            source: args.source,
+            link_id: args.linkId ?? null,
+            click_id: args.clickId ?? null,
+            ctwa_clid: args.ctwaClid ?? null,
+            campaign: args.campaign ?? null,
+            adset: args.adset ?? null,
+            ad: args.ad ?? null,
+            creative: args.creative ?? null,
+            click_ids: args.clickIds ?? {},
+            utm: args.utm ?? {},
+            raw: args.raw ?? {},
+            first_seen_at:
+              (existenteIsla?.first_seen_at as string | undefined) ?? ahora,
+            last_seen_at: ahora,
+          },
+          { onConflict: 'contact_id,connection_id' },
+        )
+      if (errorIsla) {
+        console.error(
+          '[tracking] no se pudo guardar la atribución por isla:',
+          errorIsla.message,
+        )
+      }
+      return
+    }
+
     const { data: existente } = await db
       .from('contact_attribution')
       .select('first_seen_at')
@@ -88,12 +131,25 @@ export async function upsertContactAttribution(
   }
 }
 
-/** ctwa_clid guardado, si lo hay. */
+/** ctwa_clid guardado, si lo hay, para la isla concreta. */
 export async function leerAtribucion(
   accountId: string,
   contactId: string,
+  connectionId?: string | null,
 ): Promise<{ ctwa_clid: string | null } | null> {
-  const { data } = await supabaseAdmin()
+  const db = supabaseAdmin()
+  if (connectionId) {
+    const { data } = await db
+      .from('contact_attribution_islas')
+      .select('ctwa_clid')
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+      .eq('connection_id', connectionId)
+      .maybeSingle()
+    if (!data) return null
+    return { ctwa_clid: (data as { ctwa_clid?: string | null }).ctwa_clid ?? null }
+  }
+  const { data } = await db
     .from('contact_attribution')
     .select('ctwa_clid')
     .eq('account_id', accountId)
@@ -121,7 +177,7 @@ export async function reclamarCodigoDeEnlace(args: {
     const db = supabaseAdmin()
     const { data: click } = await db
       .from('tracking_clicks')
-      .select('id, link_id, params, contact_id, account_id')
+      .select('id, link_id, params, contact_id, account_id, connection_id')
       .eq('click_token', extraido.token)
       .eq('account_id', args.accountId)
       .maybeSingle()
@@ -129,7 +185,7 @@ export async function reclamarCodigoDeEnlace(args: {
 
     const { data: link } = await db
       .from('tracking_links')
-      .select('id, slug, platform, default_utm, active')
+      .select('id, slug, platform, default_utm, active, connection_id')
       .eq('id', click.link_id)
       .eq('account_id', args.accountId)
       .maybeSingle()
@@ -160,6 +216,10 @@ export async function reclamarCodigoDeEnlace(args: {
       userId: args.userId,
       contactId: args.contactId,
       source: link.platform as string,
+      connectionId:
+        (click as { connection_id?: string | null }).connection_id ??
+        (link as { connection_id?: string | null }).connection_id ??
+        null,
       linkId: click.link_id as string,
       clickId: click.id as string,
       campaign: params.utm_campaign ?? null,

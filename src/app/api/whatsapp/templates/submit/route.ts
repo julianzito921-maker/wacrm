@@ -7,12 +7,14 @@ import {
   toErrorResponse,
 } from '@/lib/auth/account'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { submitMessageTemplate } from '@/lib/whatsapp/meta-api'
 import {
   validateTemplatePayload,
   type TemplatePayload,
 } from '@/lib/whatsapp/template-validators'
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components'
+import { analizarPlantilla, tieneBotonBaja } from '@/lib/whatsapp/template-policy'
 import { ensureMediaHeaderHandle } from '@/lib/whatsapp/template-header-handle'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -27,6 +29,7 @@ function buildTemplateRow(
     status: 'DRAFT' | string
     metaTemplateId: string | null
     submissionError: string | null
+    connectionId?: string | null
   },
 ) {
   return {
@@ -34,6 +37,7 @@ function buildTemplateRow(
     // of migration 017. Without this an INSERT throws on the
     // not-null constraint.
     account_id: accountId,
+    connection_id: extras.connectionId ?? null,
     name: payload.name,
     category: payload.category,
     language: payload.language,
@@ -44,6 +48,7 @@ function buildTemplateRow(
     body_text: payload.body_text,
     footer_text: payload.footer_text ?? null,
     buttons: payload.buttons ?? null,
+    has_opt_out_button: tieneBotonBaja(payload.buttons),
     sample_values: payload.sample_values ?? null,
     status: extras.status,
     meta_template_id: extras.metaTemplateId,
@@ -177,42 +182,66 @@ export async function POST(request: Request) {
     }
     const existingDraftId = existing?.id ?? null
 
+    const warnings = analizarPlantilla(payload)
+
     const dryRun =
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
 
     let metaTemplateId: string
     let metaStatus: string
+    let connectionId: string | null = null
 
     if (dryRun) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
-      const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
+      const desiredConnectionId =
+        typeof (payload as unknown as { connection_id?: unknown }).connection_id === 'string'
+          ? String((payload as unknown as { connection_id?: string }).connection_id).trim()
+          : ''
+      const admin = supabaseAdmin()
+      let connQuery = admin
+        .from('whatsapp_connections')
+        .select('id, waba_id, access_token')
         .eq('account_id', accountId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          {
-            error:
-              t('common.whatsappNotConfiguredConnect'),
-          },
-          { status: 400 },
-        )
+        .eq('active', true)
+      if (desiredConnectionId) {
+        connQuery = connQuery.eq('id', desiredConnectionId)
+      } else {
+        connQuery = connQuery
+          .order('is_default', { ascending: false })
+          .order('created_at', { ascending: true })
       }
-      if (!config.waba_id) {
-        return NextResponse.json(
-          {
-            error:
-              t('common.wabaIdMissing'),
-          },
-          { status: 400 },
-        )
+      const { data: conn } = await connQuery.limit(1).maybeSingle()
+      let wabaId = (conn?.waba_id as string | undefined) ?? ''
+      let accessToken: string
+      connectionId = (conn?.id as string | undefined) ?? null
+      if (conn?.access_token && wabaId) {
+        accessToken = decrypt(conn.access_token as string)
+      } else {
+        const { data: config, error: configError } = await supabase
+          .from('whatsapp_config')
+          .select('*')
+          .eq('account_id', accountId)
+          .single()
+        if (configError || !config) {
+          return NextResponse.json(
+            { error: t('common.whatsappNotConfiguredConnect') },
+            { status: 400 },
+          )
+        }
+        if (!config.waba_id) {
+          return NextResponse.json(
+            { error: t('common.wabaIdMissing') },
+            { status: 400 },
+          )
+        }
+        wabaId = config.waba_id
+        accessToken = decrypt(config.access_token)
+        connectionId = null
       }
 
-      const accessToken = decrypt(config.access_token)
 
       // Media headers (image/video/document) need a Resumable-Upload
       // handle (Meta rejects a plain URL at creation). Derive it from
@@ -231,7 +260,7 @@ export async function POST(request: Request) {
       const metaPayload = buildMetaTemplatePayload(payload)
       try {
         const meta = await submitMessageTemplate({
-          wabaId: config.waba_id,
+          wabaId,
           accessToken,
           payload: metaPayload,
         })
@@ -246,6 +275,7 @@ export async function POST(request: Request) {
           existingDraftId,
           userId,
           buildTemplateRow(accountId, payload, {
+            connectionId,
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: message,
@@ -268,6 +298,7 @@ export async function POST(request: Request) {
       existingDraftId,
       userId,
       buildTemplateRow(accountId, payload, {
+        connectionId,
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,
@@ -291,6 +322,7 @@ export async function POST(request: Request) {
       success: true,
       template: row,
       dry_run: dryRun,
+      warnings,
     })
   } catch (error) {
     // Auth failures map to 401/403. Handled before the generic branch

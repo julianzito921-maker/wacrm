@@ -6,6 +6,7 @@ import {
   toErrorResponse,
 } from '@/lib/auth/account'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 import type { TemplateButton, TemplateSampleValues } from '@/types'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -142,38 +143,42 @@ export async function POST() {
     const limit = checkRateLimit(`whatsapp-admin:${userId}`, RATE_LIMITS.whatsappAdmin)
     if (!limit.success) return rateLimitResponse(limit)
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
+    const { data: conn } = await supabaseAdmin()
+      .from('whatsapp_connections')
+      .select('id, waba_id, access_token')
       .eq('account_id', accountId)
-      .single()
+      .eq('active', true)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
 
-    if (configError || !config) {
-      return NextResponse.json(
-        {
-          error:
-            t('common.whatsappNotConfiguredConnect'),
-        },
-        { status: 400 },
-      )
+    let wabaId = (conn?.waba_id as string | undefined) ?? ''
+    let accessToken: string
+    if (conn?.access_token && wabaId) {
+      accessToken = decrypt(conn.access_token as string)
+    } else {
+      const { data: config, error: configError } = await supabase
+        .from('whatsapp_config')
+        .select('*')
+        .eq('account_id', accountId)
+        .single()
+      if (configError || !config) {
+        return NextResponse.json({ error: t('common.whatsappNotConfiguredConnect') }, { status: 400 })
+      }
+      if (!config.waba_id) {
+        return NextResponse.json({ error: t('common.wabaIdMissing') }, { status: 400 })
+      }
+      wabaId = config.waba_id
+      accessToken = decrypt(config.access_token)
     }
 
-    if (!config.waba_id) {
-      return NextResponse.json(
-        {
-          error:
-            t('common.wabaIdMissing'),
-        },
-        { status: 400 },
-      )
-    }
-
-    const accessToken = decrypt(config.access_token)
+    const connectionId = (conn?.id as string | undefined) ?? null
 
     const metaTemplates: MetaTemplate[] = []
     let nextUrl:
       | string
-      | null = `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
+      | null = `${META_API_BASE}/${wabaId}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
     const PAGE_CAP = 20
     let pageCount = 0
 
@@ -239,17 +244,22 @@ export async function POST() {
         buttons: parsedButtons.length ? parsedButtons : null,
         sample_values: sampleValues,
         status: normalizeStatus(t.status),
+        connection_id: connectionId,
         meta_template_id: t.id,
         quality_score: normalizeQualityScore(t.quality_score),
         updated_at: new Date().toISOString(),
       }
 
-      const { data: matches, error: lookupErr } = await supabase
+      let lookup = supabase
         .from('message_templates')
         .select('id')
         .eq('account_id', accountId)
         .eq('name', t.name)
         .eq('language', t.language)
+      lookup = connectionId
+        ? lookup.eq('connection_id', connectionId)
+        : lookup.is('connection_id', null)
+      const { data: matches, error: lookupErr } = await lookup
         .order('updated_at', { ascending: false })
         .order('id')
         .limit(1)

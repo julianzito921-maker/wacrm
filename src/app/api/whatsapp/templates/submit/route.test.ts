@@ -30,7 +30,7 @@ function makeSupabaseMock() {
     }
     const b: Record<string, unknown> = {}
     b.select = vi.fn(() => b)
-    for (const op of ['eq', 'is']) {
+    for (const op of ['eq', 'is', 'order', 'limit']) {
       b[op] = vi.fn((column: string, value: unknown) => {
         write?.filters.push([op, column, value])
         return b
@@ -60,6 +60,10 @@ let supabaseMock = makeSupabaseMock()
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
+}))
+
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => supabaseMock,
 }))
 
 const submitMessageTemplate = vi.fn()

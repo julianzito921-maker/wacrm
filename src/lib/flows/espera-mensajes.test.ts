@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { pausaHumana } from "./meta-send";
 
 const ORIGINAL = {
@@ -7,6 +7,7 @@ const ORIGINAL = {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   process.env.AI_ESPERA_MIN_MS = ORIGINAL.min;
   process.env.AI_ESPERA_MAX_MS = ORIGINAL.max;
   if (ORIGINAL.min === undefined) delete process.env.AI_ESPERA_MIN_MS;
@@ -25,6 +26,7 @@ describe("pausaHumana", () => {
   });
 
   it("cuanto más largo el mensaje, más tarda en escribirlo", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     delete process.env.AI_ESPERA_MIN_MS;
     delete process.env.AI_ESPERA_MAX_MS;
     const corto = pausaHumana("hola");

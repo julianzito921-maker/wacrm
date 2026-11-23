@@ -1,5 +1,7 @@
-﻿import {
+import {
   BrainCircuit,
+  Building2,
+  Clock,
   Coins,
   FileText,
   Inbox,
@@ -8,10 +10,13 @@
   Palette,
   PlugZap,
   Shield,
+  Phone,
+  Sparkles,
   Tags,
   Target,
   User,
   UsersRound,
+  Wallet,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -39,6 +44,12 @@ export const SETTINGS_SECTIONS = [
   'api',
   'tracking',
   'mcp',
+  'departments',
+  'business-hours',
+  'payments',
+  'ai-media',
+  'calling',
+  'http-credentials',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -62,11 +73,17 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   'quick-replies': { id: 'quick-replies', label: 'Quick replies', icon: Zap, group: 'workspace' },
   inbox: { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'workspace' },
+  departments: { id: 'departments', label: 'Departments', icon: Building2, group: 'workspace' },
+  'business-hours': { id: 'business-hours', label: 'Business hours', icon: Clock, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
   tracking: { id: 'tracking', label: 'Tracking', icon: Target, group: 'integrations' },
+  payments: { id: 'payments', label: 'Payments', icon: Wallet, group: 'integrations' },
+  'ai-media': { id: 'ai-media', label: 'AI media', icon: Sparkles, group: 'integrations' },
+  calling: { id: 'calling', label: 'Official calls', icon: Phone, group: 'integrations' },
+  'http-credentials': { id: 'http-credentials', label: 'HTTP credentials', icon: KeyRound, group: 'integrations' },
   mcp: { id: 'mcp', label: 'MCP tools', icon: BrainCircuit, group: 'integrations' },
 };
 

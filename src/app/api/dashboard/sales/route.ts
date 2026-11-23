@@ -61,27 +61,62 @@ export async function POST(request: Request) {
       productId = producto.id as string;
     }
 
+    let connectionId: string | null = null;
     let instanceId: string | null = null;
-    if (typeof body.instance_id === 'string' && body.instance_id.trim()) {
+    const connectionInput =
+      typeof body.connection_id === 'string'
+        ? body.connection_id.trim()
+        : typeof body.instance_id === 'string'
+          ? body.instance_id.trim()
+          : '';
+    if (connectionInput) {
       const { data: conexion } = await ctx.supabase
-        .from('whatsapp_config')
-        .select('id')
-        .eq('id', body.instance_id.trim())
+        .from('whatsapp_connections')
+        .select('id, phone_number_id')
+        .eq('id', connectionInput)
         .eq('account_id', ctx.accountId)
         .maybeSingle();
       if (!conexion) {
         return NextResponse.json({ error: 'instance_not_found' }, { status: 404 });
       }
-      instanceId = conexion.id as string;
-    } else {
-      const { data: conexion } = await ctx.supabase
+      connectionId = conexion.id as string;
+      const { data: legacy } = await ctx.supabase
         .from('whatsapp_config')
         .select('id')
         .eq('account_id', ctx.accountId)
+        .eq('phone_number_id', conexion.phone_number_id as string)
+        .maybeSingle();
+      instanceId = (legacy?.id as string | undefined) ?? null;
+    } else {
+      const { data: conexion } = await ctx.supabase
+        .from('whatsapp_connections')
+        .select('id, phone_number_id')
+        .eq('account_id', ctx.accountId)
+        .eq('active', true)
+        .order('is_default', { ascending: false })
         .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();
-      instanceId = (conexion?.id as string | undefined) ?? null;
+      connectionId = (conexion?.id as string | undefined) ?? null;
+      if (conexion?.phone_number_id) {
+        const { data: legacy } = await ctx.supabase
+          .from('whatsapp_config')
+          .select('id')
+          .eq('account_id', ctx.accountId)
+          .eq('phone_number_id', conexion.phone_number_id as string)
+          .maybeSingle();
+        instanceId = (legacy?.id as string | undefined) ?? null;
+      }
+      if (!connectionId) {
+        const { data: legacy } = await ctx.supabase
+          .from('whatsapp_config')
+          .select('id')
+          .eq('account_id', ctx.accountId)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        instanceId = (legacy?.id as string | undefined) ?? null;
+      }
     }
 
     const { data, error } = await ctx.supabase
@@ -91,6 +126,7 @@ export async function POST(request: Request) {
         contact_id: contactId,
         product_id: productId,
         instance_id: instanceId,
+        connection_id: connectionId,
         lead_number: (contacto.lead_number as number | null) ?? null,
         client_name: (contacto.name as string | null) ?? null,
         amount,

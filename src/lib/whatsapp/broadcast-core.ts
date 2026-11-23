@@ -18,8 +18,19 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { enviarPlantilla } from '@/lib/messaging/send'
+import {
+  enviarPlantilla,
+  EnvioBloqueadoError,
+  EnvioCalentamientoError,
+  extraerErrorMeta,
+} from '@/lib/messaging/send'
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { credencialesDeConexion, credencialesPrimarias } from '@/lib/whatsapp/connections';
+import {
+  conexionBloqueaMasivo,
+  diaCalentamiento,
+  limiteCalentamiento,
+} from '@/lib/whatsapp/warmup';
 import {
   parseInternationalPhone,
   phoneVariants,
@@ -53,6 +64,8 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
+  /** Conexión que envía; si falta, se usa la primera conectada. */
+  connectionId?: string | null;
 }
 
 interface PlannedRecipient {
@@ -69,6 +82,7 @@ export interface BroadcastPlan {
   accountId: string;
   templateName: string;
   templateLanguage: string;
+  connectionId: string | null;
   phoneNumberId: string;
   accessToken: string;
   templateRow: MessageTemplate | null;
@@ -79,6 +93,7 @@ export interface BroadcastPlan {
 
 export interface CreatedBroadcastPlan extends BroadcastPlan {
   duplicates: number;
+  skippedOptOut: number;
 }
 
 const MAX_RECIPIENTS = 1000;
@@ -117,19 +132,66 @@ export async function createBroadcast(
 
   // Config (fail fast + provides the audit trail owner already resolved
   // by the caller). Meta send needs phone_number_id + decrypted token.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-  if (configError || !config) {
-    throw new BroadcastError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  // Prefer the per-connection model; `whatsapp_config` stays as legacy
+  // fallback for accounts that have not migrated.
+  let creds = params.connectionId
+    ? await credencialesDeConexion(db, params.connectionId)
+    : await credencialesPrimarias(db, accountId);
+  if (!creds) {
+    const { data: config, error: configError } = await db
+      .from('whatsapp_config')
+      .select('*')
+      .eq('account_id', accountId)
+      .single();
+    if (configError || !config) {
+      throw new BroadcastError(
+        'whatsapp_not_configured',
+        'WhatsApp not configured. Please set up your WhatsApp integration first.',
+        400
+      );
+    }
+    creds = {
+      connectionId: null,
+      phoneNumberId: config.phone_number_id,
+      accessToken: decrypt(config.access_token),
+    };
   }
-  const accessToken = decrypt(config.access_token);
+
+  let healthRow:
+    | {
+        health_status?: string | null;
+        restriction_scope?: string | null;
+        quality_rating?: string | null;
+        warmup_enabled?: boolean | null;
+        warmup_started_at?: string | null;
+      }
+    | null = null;
+  if (creds?.connectionId) {
+    const { data } = await db
+      .from('whatsapp_connections')
+      .select(
+        'health_status, restriction_scope, quality_rating, warmup_enabled, warmup_started_at',
+      )
+      .eq('id', creds.connectionId)
+      .maybeSingle();
+    healthRow = (data as {
+      health_status?: string | null;
+      restriction_scope?: string | null;
+      quality_rating?: string | null;
+      warmup_enabled?: boolean | null;
+      warmup_started_at?: string | null;
+    } | null) ?? null;
+  }
+  if (healthRow) {
+    const bloqueo = conexionBloqueaMasivo(healthRow);
+    if (bloqueo.bloqueado) {
+      throw new BroadcastError(
+        'connection_restricted',
+        bloqueo.motivo ?? 'La conexión está restringida por Meta.',
+        409
+      );
+    }
+  }
 
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
@@ -190,6 +252,75 @@ export async function createBroadcast(
     throw new BroadcastError(
       'bad_request',
       'No recipients had a valid international phone number (leading + and country code, e.g. +14155550123)',
+      400,
+    );
+  }
+
+  // Opt-out: un broadcast es marketing. `marketing_opted_out` bloquea
+  // solo marketing (131050/user_preferences); `opted_out` bloquea todo.
+  let skippedOptOut = 0;
+  let permitidos = deduped;
+  if (deduped.length > 0) {
+    const { data: contactos } = await db
+      .from('contacts')
+      .select('id, opted_out, marketing_opted_out, consent_status')
+      .in('id', deduped.map((r) => r.contactId));
+    const bloqueados = new Set(
+      ((contactos ?? []) as Array<{
+        id: string;
+        opted_out?: boolean;
+        marketing_opted_out?: boolean;
+        consent_status?: string | null;
+      }>)
+        .filter(
+          (c) =>
+            c.opted_out ||
+            c.marketing_opted_out ||
+            c.consent_status === 'denied',
+        )
+        .map((c) => c.id),
+    );
+    permitidos = deduped.filter((r) => !bloqueados.has(r.contactId));
+    skippedOptOut = deduped.length - permitidos.length;
+  }
+
+  if (permitidos.length === 0) {
+    throw new BroadcastError(
+      'all_opted_out',
+      'Todos los destinatarios tienen opt-out o consentimiento denegado.',
+      409,
+    );
+  }
+
+  // Warm-up: si el cupo de hoy no alcanza, se rechaza el broadcast
+  // completo con el dato exacto; el wizard puede reducir la audiencia.
+  if (healthRow?.warmup_enabled) {
+    const limite = limiteCalentamiento(healthRow.warmup_started_at);
+    if (limite !== null) {
+      const dia = new Date().toISOString().slice(0, 10);
+      const { data: uso } = await db
+        .from('connection_warmup_sends')
+        .select('sent_count')
+        .eq('connection_id', creds!.connectionId)
+        .eq('day', dia)
+        .maybeSingle();
+      const usados = Number((uso as { sent_count?: number } | null)?.sent_count) || 0;
+      if (permitidos.length > Math.max(0, limite - usados)) {
+        throw new BroadcastError(
+          'warmup_limit',
+          `El calentamiento de esta conexión permite ${limite}/día (día ${diaCalentamiento(
+            healthRow.warmup_started_at,
+          )}); hoy quedan ${Math.max(0, limite - usados)}. Reduce la audiencia o espera a mañana.`,
+          429,
+        );
+      }
+    }
+  }
+
+  if (permitidos.length === 0) {
+    throw new BroadcastError(
+      'bad_request',
+      'No recipients had a valid international phone number (leading + and country code, e.g. +14155550123)',
       400
     );
   }
@@ -217,11 +348,11 @@ export async function createBroadcast(
       p_name: name || `API broadcast (${templateName})`,
       p_template_name: templateName,
       p_template_language: resolvedTemplate.language,
-      p_total_recipients: deduped.length,
-      p_contact_ids: deduped.map((r) => r.contactId),
+      p_total_recipients: permitidos.length,
+      p_contact_ids: permitidos.map((r) => r.contactId),
       // Frozen per-recipient params (migration 038) — without them a
       // resume of this broadcast has no way to reconstruct {{1}}.
-      p_template_params: deduped.map((r) => r.params),
+      p_template_params: permitidos.map((r) => r.params),
     }
   );
   if (createErr || !createdRows || createdRows.length === 0) {
@@ -231,9 +362,16 @@ export async function createBroadcast(
 
   const broadcastId = createdRows[0].broadcast_id as string;
 
+  if (creds?.connectionId) {
+    await db
+      .from('broadcasts')
+      .update({ connection_id: creds!.connectionId })
+      .eq('id', broadcastId);
+  }
+
   // Pair each inserted recipient row back to its phone/params by
   // contact_id — unambiguous now that duplicates are collapsed.
-  const byContact = new Map(deduped.map((r) => [r.contactId, r]));
+  const byContact = new Map(permitidos.map((r) => [r.contactId, r]));
   const planned: PlannedRecipient[] = createdRows.map(
     (row: { recipient_id: string; contact_id: string }) => {
       const r = byContact.get(row.contact_id)!;
@@ -252,12 +390,14 @@ export async function createBroadcast(
     accountId,
     templateName,
     templateLanguage: resolvedTemplate.language,
-    phoneNumberId: config.phone_number_id,
-    accessToken,
+    connectionId: creds!.connectionId,
+    phoneNumberId: creds.phoneNumberId,
+    accessToken: creds.accessToken,
     templateRow,
     planned,
     rejected,
     duplicates: resolved.length - deduped.length,
+    skippedOptOut,
   };
 }
 
@@ -278,10 +418,28 @@ export async function deliverBroadcast(
   db: SupabaseClient,
   plan: BroadcastPlan
 ): Promise<void> {
-  for (const recipient of plan.planned) {
+  let pausado = false;
+  for (let index = 0; index < plan.planned.length; index += 1) {
+    const recipient = plan.planned[index];
+
+    // La salud puede cambiar a mitad del envío (webhook de Meta). Se
+    // consulta el estado del broadcast cada 10 destinatarios y al inicio.
+    if (index === 0 || index % 10 === 0) {
+      const { data: estado } = await db
+        .from('broadcasts')
+        .select('status')
+        .eq('id', plan.broadcastId)
+        .maybeSingle();
+      if ((estado as { status?: string } | null)?.status === 'paused') {
+        pausado = true;
+        break;
+      }
+    }
+
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
+    let errorCode: string | null = null;
 
     for (const variant of variants) {
       try {
@@ -289,7 +447,9 @@ export async function deliverBroadcast(
           ctx: {
             accountId: plan.accountId,
             contactId: recipient.contactId ?? null,
+            connectionId: plan.connectionId,
             source: 'difusion',
+            templateCategory: plan.templateRow?.category ?? 'Marketing',
             reason: `difusión: ${plan.templateName}`,
             workflowId: plan.broadcastId ?? null,
           },
@@ -305,12 +465,58 @@ export async function deliverBroadcast(
         lastError = null;
         break;
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        lastError = message;
+        if (error instanceof EnvioCalentamientoError) {
+          await db
+            .from('broadcasts')
+            .update({
+              status: 'paused',
+              paused_at: new Date().toISOString(),
+              pause_reason: 'warmup_limit',
+            })
+            .eq('id', plan.broadcastId);
+          pausado = true;
+          break;
+        }
+        if (error instanceof EnvioBloqueadoError) {
+          lastError = error.message;
+          errorCode = error.motivo;
+          if (
+            error.motivo === 'connection_health' ||
+            error.motivo === 'connection_restricted'
+          ) {
+            await db
+              .from('broadcasts')
+              .update({
+                status: 'paused',
+                paused_at: new Date().toISOString(),
+                pause_reason: error.motivo,
+              })
+              .eq('id', plan.broadcastId);
+            pausado = true;
+          }
+          break;
+        }
+        const meta = extraerErrorMeta(error);
+        lastError = meta.message;
+        errorCode = meta.code;
+        if (meta.code === '130429') {
+          await db
+            .from('broadcasts')
+            .update({
+              status: 'paused',
+              paused_at: new Date().toISOString(),
+              pause_reason: 'rate_limit',
+            })
+            .eq('id', plan.broadcastId);
+          pausado = true;
+          break;
+        }
         // Only a "recipient not allowed" error is worth another variant.
-        if (!isRecipientNotAllowedError(message)) break;
+        if (!isRecipientNotAllowedError(meta.message)) break;
       }
     }
+
+    if (pausado) break;
 
     if (sentMessageId) {
       await db
@@ -320,6 +526,7 @@ export async function deliverBroadcast(
           sent_at: new Date().toISOString(),
           whatsapp_message_id: sentMessageId,
           error_message: null,
+          error_code: null,
         })
         .eq('id', recipient.recipientRowId);
     } else {
@@ -328,12 +535,15 @@ export async function deliverBroadcast(
         .update({
           status: 'failed',
           error_message: lastError || 'Unknown error',
+          error_code: errorCode,
         })
         .eq('id', recipient.recipientRowId);
     }
   }
 
-  await finalizeBroadcastStatus(db, plan.broadcastId);
+  if (!pausado) {
+    await finalizeBroadcastStatus(db, plan.broadcastId);
+  }
 }
 
 /**

@@ -66,6 +66,8 @@ interface Enlace {
   active: boolean;
   created_at: string;
   url: string;
+  connection_id?: string | null;
+  domain?: string | null;
 }
 
 interface Etapa {
@@ -92,6 +94,7 @@ const FORM_PIXEL = {
 };
 
 const FORM_ENLACE = {
+  connection_id: '',
   name: '',
   slug: '',
   platform: 'meta' as string,
@@ -109,6 +112,7 @@ export function TrackingPanel() {
 
   const [cargando, setCargando] = useState(true);
   const [pixels, setPixels] = useState<Pixel[]>([]);
+  const [conexiones, setConexiones] = useState<Array<{ id: string; name: string; custom_domain: string | null }>>([]);
   const [enlaces, setEnlaces] = useState<Enlace[]>([]);
   const [confirmar, setConfirmar] = useState<Confirmacion>(null);
 
@@ -148,6 +152,26 @@ export function TrackingPanel() {
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  useEffect(() => {
+    let vivo = true;
+    void (async () => {
+      const { data } = await supabase
+        .from('whatsapp_connections')
+        .select('id, name, custom_domain')
+        .eq('active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: true });
+      if (vivo) {
+        setConexiones(
+          (data ?? []) as Array<{ id: string; name: string; custom_domain: string | null }>,
+        );
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [supabase]);
 
   useEffect(() => {
     let vivo = true;
@@ -289,6 +313,7 @@ export function TrackingPanel() {
   const abrirEditarEnlace = (l: Enlace) => {
     setLinkEdit(l);
     setLForm({
+      connection_id: l.connection_id ?? '',
       name: l.name,
       slug: l.slug,
       platform: l.platform,
@@ -306,6 +331,7 @@ export function TrackingPanel() {
     setGuardando(true);
     try {
       const body: Record<string, unknown> = {
+        connection_id: lForm.connection_id || null,
         name: lForm.name.trim(),
         slug: lForm.slug.trim() || slugify(lForm.name),
         platform: lForm.platform,
@@ -793,6 +819,28 @@ export function TrackingPanel() {
                 {t('links.connectedAs', { phone: telefono })}
               </p>
             )}
+            {conexiones.length > 1 ? (
+              <div>
+                <Label className="text-muted-foreground mb-1 block text-xs">
+                  Isla / conexión
+                </Label>
+                <select
+                  value={lForm.connection_id}
+                  onChange={(e) =>
+                    setLForm((f) => ({ ...f, connection_id: e.target.value }))
+                  }
+                  className="border-border bg-muted text-foreground h-9 w-full rounded-md border px-2 text-xs"
+                >
+                  <option value="">Elegir conexión…</option>
+                  {conexiones.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.custom_domain ? ` · ${c.custom_domain}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div>
               <Label className="text-muted-foreground mb-1 block text-xs">
                 {t('links.name')}

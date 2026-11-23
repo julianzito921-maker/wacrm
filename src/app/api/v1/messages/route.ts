@@ -105,7 +105,10 @@ export async function POST(request: Request) {
       ctx.supabase,
       ctx.accountId,
       to,
-      typeof body.name === 'string' ? body.name : null
+      typeof body.name === 'string' ? body.name : null,
+      typeof body.connection_id === 'string' && body.connection_id.trim()
+        ? body.connection_id.trim()
+        : null,
     );
 
     if (resolved.conversationCreated) {

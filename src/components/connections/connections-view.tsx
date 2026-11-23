@@ -26,6 +26,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { estadoCalentamiento } from '@/lib/whatsapp/warmup';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
@@ -38,7 +40,17 @@ interface Connection {
   status: 'connected' | 'disconnected';
   quality_rating: string | null;
   messaging_limit_tier: string | null;
+  whatsapp_business_manager_messaging_limit: string | null;
+  display_phone_number: string | null;
+  health_status: string | null;
+  health_reason: string | null;
+  warmup_enabled: boolean | null;
+  warmup_started_at: string | null;
   badge_color: string;
+  tracking_pixel_id: string | null;
+  custom_domain: string | null;
+  is_default: boolean;
+  active: boolean;
   last_synced_at: string | null;
   created_at: string;
 }
@@ -51,9 +63,19 @@ const FORM = {
   verify_token: '',
   app_secret: '',
   badge_color: '#6366f1',
+  tracking_pixel_id: '',
+  custom_domain: '',
+  is_default: false,
+  active: true,
 };
 
 const COLORES = ['#6366f1', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4'];
+
+interface Pixel {
+  id: string;
+  name: string;
+  pixel_id: string;
+}
 
 function calidadClase(q: string | null) {
   if (q === 'GREEN') return 'border-emerald-500/30 text-emerald-300';
@@ -70,7 +92,25 @@ function tierTexto(t: string | null) {
 export function ConnectionsView() {
   const t = useTranslations('Connections');
   const [conexiones, setConexiones] = useState<Connection[]>([]);
+  const [pixels, setPixels] = useState<Pixel[]>([]);
+  const [warmupPending, setWarmupPending] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/settings/tracking/pixels');
+        const json = (await res.json()) as { pixels?: Pixel[] };
+        if (!cancelado && res.ok) setPixels(json.pixels ?? []);
+      } catch {
+        // la lista de píxeles es opcional para crear la conexión
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, []);
   const [busqueda, setBusqueda] = useState('');
   const [filtro, setFiltro] = useState<'all' | 'connected' | 'disconnected'>('all');
   const [abierto, setAbierto] = useState(false);
@@ -97,6 +137,39 @@ export function ConnectionsView() {
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  const alternarWarmup = async (c: Connection) => {
+    setWarmupPending(c.id);
+    try {
+      const res = await fetch(`/api/connections/${c.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ warmup_enabled: !c.warmup_enabled }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? 'update');
+      setConexiones((prev) =>
+        prev.map((x) =>
+          x.id === c.id
+            ? {
+                ...x,
+                warmup_enabled: !c.warmup_enabled,
+                warmup_started_at:
+                  !c.warmup_enabled && !x.warmup_started_at
+                    ? new Date().toISOString()
+                    : x.warmup_started_at,
+              }
+            : x,
+        ),
+      );
+      toast.success(t('saved'));
+    } catch {
+      toast.error(t('genericError'));
+    } finally {
+      setWarmupPending(null);
+    }
+  };
+
 
   const conectadas = conexiones.filter((c) => c.status === 'connected').length;
   const desconectadas = conexiones.length - conectadas;
@@ -128,6 +201,10 @@ export function ConnectionsView() {
       verify_token: '',
       app_secret: '',
       badge_color: c.badge_color,
+      tracking_pixel_id: c.tracking_pixel_id ?? '',
+      custom_domain: c.custom_domain ?? '',
+      is_default: c.is_default,
+      active: c.active,
     });
     setAbierto(true);
   };
@@ -147,6 +224,10 @@ export function ConnectionsView() {
         name: form.name.trim(),
         waba_id: form.waba_id.trim() || null,
         badge_color: form.badge_color,
+        tracking_pixel_id: form.tracking_pixel_id || null,
+        custom_domain: form.custom_domain.trim() || null,
+        is_default: form.is_default,
+        active: form.active,
       };
       if (form.access_token.trim()) body.access_token = form.access_token.trim();
       if (form.verify_token.trim()) body.verify_token = form.verify_token.trim();
@@ -353,11 +434,43 @@ export function ConnectionsView() {
                     <p className="text-[9px] tracking-wider text-slate-500 uppercase">
                       {t('limit')}
                     </p>
-                    <p className="mt-1 text-sm font-semibold text-indigo-200">
-                      {tierTexto(c.messaging_limit_tier)}
+                  <p className="mt-1 text-sm font-semibold text-indigo-200">
+                      {tierTexto(
+                        c.whatsapp_business_manager_messaging_limit ??
+                          c.messaging_limit_tier,
+                      )}
                     </p>
                   </div>
                 </div>
+
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-indigo-400/20 bg-black/30 p-2.5">
+                  <div>
+                    <p className="text-[10px] text-slate-300">
+                      Calentamiento progresivo
+                    </p>
+                    <p className="text-[9px] text-slate-500">
+                      {(() => {
+                        const estado = estadoCalentamiento(c);
+                        if (!estado.habilitado) return 'Apagado';
+                        if (estado.limite === null) return 'Completado (sin límite)';
+                        return `Día ${estado.dia ?? 1} · ${estado.limite}/día`;
+                      })()}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={Boolean(c.warmup_enabled)}
+                    disabled={warmupPending === c.id}
+                    onCheckedChange={() => void alternarWarmup(c)}
+                  />
+                </div>
+
+                {c.health_status && c.health_status !== 'healthy' ? (
+                  <div className="mt-2 rounded-lg border border-amber-400/30 bg-amber-500/10 p-2 text-[10px] text-amber-200">
+                    Salud: {c.health_status}
+                    {c.health_reason ? ` · ${c.health_reason}` : ''}
+                  </div>
+                ) : null}
+
 
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <p className="text-[10px] text-slate-500">
@@ -495,6 +608,58 @@ export function ConnectionsView() {
                     {form.badge_color === c && <Check className="size-4 text-white" />}
                   </button>
                 ))}
+              </div>
+            </div>
+            <div>
+              <Label className="text-muted-foreground mb-1 block text-xs">
+                Píxel de Meta (CAPI)
+              </Label>
+              <select
+                value={form.tracking_pixel_id}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, tracking_pixel_id: e.target.value }))
+                }
+                className="border-border bg-muted text-foreground h-9 w-full rounded-md border px-2 text-xs"
+              >
+                <option value="">Sin píxel vinculado</option>
+                {pixels.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.pixel_id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label className="text-muted-foreground mb-1 block text-xs">
+                Dominio propio (opcional)
+              </Label>
+              <Input
+                value={form.custom_domain}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, custom_domain: e.target.value }))
+                }
+                className="bg-muted font-mono text-xs"
+                placeholder="isla1.midominio.com"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <span className="text-[11px] text-muted-foreground">
+                  Conexión activa
+                </span>
+                <Switch
+                  checked={form.active}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <span className="text-[11px] text-muted-foreground">
+                  Predeterminada
+                </span>
+                <Switch
+                  checked={form.is_default}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, is_default: v }))}
+                />
               </div>
             </div>
             <p className="text-muted-foreground text-[10px]">{t('appSecretHint')}</p>

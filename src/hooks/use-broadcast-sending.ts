@@ -492,7 +492,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           // Send the batch, waiting out a 429 rather than writing the
           // whole batch off as failed. Only 429 is replayed — see
           // batchRetryDelayMs for why nothing else can be.
-          let data: { error?: string; results?: BroadcastApiResult[] } = {};
+          let data: {
+            error?: string;
+            code?: string;
+            retry_after_ms?: number;
+            results?: BroadcastApiResult[];
+          } = {};
           for (let attempt = 1; ; attempt++) {
             const res = await fetch('/api/whatsapp/broadcast', {
               method: 'POST',
@@ -506,12 +511,42 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
             data = await res.json();
             if (res.ok) break;
+            if (
+              data.code === 'warmup_limit' ||
+              data.code === 'connection_restricted'
+            ) {
+              // No se reintenta en caliente: el cupo se repone mañana o
+              // la conexión necesita revisión humana. Se pausa el
+              // broadcast para reanudarlo cuando la salud lo permita.
+              await supabase
+                .from('broadcasts')
+                .update({
+                  status: 'paused',
+                  paused_at: new Date().toISOString(),
+                  pause_reason: data.code,
+                })
+                .eq('id', broadcast.id);
+              throw new Error(data.error || t('apiRequestFailed'));
+            }
 
             const retryIn =
               attempt < BATCH_SEND_ATTEMPTS
-                ? batchRetryDelayMs(res.status, res.headers.get('Retry-After'))
+                ? ((typeof data.retry_after_ms === 'number'
+                    ? data.retry_after_ms
+                    : null) ??
+                  batchRetryDelayMs(res.status, res.headers.get('Retry-After')))
                 : null;
             if (retryIn === null) {
+              if (res.status === 429) {
+                await supabase
+                  .from('broadcasts')
+                  .update({
+                    status: 'paused',
+                    paused_at: new Date().toISOString(),
+                    pause_reason: data.code ?? 'rate_limit',
+                  })
+                  .eq('id', broadcast.id);
+              }
               throw new Error(data.error || t('apiRequestFailed'));
             }
             await sleep(retryIn);

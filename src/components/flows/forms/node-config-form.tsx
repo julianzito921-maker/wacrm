@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * Per-node configuration form, dispatched by node_type.
@@ -50,12 +50,44 @@ import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media"
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
 import { MoveKanbanForm, SendPaymentForm, SendTemplateForm } from "./bloques-forms";
+import {
+  AiBlockForm,
+  ConditionMultiForm,
+  ConnectFlowForm,
+  MetaCapiBlockForm,
+  SetTagMultiForm,
+} from "./bloques-avanzados-forms";
+import {
+  CarouselForm,
+  ChatControllerForm,
+  DistributorForm,
+  ManipulatorForm,
+  NotificationForm,
+  SaleApprovedForm,
+} from "./bloques-finales-forms";
+import {
+  AiMediaForm,
+  DepartmentForm,
+  HttpRequestForm,
+  IntervaloForm,
+  OfficialCallForm,
+  PaymentGatewayForm,
+} from "./bloques-cierre-forms";
 import { EsperarRespuestaForm } from "./esperar-respuesta-form";
 import { MensajeForm } from "./mensaje-form";
 import { TriggerFields } from "./trigger-fields";
 import {
-  META_CAPI_EVENTOS,
   WAIT_INLINE_MAX_SEGUNDOS,
+  type AiBlockNodeConfig,
+  type ConditionNodeConfig,
+  type MetaCapiNodeConfig,
+  type SetTagNodeConfig,
+  type HandoffNodeConfig,
+  type ManipulatorNodeConfig,
+  type DistributorNodeConfig,
+  type NotificationNodeConfig,
+  type SaleApprovedNodeConfig,
+  type CarouselNodeConfig,
   WAIT_MAX_SEGUNDOS,
   type SaveReplyNodeConfig,
 } from "@/lib/flows/types";
@@ -223,20 +255,13 @@ export function NodeConfigForm({
 
     case "wait":
       return (
-        <>
-          <SmartDelayField
-            segundos={(cfg as { segundos?: number }).segundos ?? 15}
-            onChange={(segundos) => onUpdateConfig({ segundos })}
-            t={t}
-          />
-          <NextNodeRow
-            value={(cfg as { next_node_key?: string }).next_node_key ?? ""}
-            allNodes={allNodes}
-            currentKey={node.node_key}
-            onChange={(v) => onUpdateConfig({ next_node_key: v })}
-            label={t("advancesTo")}
-          />
-        </>
+        <IntervaloForm
+          cfg={cfg as unknown as import("@/lib/flows/types").WaitNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
       );
 
     case "save_reply":
@@ -295,8 +320,8 @@ export function NodeConfigForm({
 
     case "condition":
       return (
-        <ConditionForm
-          cfg={cfg as ConditionCfg}
+        <ConditionMultiForm
+          cfg={cfg as unknown as ConditionNodeConfig}
           allNodes={allNodes}
           currentKey={node.node_key}
           onUpdateConfig={onUpdateConfig}
@@ -306,8 +331,28 @@ export function NodeConfigForm({
 
     case "set_tag":
       return (
-        <SetTagForm
-          cfg={cfg as SetTagCfg}
+        <SetTagMultiForm
+          cfg={cfg as unknown as SetTagNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
+      );
+
+    case "connect_flow":
+      return (
+        <ConnectFlowForm
+          cfg={cfg as { target_flow_id?: string }}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
+      );
+
+    case "ai_block":
+      return (
+        <AiBlockForm
+          cfg={cfg as unknown as AiBlockNodeConfig}
           allNodes={allNodes}
           currentKey={node.node_key}
           onUpdateConfig={onUpdateConfig}
@@ -324,81 +369,82 @@ export function NodeConfigForm({
     case "move_kanban":
       return <MoveKanbanForm node={node} allNodes={allNodes} onUpdateConfig={onUpdateConfig} t={t} />;
 
-    case "meta_capi": {
-      const c = cfg as { event_name?: string; value?: number; currency?: string; next_node_key?: string };
+    case "meta_capi":
       return (
-        <>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
-              {t("metaCapiEventLabel")}
-            </label>
-            <Select
-              value={c.event_name ?? "Purchase"}
-              onValueChange={(v) => onUpdateConfig({ event_name: v })}
-            >
-              <SelectTrigger className="bg-muted">
-                <SelectValue>{t(`metaCapiEvents.${c.event_name ?? "Purchase"}`)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {META_CAPI_EVENTOS.map((ev) => (
-                  <SelectItem key={ev} value={ev}>
-                    {t(`metaCapiEvents.${ev}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-2">
-              <label className="mb-1 block text-xs text-muted-foreground">
-                {t("metaCapiValueLabel")}
-              </label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={c.value ?? ""}
-                onChange={(e) =>
-                  onUpdateConfig({
-                    value: e.target.value === "" ? undefined : Math.max(Number(e.target.value) || 0, 0),
-                  })
-                }
-                className="bg-muted"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
-                {t("metaCapiCurrencyLabel")}
-              </label>
-              <Input
-                value={c.currency ?? "MXN"}
-                maxLength={3}
-                onChange={(e) =>
-                  onUpdateConfig({ currency: e.target.value.toUpperCase().replace(/[^A-Z]/g, "") })
-                }
-                className="bg-muted font-mono text-xs"
-              />
-            </div>
-          </div>
-          <p className="text-[10px] text-muted-foreground">{t("metaCapiHelp")}</p>
-          <NextNodeRow
-            value={c.next_node_key ?? ""}
-            allNodes={allNodes}
-            currentKey={node.node_key}
-            onChange={(v) => onUpdateConfig({ next_node_key: v })}
-            label={t("advancesTo")}
-          />
-        </>
+        <MetaCapiBlockForm
+          cfg={cfg as unknown as MetaCapiNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
       );
-    }
 
     case "handoff":
+      return <ChatControllerForm cfg={cfg as unknown as HandoffNodeConfig} onUpdateConfig={onUpdateConfig} t={t} />;
+    case "manipulator":
+      return <ManipulatorForm cfg={cfg as unknown as ManipulatorNodeConfig} allNodes={allNodes} currentKey={node.node_key} onUpdateConfig={onUpdateConfig} t={t} />;
+    case "distributor":
+      return <DistributorForm cfg={cfg as unknown as DistributorNodeConfig} allNodes={allNodes} currentKey={node.node_key} onUpdateConfig={onUpdateConfig} t={t} />;
+    case "notification":
+      return <NotificationForm cfg={cfg as unknown as NotificationNodeConfig} allNodes={allNodes} currentKey={node.node_key} onUpdateConfig={onUpdateConfig} t={t} />;
+    case "sale_approved":
+      return <SaleApprovedForm cfg={cfg as unknown as SaleApprovedNodeConfig} allNodes={allNodes} currentKey={node.node_key} onUpdateConfig={onUpdateConfig} t={t} />;
+    case "carousel":
+      return <CarouselForm cfg={cfg as unknown as CarouselNodeConfig} allNodes={allNodes} currentKey={node.node_key} onUpdateConfig={onUpdateConfig} t={t} />;
+
+    case "department":
       return (
-        <TextRow
-          label={t("internalNote")}
-          value={(cfg as { note?: string }).note ?? ""}
-          onChange={(v) => onUpdateConfig({ note: v })}
-          rows={2}
+        <DepartmentForm
+          cfg={cfg as { department_id?: string; department_name?: string; next_node_key?: string }}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
+      );
+
+    case "http_request":
+      return (
+        <HttpRequestForm
+          cfg={cfg as unknown as import("@/lib/flows/types").HttpRequestNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
+      );
+
+    case "payment_gateway":
+      return (
+        <PaymentGatewayForm
+          cfg={cfg as unknown as import("@/lib/flows/types").PaymentGatewayNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
+      );
+
+    case "ai_media":
+      return (
+        <AiMediaForm
+          cfg={cfg as unknown as import("@/lib/flows/types").AiMediaNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
+      );
+
+    case "official_call":
+      return (
+        <OfficialCallForm
+          cfg={cfg as unknown as import("@/lib/flows/types").OfficialCallNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
         />
       );
 
@@ -800,7 +846,7 @@ interface UserTag {
   color?: string;
 }
 
-function ConditionForm({
+export function ConditionForm({
   cfg,
   allNodes,
   currentKey,
@@ -959,7 +1005,7 @@ interface SetTagCfg {
   next_node_key?: string;
 }
 
-function SetTagForm({
+export function SetTagForm({
   cfg,
   allNodes,
   currentKey,

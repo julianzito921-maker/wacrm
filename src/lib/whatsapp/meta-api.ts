@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Meta WhatsApp Cloud API helpers.
  *
  * Every function takes a single options object (named parameters) instead
@@ -16,6 +16,13 @@ const ti = getT('Validation.interactive')
 
 const META_API_VERSION = 'v21.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
+/**
+ * La WhatsApp Business Calling API se publicó después de v21; sus
+ * endpoints de llamadas/permisos/settings viven en una versión más
+ * nueva. El resto del CRM sigue en v21 para no cambiar el resto.
+ */
+const META_CALLING_API_VERSION = 'v23.0'
+const META_CALLING_API_BASE = `https://graph.facebook.com/${META_CALLING_API_VERSION}`
 
 export interface MetaSendResult {
   messageId: string
@@ -423,6 +430,127 @@ export async function sendTextMessage(
   }
   const data = await response.json()
   return { messageId: data.messages[0].id }
+}
+
+export interface SendCallPermissionRequestArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  /** Texto de contexto; Meta recomienda mandarlo siempre. */
+  bodyText?: string
+}
+
+/**
+ * Solicitud oficial de permiso de llamada (WhatsApp Business Calling
+ * API). Solo funciona dentro de la ventana de 24 h; fuera de ella hay
+ * que usar una plantilla con el componente `call_permission_request`.
+ */
+export async function sendCallPermissionRequest(
+  args: SendCallPermissionRequestArgs
+): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, to, bodyText } = args
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    ...recipientFields(to),
+    type: 'interactive',
+    interactive: {
+      type: 'call_permission_request',
+      action: { name: 'call_permission_request' },
+      ...(bodyText?.trim() ? { body: { text: bodyText.trim() } } : {}),
+    },
+  }
+  const response = await fetch(`${META_CALLING_API_BASE}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
+export interface CallPermissionState {
+  permission: {
+    status: 'no_permission' | 'temporary' | 'permanent' | string
+    expiration_time?: number
+  }
+  actions?: Array<{
+    action_name: string
+    can_perform_action: boolean
+    limits?: Array<{
+      time_period: string
+      max_allowed: number
+      current_usage: number
+      limit_expiration_time?: number
+    }>
+  }>
+}
+
+/** GET /{phone-number-id}/call_permissions. */
+export async function getCallPermissions(args: {
+  phoneNumberId: string
+  accessToken: string
+  userWaId: string
+}): Promise<CallPermissionState> {
+  const url =
+    `${META_CALLING_API_BASE}/${args.phoneNumberId}/call_permissions` +
+    `?user_wa_id=${encodeURIComponent(args.userWaId)}`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  return (await response.json()) as CallPermissionState
+}
+
+export interface CallSettings {
+  calling?: {
+    status?: string
+    call_icon_visibility?: string
+    callback_permission_status?: string
+    call_permission_mode?: string
+    call_hours?: Record<string, unknown>
+    sip?: { status?: string; servers?: Array<{ hostname?: string }> }
+    restrictions?: {
+      restrictions_list?: Array<{
+        type: string
+        reason?: string
+        expiration?: number
+      }>
+    }
+  }
+}
+
+/** GET /{phone-number-id}/settings; se guarda saneado, sin SIP password. */
+export async function getCallSettings(args: {
+  phoneNumberId: string
+  accessToken: string
+}): Promise<CallSettings> {
+  const response = await fetch(
+    `${META_CALLING_API_BASE}/${args.phoneNumberId}/settings`,
+    { headers: { Authorization: `Bearer ${args.accessToken}` } }
+  )
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const json = (await response.json()) as CallSettings & {
+    calling?: CallSettings['calling'] & {
+      sip?: { status?: string; servers?: Array<{ hostname?: string; sip_user_password?: string }> }
+    }
+  }
+  if (json.calling?.sip?.servers) {
+    json.calling.sip.servers = json.calling.sip.servers.map((s) => ({
+      hostname: s.hostname,
+    }))
+  }
+  return json
 }
 
 export type MediaKind = 'image' | 'video' | 'document' | 'audio' | 'sticker'
@@ -960,6 +1088,8 @@ export interface SendInteractiveButtonsArgs {
   bodyText: string
   /** Optional plain-text header (≤ 60 chars). */
   headerText?: string
+  /** Optional image header (Cloud API image header). */
+  headerImageUrl?: string
   /** Optional grey footer line under the buttons (≤ 60 chars). */
   footerText?: string
   /** 1–3 buttons. Validated against Meta's limits before sending. */
@@ -981,7 +1111,7 @@ export async function sendInteractiveButtons(
 ): Promise<MetaSendResult> {
   const {
     phoneNumberId, accessToken, to,
-    bodyText, headerText, footerText, buttons, contextMessageId,
+    bodyText, headerText, headerImageUrl, footerText, buttons, contextMessageId,
   } = args
   validateInteractiveBody(bodyText)
   validateInteractiveHeaderFooter(headerText, footerText)
@@ -1018,7 +1148,8 @@ export async function sendInteractiveButtons(
       })),
     },
   }
-  if (headerText) interactive.header = { type: 'text', text: headerText }
+  if (headerImageUrl) interactive.header = { type: 'image', image: { link: headerImageUrl } }
+  else if (headerText) interactive.header = { type: 'text', text: headerText }
   if (footerText) interactive.footer = { text: footerText }
 
   const body: Record<string, unknown> = {

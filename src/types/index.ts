@@ -119,6 +119,16 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  /** Baja global (keyword/botón): no recibir automatizaciones. */
+  opted_out?: boolean;
+  /** Baja solo de marketing (131050/user_preferences). */
+  marketing_opted_out?: boolean;
+  opt_out_at?: string | null;
+  opt_out_reason?: string | null;
+  opt_out_source?: string | null;
+  marketing_opt_out_at?: string | null;
+  marketing_opt_out_source?: string | null;
+  consent_status?: "granted" | "denied" | "unknown" | string | null;
   created_at: string;
   updated_at: string;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the
@@ -187,12 +197,26 @@ export interface ConversationNote {
 
 export type ConversationStatus = 'open' | 'pending' | 'closed';
 
+export interface Department {
+  id: string;
+  account_id: string;
+  name: string;
+  color: string;
+  is_active: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Conversation {
   id: string;
   user_id: string;
   contact_id: string;
   /** Conexión de WhatsApp de origen (migración 089). */
   connection_id?: string | null;
+  /** Departamento asignado por el bloque `department` (migración 095). */
+  department_id?: string | null;
+  department?: Department | null;
   status: ConversationStatus;
   assigned_agent_id?: string;
   last_message_text?: string;
@@ -386,6 +410,8 @@ export interface MessageTemplate {
   meta_template_id?: string;
   rejection_reason?: string;
   quality_score?: 'GREEN' | 'YELLOW' | 'RED';
+  /** True si la plantilla MARKETING incluye un QUICK_REPLY de baja. */
+  has_opt_out_button?: boolean;
   submission_error?: string;
   last_submitted_at?: string;
   created_at: string;
@@ -434,7 +460,7 @@ export interface Deal {
   assignee?: Profile;
 }
 
-export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
+export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'paused' | 'sent' | 'failed';
 export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
 
 export interface Broadcast {
@@ -447,6 +473,9 @@ export interface Broadcast {
   audience_filter?: Record<string, unknown>;
   scheduled_at?: string;
   status: BroadcastStatus;
+  connection_id?: string | null;
+  paused_at?: string | null;
+  pause_reason?: string | null;
   total_recipients: number;
   sent_count: number;
   delivered_count: number;
@@ -478,6 +507,7 @@ export interface BroadcastRecipient {
   read_at?: string;
   replied_at?: string;
   error_message?: string;
+  error_code?: string | null;
   /**
    * Meta's message id, persisted when the broadcast send succeeds so
    * the webhook can mirror status updates back onto the recipient row.

@@ -2,6 +2,7 @@
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { getPhoneNumberHealth } from '@/lib/whatsapp/meta-api';
+import { parseQualityRating } from '@/lib/whatsapp/phone-health';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { CAMPOS_CONEXION_PUBLICOS } from '@/lib/whatsapp/connections';
 
@@ -38,13 +39,29 @@ export async function POST(
       );
     }
 
+    const quality = parseQualityRating(health.quality_rating);
+    const limit = health.whatsapp_business_manager_messaging_limit ?? null;
     const { data, error } = await supabaseAdmin()
       .from('whatsapp_connections')
       .update({
         phone_number: health.display_phone_number ?? null,
+        display_phone_number: health.display_phone_number ?? null,
         quality_rating: health.quality_rating ?? null,
-        messaging_limit_tier:
-          health.whatsapp_business_manager_messaging_limit ?? null,
+        whatsapp_business_manager_messaging_limit: limit,
+        messaging_limit_tier: limit,
+        messaging_limit_updated_at: new Date().toISOString(),
+        health_status:
+          quality === 'RED'
+            ? 'restricted'
+            : quality === 'YELLOW'
+              ? 'warning'
+              : 'healthy',
+        restriction_scope: quality === 'RED' ? 'mass' : null,
+        health_reason:
+          quality === 'RED'
+            ? 'Calidad del número en RED (sync de Meta).'
+            : null,
+        last_health_event_at: new Date().toISOString(),
         status: 'connected',
         last_synced_at: new Date().toISOString(),
       })

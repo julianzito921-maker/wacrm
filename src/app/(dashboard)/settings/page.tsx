@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Suspense, useMemo, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -11,7 +11,7 @@ import { SettingsOverview } from '@/components/settings/settings-overview';
 import { ProfileForm } from '@/components/settings/profile-form';
 import { SecurityPanel } from '@/components/settings/security-panel';
 import { AppearancePanel } from '@/components/settings/appearance-panel';
-import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
+import { ConnectionsView } from '@/components/connections/connections-view';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { QuickRepliesManager } from '@/components/settings/quick-replies-manager';
 import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
@@ -21,6 +21,12 @@ import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { TrackingPanel } from '@/components/settings/tracking-panel';
 import { McpSettings } from '@/components/settings/mcp-settings';
+import { DepartmentsSettings } from '@/components/settings/departments-settings';
+import { BusinessHoursSettings } from '@/components/settings/business-hours-settings';
+import { PaymentsSettings } from '@/components/settings/payments-settings';
+import { AiMediaSettings } from '@/components/settings/ai-media-settings';
+import { CallingSettings } from '@/components/settings/calling-settings';
+import { FlowCredentialsSettings } from '@/components/settings/flow-credentials-settings';
 import {
   resolveSection,
   type SettingsSection,
@@ -77,15 +83,21 @@ function SettingsPageInner() {
     profile: <ProfileForm />,
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
-    whatsapp: <WhatsAppConfig />,
+    whatsapp: <ConnectionsView />,
     templates: <TemplateManager />,
     'quick-replies': <QuickRepliesManager />,
     fields: <FieldsAndTagsPanel />,
     inbox: <InboxSettings />,
+    departments: <DepartmentsSettings />,
+    'business-hours': <BusinessHoursSettings />,
     deals: <DealsSettings />,
     members: <MembersTab />,
     api: <ApiKeysSettings />,
     tracking: <TrackingPanel />,
+    payments: <PaymentsSettings />,
+    'ai-media': <AiMediaSettings />,
+    calling: <CallingSettings />,
+    'http-credentials': <FlowCredentialsSettings />,
     mcp: <McpSettings />,
   };
 
