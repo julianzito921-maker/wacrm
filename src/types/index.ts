@@ -166,6 +166,25 @@ export interface ContactNote {
   created_at: string;
 }
 
+/**
+ * Nota interna del equipo dentro de un hilo (migración 076). NUNCA
+ * sale por WhatsApp: no vive en `messages`, no toca unread_count ni
+ * dispara el webhook. La ve cualquier miembro de la cuenta; solo su
+ * autor puede borrarla.
+ */
+export interface ConversationNote {
+  id: string;
+  conversation_id: string;
+  /** Tenancy — la cuenta dueña del hilo. */
+  account_id: string;
+  /** Autor de la nota. */
+  user_id: string;
+  note_text: string;
+  created_at: string;
+  /** Join opcional: autor con nombre/avatar al renderizar. */
+  author?: { user_id: string; full_name: string | null; avatar_url: string | null } | null;
+}
+
 export type ConversationStatus = 'open' | 'pending' | 'closed';
 
 export interface Conversation {
@@ -488,7 +507,9 @@ export type AutomationTriggerType =
   | 'time_based'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */
-  | 'interactive_reply';
+  | 'interactive_reply'
+  /** A deal card was moved to another pipeline stage (Kanban). */
+  | 'deal_stage_changed';
 
 export type AutomationStepType =
   | 'send_message'
@@ -537,12 +558,26 @@ export interface InteractiveReplyTriggerConfig {
   reply_ids: string[];
 }
 
+/**
+ * Config para el trigger `deal_stage_changed`. Todo opcional: con el
+ * objeto vacío dispara en cualquier movimiento de tarjeta; al fijar
+ * `pipeline_id` y/o `stage_id` solo dispara cuando el deal aterriza
+ * en esa etapa concreta.
+ */
+export interface DealStageChangedTriggerConfig {
+  /** Si se fija, la automatización solo corre para deals de este embudo. */
+  pipeline_id?: string;
+  /** Si se fija, solo corre cuando la tarjeta entra en esta etapa. */
+  stage_id?: string;
+}
+
 export type AutomationTriggerConfig =
   | Record<string, never>
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
   | InteractiveReplyTriggerConfig
+  | DealStageChangedTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {

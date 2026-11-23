@@ -354,6 +354,8 @@
       "backToConversations": "Volver a las conversaciones",
       "hideContactPanel": "Ocultar panel del contacto",
       "showContactPanel": "Mostrar panel del contacto",
+      "showNotes": "Notas internas",
+      "hideNotes": "Ocultar notas internas",
       "hideContact": "Ocultar contacto",
       "showContact": "Mostrar contacto",
       "refresh": "Actualizar",
@@ -529,6 +531,16 @@
       "resumed": "IA reanudada.",
       "updateError": "No se pudo actualizar el asistente de IA.",
       "networkError": "No se pudo conectar con el servidor."
+    },
+    "notesPanel": {
+      "title": "Notas internas",
+      "loading": "Cargando…",
+      "empty": "Aún no hay notas. Las notas aquí solo las ve tu equipo — la clienta nunca las ve.",
+      "placeholder": "Escribe una nota para tu equipo… (Enter para enviar)",
+      "add": "Agregar nota",
+      "addFailed": "No se pudo agregar la nota.",
+      "delete": "Borrar nota",
+      "deleteFailed": "No se pudo borrar la nota."
     }
   },
   "Contacts": {
@@ -539,6 +551,9 @@
       "customFieldsBtn": "Campos personalizados",
       "selectAllOnPage": "Seleccionar todos los contactos de esta página",
       "importBtn": "Importar",
+      "exportBtn": "Exportar CSV",
+      "exportFailed": "No se pudo exportar los contactos.",
+      "exportSuccess": "Contactos exportados.",
       "addContactBtn": "Agregar contacto",
       "searchPlaceholder": "Buscar por nombre, teléfono o correo...",
       "filterByTags": "Filtrar por etiquetas",
@@ -1213,6 +1228,10 @@
         "time_based": {
           "label": "Por horario",
           "hint": "Según una programación recurrente"
+        },
+        "deal_stage_changed": {
+          "label": "Etapa del deal cambiada",
+          "hint": "Cuando una tarjeta del Kanban se mueve a otra etapa"
         }
       },
       "trigger": "Disparador",
@@ -1288,6 +1307,12 @@
         "messageText": "Texto del mensaje",
         "placeholderMessageText": "¡Hola! Gracias por escribirnos…",
         "tagLabel": "Etiqueta",
+        "stageChangedNoPipelines": "Aún no hay embudos. Crea primero un embudo y luego configura este disparador.",
+        "stageChangedPipelineLabel": "Embudo (opcional)",
+        "stageChangedAnyPipeline": "Cualquier embudo",
+        "stageChangedStageLabel": "Etapa (opcional)",
+        "stageChangedAnyStage": "Cualquier etapa",
+        "stageChangedHint": "Déjalos vacíos para ejecutar en cualquier movimiento de tarjeta. Para limitarlo, elige el embudo y la etapa de destino que deben disparar esta automatización.",
         "modeLabel": "Modo",
         "modes": {
           "round_robin": "Rotativo",

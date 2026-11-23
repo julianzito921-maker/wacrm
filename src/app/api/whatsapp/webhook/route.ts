@@ -25,6 +25,7 @@ import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
 import { estadoPorEntrante, marcarConsentimiento } from '@/lib/messaging/estado'
+import { responderConAgente } from '@/lib/agente/responder'
 import { cancelarPendientes } from '@/lib/messaging/cola-store'
 import { tienePagoPendiente } from '@/lib/ventas/comprobante'
 import { transcribirNotaDeVozDeCuenta } from '@/lib/ai/transcribe'
@@ -921,6 +922,28 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
+  // Etapa 2 (Melissa autónoma): si el agente está encendido para esta
+  // cuenta, él lleva la conversación. Va ANTES de los flujos para que no
+  // contesten los dos: si el agente atiende, no se disparan flujos,
+  // automatizaciones ni la IA de texto.
+  //
+  // El respondedor NUNCA lanza: si algo falla, devuelve `atendio: false` y
+  // el camino de siempre (el embudo) sigue como hasta hoy. Es la red de
+  // seguridad para que el agente no pueda dejar a nadie mudo.
+  const agente = await responderConAgente({
+    accountId,
+    userId: configOwnerUserId,
+    conversationId: conversation.id,
+    contactId: contactRecord.id,
+    metaMessageId: message.id,
+  })
+  if (agente.atendio) {
+    console.info(
+      `[webhook] el agente atendió este mensaje (${agente.motivo ?? "respuesta enviada"})`,
+    )
+    return
+  }
+
   const flowResult = await dispatchInboundToFlows({
     accountId,
     userId: configOwnerUserId,

@@ -533,6 +533,68 @@ describe("triggerMatches — tag_added", () => {
   });
 });
 
+describe("triggerMatches — deal_stage_changed", () => {
+  function automation(cfg: Record<string, unknown> = {}): Automation {
+    return {
+      id: "a1",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      name: "stage follow-up",
+      trigger_type: "deal_stage_changed",
+      trigger_config: cfg,
+      is_active: true,
+      execution_count: 0,
+      created_at: "",
+      updated_at: "",
+    };
+  }
+
+  const moved = {
+    deal_id: "deal-1",
+    pipeline_id: "pipeline-1",
+    stage_id: "stage-won",
+    from_stage_id: "stage-open",
+  };
+
+  it("fires on any card move when the config is empty", () => {
+    expect(triggerMatches(automation(), moved)).toBe(true);
+    expect(triggerMatches(automation({}), {})).toBe(true);
+  });
+
+  it("filters by pipeline when one is configured", () => {
+    expect(
+      triggerMatches(automation({ pipeline_id: "pipeline-1" }), moved),
+    ).toBe(true);
+    expect(
+      triggerMatches(automation({ pipeline_id: "pipeline-2" }), moved),
+    ).toBe(false);
+  });
+
+  it("filters by destination stage when one is configured", () => {
+    expect(
+      triggerMatches(automation({ stage_id: "stage-won" }), moved),
+    ).toBe(true);
+    expect(
+      triggerMatches(automation({ stage_id: "stage-open" }), moved),
+    ).toBe(false);
+  });
+
+  it("requires both filters when both are configured", () => {
+    expect(
+      triggerMatches(
+        automation({ pipeline_id: "pipeline-1", stage_id: "stage-won" }),
+        moved,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        automation({ pipeline_id: "pipeline-2", stage_id: "stage-won" }),
+        moved,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("tag_added — conversation policy", () => {
   it("records a clear failed step when the contact has no conversation", async () => {
     h.state.owned = { id: "c1" };

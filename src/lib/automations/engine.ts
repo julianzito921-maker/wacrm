@@ -18,6 +18,7 @@
   WaitStepConfig,
   CreateDealStepConfig,
   AssignConversationStepConfig,
+  DealStageChangedTriggerConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
 import { addContactTagIfAbsent } from '@/lib/contacts/tag-write'
@@ -52,6 +53,14 @@ export interface AutomationContext {
   interactive_reply_id?: string
   /** Meta message id del mensaje entrante: lo usa el indicador «escribiendo…». */
   message_id?: string
+  /** Deal movido en el Kanban, para el trigger deal_stage_changed. */
+  deal_id?: string
+  /** Etapa DESTINO del deal movido (la columna donde aterrizó). */
+  stage_id?: string
+  /** Etapa de la que salió el deal, para el trigger deal_stage_changed. */
+  from_stage_id?: string
+  /** Embudo al que pertenece el deal movido. */
+  pipeline_id?: string
 }
 
 export interface DispatchInput {
@@ -1171,6 +1180,15 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
     const cfg = automation.trigger_config as TagTriggerConfig
     const tagId = ctx?.tag_id
     return Boolean(tagId && cfg?.tag_id && cfg.tag_id === tagId)
+  }
+
+  // deal_stage_changed: filtro opcional por embudo o etapa DESTINO.
+  // Con trigger_config vacío dispara en cualquier movimiento.
+  if (automation.trigger_type === 'deal_stage_changed') {
+    const cfg = (automation.trigger_config ?? {}) as DealStageChangedTriggerConfig
+    if (cfg.pipeline_id && cfg.pipeline_id !== ctx?.pipeline_id) return false
+    if (cfg.stage_id && cfg.stage_id !== ctx?.stage_id) return false
+    return true
   }
 
   return true

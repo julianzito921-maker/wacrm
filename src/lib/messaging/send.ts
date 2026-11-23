@@ -44,7 +44,9 @@ export type OrigenSalida =
   | "agente"
   | "manual"
   | "difusion"
-  | "ventas";
+  | "ventas"
+  /** Avisos internos a Julián (no van a clientas). */
+  | "sistema";
 
 export type TipoSalida = "text" | "image" | "video" | "audio" | "document" | "buttons" | "list" | "template";
 

@@ -219,6 +219,7 @@ export default function PipelinesPage() {
 
   const handleDealMoved = useCallback(
     async (dealId: string, newStageId: string) => {
+      const deal = deals.find((d) => d.id === dealId);
       // Optimistic update — board already animated; just persist.
       setDeals((prev) =>
         prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d)),
@@ -230,9 +231,31 @@ export default function PipelinesPage() {
       if (error) {
         toast.error(t("toastFailedMoveDeal"));
         refreshDeals();
+        return;
+      }
+      // Disparador del Kanban: automatizaciones con trigger
+      // `deal_stage_changed` corren cuando una tarjeta cambia de etapa.
+      // Fire-and-forget: si el engine falla, la tarjeta ya está movida.
+      if (deal?.contact_id) {
+        void fetch("/api/automations/engine", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            trigger_type: "deal_stage_changed",
+            contact_id: deal.contact_id,
+            context: {
+              deal_id: deal.id,
+              pipeline_id: deal.pipeline_id,
+              stage_id: newStageId,
+              from_stage_id: deal.stage_id,
+            },
+          }),
+        }).catch((err) => {
+          console.error("[pipelines] deal_stage_changed dispatch failed:", err);
+        });
       }
     },
-    [supabase, refreshDeals, t],
+    [supabase, refreshDeals, t, deals],
   );
 
   const handleAddDeal = useCallback(

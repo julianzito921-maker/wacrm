@@ -52,7 +52,11 @@ export const TOPES = {
   enforce: () => ACTIVO(process.env.WHATSAPP_SAFETY_ENFORCE, true),
   /** Horas de ventana de servicio (con margen sobre las 24 h de Meta). */
   ventanaHoras: () => NUM(process.env.WHATSAPP_WINDOW_HOURS, 23.5),
-  maxSeguidos: () => NUM(process.env.SAFETY_MAX_CONSECUTIVE, 8),
+  /**
+   * Regla anti-baneo (18-nov-2026): máximo 2 mensajes seguidos sin que la
+   * clienta conteste. Lo que no quepa va en el siguiente turno.
+   */
+  maxSeguidos: () => NUM(process.env.SAFETY_MAX_CONSECUTIVE, 2),
   maxPorMinuto: () => NUM(process.env.SAFETY_MAX_PER_MINUTE, 3),
   /**
    * Ráfaga: cuántos mensajes pueden salir en una ventana corta. Es la
@@ -65,6 +69,12 @@ export const TOPES = {
   maxPorHora: () => NUM(process.env.SAFETY_MAX_PER_HOUR, 20),
   maxPorDia: () => NUM(process.env.SAFETY_MAX_PER_DAY, 60),
   dupMinutos: () => NUM(process.env.SAFETY_DUP_WINDOW_MINUTES, 10),
+  /**
+   * Personas distintas a las que se les puede mandar plantilla (mensaje
+   * que inicia la empresa) en 24 h. Sin verificar el negocio Meta da 250;
+   * si Meta sube el nivel, se cambia por entorno sin desplegar.
+   */
+  maxPersonasPlantillaDia: () => NUM(process.env.WHATSAPP_LIMITE_PERSONAS_DIA, 250),
   separacionMinimaSegundos: () => NUM(process.env.SAFETY_MIN_GAP_SECONDS, 2),
 };
 
@@ -82,6 +92,20 @@ const AUTOMATICOS = new Set<ContextoSalida["source"]>([
 
 export function esAutomatico(origen: ContextoSalida["source"]): boolean {
   return AUTOMATICOS.has(origen);
+}
+
+/**
+ * ¿Mandarle plantilla a este contacto rebasa el tope diario de personas?
+ * Un contacto que ya recibió plantilla hoy no cuenta doble.
+ */
+export function rebasaLimitePersonas(
+  contactosHoy: Array<string | null>,
+  contactId: string | null | undefined,
+  limite: number,
+): boolean {
+  const distintos = new Set(contactosHoy.filter((c): c is string => Boolean(c)));
+  if (contactId && distintos.has(contactId)) return false;
+  return distintos.size >= limite;
 }
 
 interface Fila {
@@ -112,6 +136,37 @@ export async function decidirSalida(args: {
       motivo: "automation_disabled",
       detalle: "La automatización está apagada (WHATSAPP_AUTOMATION_ENABLED=false).",
     };
+  }
+
+  // 1b) Tope diario de personas para plantillas (mensajes que inicia la
+  //     empresa). Es un límite duro de Meta: se frena siempre, aunque la
+  //     capa esté en modo observación, porque Meta lo rechazaría igual y
+  //     cada rechazo pesa en la calidad del número.
+  if (tipo === "template") {
+    try {
+      const db = supabaseAdmin();
+      const { data } = await db
+        .from("outbound_message_log")
+        .select("contact_id")
+        .eq("account_id", ctx.accountId)
+        .eq("message_type", "template")
+        .eq("status", "sent")
+        .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString())
+        .limit(5000);
+      const contactos = ((data as Array<{ contact_id?: string | null }> | null) ?? []).map(
+        (f) => f.contact_id ?? null,
+      );
+      const limite = TOPES.maxPersonasPlantillaDia();
+      if (rebasaLimitePersonas(contactos, ctx.contactId, limite)) {
+        return {
+          permitido: false,
+          motivo: "limit_unique_daily",
+          detalle: `Ya se mandó plantilla a ${limite} personas distintas en 24 h (límite de Meta sin verificar el negocio).`,
+        };
+      }
+    } catch {
+      // sin lectura no se frena: Meta tiene la última palabra
+    }
   }
 
   // Sin conversación no hay nada que evaluar (no debería pasar).

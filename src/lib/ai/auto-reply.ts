@@ -335,7 +335,10 @@ async function responder(args: DispatchArgs): Promise<void> {
     // largo del texto (lo que ya tardó el modelo cuenta para el primero). AI_ESCRIBIENDO=off lo quita.
     // [[ETIQUETA:x]] / [[BOTON:x]]: acciones internas; se quitan del texto y se ejecutan al final.
     const acciones = separarAcciones(text)
-    const partes = splitReplyParts(acciones.texto)
+    // Cada PDF o audio es un mensaje más: entre texto y archivos la respuesta no pasa del
+    // tope de mensajes seguidos (regla anti-baneo: 2), o el sobrante se bloquearía.
+    const totalArchivos = (acciones.texto.match(/\[\[\s*ARCHIVO\s*:/gi) ?? []).length
+    const partes = splitReplyParts(acciones.texto, Math.max(1, maxPartes() - totalArchivos))
     // [[ARCHIVO:clave]] → el archivo sale como adjunto (PDF/audio), nunca como enlace ni como texto.
     const archivos = acciones.texto.toUpperCase().includes('ARCHIVO') ? await cargarArchivos(db, accountId) : {}
     for (let i = 0; i < partes.length; i++) {
@@ -442,9 +445,9 @@ export function tiempoEscribiendo(texto: string): number {
  * demasiado: cuatro mensajes seguidos ya parecen una ráfaga. Por defecto
  * tres, y se puede bajar por entorno sin desplegar.
  */
-const MAX_PARTES_POR_DEFECTO = 3
+const MAX_PARTES_POR_DEFECTO = 2
 
-function maxPartes(): number {
+export function maxPartes(): number {
   const n = Number(process.env.AI_MAX_PARTES)
   return Number.isFinite(n) && n >= 1 && n <= 8 ? n : MAX_PARTES_POR_DEFECTO
 }
@@ -453,14 +456,13 @@ function maxPartes(): number {
  * Parte una respuesta en mensajes de WhatsApp: en cada [[CORTE]] y también en cada renglón en
  * blanco (cada párrafo sale como un mensaje corto aparte, como escribe una persona: 13-nov-2026).
  */
-export function splitReplyParts(text: string): string[] {
+export function splitReplyParts(text: string, max: number = maxPartes()): string[] {
   const partes = text
     .split(/\[\[\s*CORTE\s*\]\]/i)
     .flatMap((p) => p.split(/\n[ \t]*\n/))
     .map((p) => p.trim())
     .filter(Boolean)
   if (partes.length === 0) return [text.trim()]
-  const max = maxPartes()
   if (partes.length <= max) return partes
   return [...partes.slice(0, max - 1), partes.slice(max - 1).join('\n')]
 }

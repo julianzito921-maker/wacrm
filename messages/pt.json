@@ -354,6 +354,8 @@
       "backToConversations": "Voltar às conversas",
       "hideContactPanel": "Ocultar painel do contato",
       "showContactPanel": "Mostrar painel do contato",
+      "showNotes": "Notas internas",
+      "hideNotes": "Ocultar notas internas",
       "hideContact": "Ocultar contato",
       "showContact": "Mostrar contato",
       "refresh": "Atualizar",
@@ -529,6 +531,16 @@
       "resumed": "IA retomada.",
       "updateError": "Não foi possível atualizar o assistente de IA.",
       "networkError": "Não foi possível conectar ao servidor."
+    },
+    "notesPanel": {
+      "title": "Notas internas",
+      "loading": "Carregando…",
+      "empty": "Ainda não há notas. As notas aqui só são visíveis para sua equipe — a cliente nunca as vê.",
+      "placeholder": "Escreva uma nota para sua equipe… (Enter para enviar)",
+      "add": "Adicionar nota",
+      "addFailed": "Não foi possível adicionar a nota.",
+      "delete": "Excluir nota",
+      "deleteFailed": "Não foi possível excluir a nota."
     }
   },
   "Contacts": {
@@ -539,6 +551,9 @@
       "customFieldsBtn": "Campos personalizados",
       "selectAllOnPage": "Selecionar todos os contatos desta página",
       "importBtn": "Importar",
+      "exportBtn": "Exportar CSV",
+      "exportFailed": "Não foi possível exportar os contatos.",
+      "exportSuccess": "Contatos exportados.",
       "addContactBtn": "Adicionar contato",
       "searchPlaceholder": "Buscar por nome, telefone ou e-mail...",
       "filterByTags": "Filtrar por tags",
@@ -1213,6 +1228,10 @@
         "time_based": {
           "label": "Por horário",
           "hint": "Em um agendamento recorrente"
+        },
+        "deal_stage_changed": {
+          "label": "Etapa do negócio alterada",
+          "hint": "Quando um cartão do Kanban é movido para outra etapa"
         }
       },
       "trigger": "Gatilho",
@@ -1288,6 +1307,12 @@
         "messageText": "Texto da mensagem",
         "placeholderMessageText": "Olá! Obrigado por entrar em contato…",
         "tagLabel": "Tag",
+        "stageChangedNoPipelines": "Ainda não há funis. Crie um funil primeiro e depois configure este gatilho.",
+        "stageChangedPipelineLabel": "Funil (opcional)",
+        "stageChangedAnyPipeline": "Qualquer funil",
+        "stageChangedStageLabel": "Etapa (opcional)",
+        "stageChangedAnyStage": "Qualquer etapa",
+        "stageChangedHint": "Deixe ambos vazios para executar em qualquer movimento de cartão. Para limitar, escolha o funil e a etapa de destino que devem disparar esta automação.",
         "modeLabel": "Modo",
         "modes": {
           "round_robin": "Rodízio",

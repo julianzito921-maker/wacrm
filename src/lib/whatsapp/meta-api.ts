@@ -33,6 +33,11 @@ export interface MetaPhoneHealth {
   display_phone_number?: string
   quality_rating?: string
   whatsapp_business_manager_messaging_limit?: string
+  /** CONNECTED, FLAGGED, RESTRICTED, BANNED… (estado del número en Meta). */
+  status?: string
+  /** APPROVED, DECLINED, PENDING_REVIEW… (revisión del nombre visible). */
+  name_status?: string
+  verified_name?: string
 }
 
 interface MetaErrorResponse {
@@ -149,7 +154,7 @@ export async function getPhoneNumberHealth(
   const { phoneNumberId, accessToken } = args
   const headers = { Authorization: `Bearer ${accessToken}` }
   const [response, limitResponse] = await Promise.all([
-    fetch(`${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,quality_rating`, { headers }),
+    fetch(`${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,quality_rating,status,name_status,verified_name`, { headers }),
     fetch(`${META_API_BASE}/${phoneNumberId}?fields=whatsapp_business_manager_messaging_limit`, { headers }).catch(
       () => null
     ),

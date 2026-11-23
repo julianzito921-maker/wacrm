@@ -163,6 +163,7 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
   { value: "conversation_assigned" },
   { value: "tag_added" },
   { value: "time_based" },
+  { value: "deal_stage_changed" },
 ]
 
 function cid(): string {
@@ -650,6 +651,84 @@ function SendTemplateFields({
   )
 }
 
+/** Config del trigger deal_stage_changed. Ambos selectores son opcionales:
+ *  vacíos = dispara en cualquier movimiento de tarjeta; rellenos = filtra
+ *  por embudo y/o etapa de destino. */
+function DealStageChangedConfig({
+  config,
+  onChange,
+  t,
+}: {
+  config: Record<string, unknown>
+  onChange: (c: Record<string, unknown>) => void
+  t: ReturnType<typeof useTranslations>
+}) {
+  const { pipelines, stages } = useResources()
+
+  if (pipelines.length === 0) {
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        {t("config.stageChangedNoPipelines")}
+      </p>
+    )
+  }
+
+  const pipelineId = (config.pipeline_id as string) ?? ""
+  const stageId = (config.stage_id as string) ?? ""
+  const stageOptions = stages.filter((s) => s.pipeline_id === pipelineId)
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          {t("config.stageChangedPipelineLabel")}
+        </label>
+        <select
+          value={pipelineId}
+          onChange={(e) => {
+            const nextPipelineId = e.target.value
+            onChange({
+              ...config,
+              pipeline_id: nextPipelineId,
+              // Al cambiar de embudo, la etapa guardada deja de ser válida.
+              stage_id: "",
+            })
+          }}
+          className={SELECT_CLASS}
+        >
+          <option value="">{t("config.stageChangedAnyPipeline")}</option>
+          {pipelines.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          {t("config.stageChangedStageLabel")}
+        </label>
+        <select
+          value={stageId}
+          onChange={(e) => onChange({ ...config, stage_id: e.target.value })}
+          className={SELECT_CLASS}
+          disabled={!pipelineId || stageOptions.length === 0}
+        >
+          <option value="">{t("config.stageChangedAnyStage")}</option>
+          {stageOptions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {t("config.stageChangedHint")}
+      </p>
+    </div>
+  )
+}
+
 // ------------------------------------------------------------
 // Main builder component
 // ------------------------------------------------------------
@@ -910,6 +989,9 @@ function TriggerCard({
                   {t("scheduleHint")}
                 </p>
               </div>
+            )}
+            {type === "deal_stage_changed" && (
+              <DealStageChangedConfig config={config} onChange={onConfigChange} t={t} />
             )}
           </div>
         )}

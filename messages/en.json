@@ -354,6 +354,8 @@
       "backToConversations": "Back to conversations",
       "hideContactPanel": "Hide contact panel",
       "showContactPanel": "Show contact panel",
+      "showNotes": "Internal notes",
+      "hideNotes": "Hide internal notes",
       "hideContact": "Hide contact",
       "showContact": "Show contact",
       "refresh": "Refresh",
@@ -529,6 +531,16 @@
       "resumed": "AI resumed.",
       "updateError": "Couldn’t update the AI assistant.",
       "networkError": "Couldn’t reach the server."
+    },
+    "notesPanel": {
+      "title": "Internal notes",
+      "loading": "Loading…",
+      "empty": "No notes yet. Notes here are only visible to your team — the customer never sees them.",
+      "placeholder": "Write a note for your team… (Enter to send)",
+      "add": "Add note",
+      "addFailed": "Couldn’t add the note.",
+      "delete": "Delete note",
+      "deleteFailed": "Couldn’t delete the note."
     }
   },
   "Contacts": {
@@ -539,6 +551,9 @@
       "customFieldsBtn": "Custom fields",
       "selectAllOnPage": "Select all contacts on this page",
       "importBtn": "Import",
+      "exportBtn": "Export CSV",
+      "exportFailed": "Couldn't export contacts.",
+      "exportSuccess": "Contacts exported.",
       "addContactBtn": "Add Contact",
       "searchPlaceholder": "Search by name, phone, or email...",
       "filterByTags": "Filter by tags",
@@ -1213,6 +1228,10 @@
         "time_based": {
           "label": "Time-Based",
           "hint": "On a recurring schedule"
+        },
+        "deal_stage_changed": {
+          "label": "Deal Stage Changed",
+          "hint": "When a Kanban card is moved to another stage"
         }
       },
       "trigger": "Trigger",
@@ -1288,6 +1307,12 @@
         "messageText": "Message text",
         "placeholderMessageText": "Hi! Thanks for reaching out…",
         "tagLabel": "Tag",
+        "stageChangedNoPipelines": "No pipelines yet. Create a pipeline first, then set up this trigger.",
+        "stageChangedPipelineLabel": "Pipeline (optional)",
+        "stageChangedAnyPipeline": "Any pipeline",
+        "stageChangedStageLabel": "Stage (optional)",
+        "stageChangedAnyStage": "Any stage",
+        "stageChangedHint": "Leave both empty to run on every card move. To limit it, pick the pipeline and the destination stage that should fire this automation.",
         "modeLabel": "Mode",
         "modes": {
           "round_robin": "Round-robin",

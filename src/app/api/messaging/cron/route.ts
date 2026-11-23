@@ -13,6 +13,7 @@ import { resumeSaveReplyTimeout } from '@/lib/flows/engine'
 import { procesarLote } from '@/lib/messaging/cola'
 import { evaluarAlertas } from '@/lib/messaging/riesgo'
 import { revisarCalidadDeNumeros } from '@/lib/messaging/calidad'
+import { avisarProblemasDelEmbudo } from '@/lib/messaging/avisos'
 
 /**
  * UN SOLO CRON PARA TODO (fase 4, §22).
@@ -96,6 +97,10 @@ export async function GET(request: Request) {
   } catch (err) {
     console.error('[messaging-cron] calidad:', err)
   }
+
+  // ---- 1d. Aviso a Julián por WhatsApp (19-nov-2026) ---------------
+  //    Resumen de lo que falló en el embudo desde el último aviso.
+  const aviso = await avisarProblemasDelEmbudo()
 
   // ---- 2. Flujos: «guardar respuesta» sin contestación --------------
   let rescatados = 0
@@ -194,6 +199,7 @@ export async function GET(request: Request) {
     cola,
     alertas,
     calidad,
+    aviso: aviso ? { problemas: aviso } : null,
     flujos: { rescatados, swept },
     automatizaciones: { processed, expired, requeued },
   })

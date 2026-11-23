@@ -196,6 +196,11 @@ export async function estadoPorEntrante(args: {
   if (pideHumano(texto)) {
     await fijarEstado(conversationId, "HUMAN_HANDOFF");
     await etiquetar(args.accountId, contactId, "pide-humano", true);
+    // Meta exige una salida real a una persona: avisar a Julián por WhatsApp.
+    // Import dinámico: avisos → send → estado sería un ciclo al cargar.
+    void import("./avisos")
+      .then((m) => m.avisarTraspasoHumano({ accountId: args.accountId, contactId, conversationId, texto }))
+      .catch((err) => console.error("[estado] aviso de traspaso:", err));
     return { estado: "HUMAN_HANDOFF", bajo: false, humano: true };
   }
 

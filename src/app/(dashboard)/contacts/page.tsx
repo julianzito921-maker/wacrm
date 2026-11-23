@@ -39,6 +39,7 @@ import {
   Search,
   Plus,
   Upload,
+  Download,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -95,6 +96,7 @@ export default function ContactsPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [exportingContacts, setExportingContacts] = useState(false);
 
   // Bulk selection (page-scoped — only the loaded rows are selectable)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -248,6 +250,34 @@ export default function ContactsPage() {
     setFormOpen(true);
   }
 
+  // Descarga todos los contactos de la cuenta como CSV (la ruta genera
+  // el archivo server-side con el cliente RLS scoped a la cuenta).
+  const exportContacts = useCallback(async () => {
+    if (exportingContacts) return;
+    setExportingContacts(true);
+    try {
+      const res = await fetch("/api/contacts/export", { cache: "no-store" });
+      if (!res.ok) {
+        toast.error(t("exportFailed"));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(t("exportSuccess"));
+    } catch {
+      toast.error(t("exportFailed"));
+    } finally {
+      setExportingContacts(false);
+    }
+  }, [exportingContacts, t]);
+
   async function openEditForm(contact: Contact) {
     const { data } = await supabase
       .from('contact_tags')
@@ -389,6 +419,20 @@ export default function ContactsPage() {
             <Upload className="size-4" />
             {t('importBtn')}
           </GatedButton>
+
+          <Button
+            variant="outline"
+            onClick={() => void exportContacts()}
+            disabled={exportingContacts}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            {exportingContacts ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            {t('exportBtn')}
+          </Button>
           <GatedButton
             canAct={canEdit}
             gateReason={tGate('reasons.addOrImportContacts')}

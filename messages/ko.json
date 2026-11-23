@@ -354,6 +354,8 @@
       "backToConversations": "대화 목록으로 돌아가기",
       "hideContactPanel": "연락처 패널 숨기기",
       "showContactPanel": "연락처 패널 표시",
+      "showNotes": "내부 메모",
+      "hideNotes": "내부 메모 숨기기",
       "hideContact": "연락처 숨기기",
       "showContact": "연락처 표시",
       "refresh": "새로고침",
@@ -529,6 +531,16 @@
       "resumed": "AI가 재개되었습니다.",
       "updateError": "AI 어시스턴트를 업데이트하지 못했습니다.",
       "networkError": "서버에 연결할 수 없습니다."
+    },
+    "notesPanel": {
+      "title": "내부 메모",
+      "loading": "로딩 중…",
+      "empty": "아직 메모가 없습니다. 여기의 메모는 팀만 볼 수 있으며 고객에게는 표시되지 않습니다.",
+      "placeholder": "팀을 위한 메모를 작성하세요… (Enter로 전송)",
+      "add": "메모 추가",
+      "addFailed": "메모를 추가하지 못했습니다.",
+      "delete": "메모 삭제",
+      "deleteFailed": "메모를 삭제하지 못했습니다."
     }
   },
   "Contacts": {
@@ -539,6 +551,9 @@
       "customFieldsBtn": "커스텀 필드",
       "selectAllOnPage": "이 페이지의 모든 연락처 선택",
       "importBtn": "가져오기",
+      "exportBtn": "CSV 내보내기",
+      "exportFailed": "연락처를 내보내지 못했습니다.",
+      "exportSuccess": "연락처가 내보내졌습니다.",
       "addContactBtn": "연락처 추가",
       "searchPlaceholder": "이름, 전화번호, 이메일로 검색...",
       "filterByTags": "태그로 필터링",
@@ -1213,6 +1228,10 @@
         "time_based": {
           "label": "시간 기반",
           "hint": "반복 일정에 따라"
+        },
+        "deal_stage_changed": {
+          "label": "딜 단계 변경",
+          "hint": "칸반 카드가 다른 단계로 이동되었을 때"
         }
       },
       "trigger": "트리거",
@@ -1288,6 +1307,12 @@
         "messageText": "메시지 텍스트",
         "placeholderMessageText": "안녕하세요! 문의해주셔서 감사합니다…",
         "tagLabel": "태그",
+        "stageChangedNoPipelines": "아직 파이프라인이 없습니다. 먼저 파이프라인을 만든 후 이 트리거를 설정하세요.",
+        "stageChangedPipelineLabel": "파이프라인 (선택)",
+        "stageChangedAnyPipeline": "모든 파이프라인",
+        "stageChangedStageLabel": "단계 (선택)",
+        "stageChangedAnyStage": "모든 단계",
+        "stageChangedHint": "둘 다 비워두면 모든 카드 이동 시 실행됩니다. 특정 파이프라인과 도착 단계에서만 실행하려면 선택하세요.",
         "modeLabel": "모드",
         "modes": {
           "round_robin": "순차 배정",

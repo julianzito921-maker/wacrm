@@ -14,10 +14,14 @@ describe('splitReplyParts', () => {
   it('la tarjeta pegada al último texto se separa', () => {
     expect(splitReplyParts('4217 4701 2154 2340\n\nCuando pagues, mándame la foto')).toEqual(['4217 4701 2154 2340', 'Cuando pagues, mándame la foto'])
   })
-  it('deja 3 mensajes como mucho (una ráfaga corta no parece spam)', () => {
+  it('deja 2 mensajes como mucho (regla anti-baneo: máximo 2 seguidos)', () => {
     const r = splitReplyParts(Array.from({ length: 10 }, (_, i) => `m${i}`).join(' [[CORTE]] '))
-    expect(r).toHaveLength(3)
-    expect(r[2]).toBe('m2\nm3\nm4\nm5\nm6\nm7\nm8\nm9')
+    expect(r).toHaveLength(2)
+    expect(r[1]).toBe('m1\nm2\nm3\nm4\nm5\nm6\nm7\nm8\nm9')
+  })
+  it('con un archivo en la respuesta, el texto cabe en 1 mensaje (texto + archivo = 2)', () => {
+    const r = splitReplyParts('Aquí va tu guía 💚\n\n¿La pudiste abrir? [[ARCHIVO:metodo]]', 1)
+    expect(r).toEqual(['Aquí va tu guía 💚\n¿La pudiste abrir? [[ARCHIVO:metodo]]'])
   })
 
   it('el tope se puede subir por entorno sin desplegar', () => {

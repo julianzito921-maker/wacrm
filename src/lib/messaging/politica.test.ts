@@ -62,7 +62,7 @@ vi.mock('@/lib/whatsapp/meta-api', async (importOriginal) => {
   return { ...real, sendTextMessage: h.enviar, sendTemplateMessage: h.enviar }
 })
 
-import { decidirSalida, TOPES } from './politica'
+import { decidirSalida, rebasaLimitePersonas, TOPES } from './politica'
 import { enviarSaliente, enviarTexto, enviarPlantilla, EnvioBloqueadoError } from './send'
 
 const ctx = {
@@ -210,9 +210,18 @@ describe('envío bloqueado de verdad', () => {
   })
 
   it('los topes tienen valores por defecto sensatos', () => {
-    expect(TOPES.maxSeguidos()).toBe(8)
+    expect(TOPES.maxSeguidos()).toBe(2)
+    expect(TOPES.maxPorMinuto()).toBe(3)
+    expect(TOPES.maxPersonasPlantillaDia()).toBe(250)
     expect(TOPES.ventanaHoras()).toBe(23.5)
     expect(TOPES.dupMinutos()).toBe(10)
+  })
+
+  it('tope diario de personas para plantillas (250 sin verificar)', () => {
+    const hoy = Array.from({ length: 250 }, (_, i) => `c${i}`)
+    expect(rebasaLimitePersonas(hoy, 'nuevo', 250)).toBe(true)
+    expect(rebasaLimitePersonas(hoy, 'c7', 250)).toBe(false) // ya recibió hoy: no cuenta doble
+    expect(rebasaLimitePersonas([...hoy.slice(0, 249), 'c0', null], 'nuevo', 250)).toBe(false)
   })
 })
 

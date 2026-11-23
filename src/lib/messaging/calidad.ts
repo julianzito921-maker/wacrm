@@ -18,12 +18,36 @@ import { decrypt } from "@/lib/whatsapp/encryption";
 import { getPhoneNumberHealth } from "@/lib/whatsapp/meta-api";
 import { parseQualityRating, type QualityRating } from "@/lib/whatsapp/phone-health";
 import { fijarInterruptor } from "./interruptor";
+import { diagnosticoNumero, retirarNumero } from "./retiro";
+
+type Db = ReturnType<typeof supabaseAdmin>;
+
+/** ¿Ya hay una alerta igual de esta cuenta en las últimas 24 h? (para no repetirla cada 10 min) */
+async function alertaReciente(db: Db, accountId: string, regla: string): Promise<boolean> {
+  try {
+    const { data } = await db
+      .from("messaging_alerts")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("regla", regla)
+      .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString())
+      .limit(1);
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Errores de Meta que dicen que el CRM perdió el acceso al número (app borrada, token muerto, WABA bloqueada). */
+export function esPerdidaDeAcceso(mensaje: string): boolean {
+  return /"code":\s*(190|131031|200)\b|Application has been deleted|has been locked|banned/i.test(mensaje);
+}
 
 export interface ResultadoCalidad {
   cuenta: string;
   calidad: QualityRating;
   limite: string | null;
-  accion: "nada" | "avisar" | "apagar";
+  accion: "nada" | "avisar" | "apagar" | "retirado" | "sin_acceso";
 }
 
 /**
@@ -55,6 +79,31 @@ export async function revisarCalidadDeNumeros(
           phoneNumberId: fila.phone_number_id,
           accessToken: decrypt(fila.access_token),
         });
+        // Estado del número y del nombre: baneado → se retira solo; nombre
+        // rechazado o número restringido → alerta crítica (una vez al día).
+        const diag = diagnosticoNumero(info);
+        for (const alerta of diag.alertas) {
+          if (await alertaReciente(db, fila.account_id, alerta.regla)) continue;
+          await db.from("messaging_alerts").insert({
+            account_id: fila.account_id,
+            regla: alerta.regla,
+            severidad: alerta.severidad,
+            detalle: {
+              texto: alerta.texto,
+              phone_number_id: fila.phone_number_id,
+              estado: info.status ?? null,
+              nombre: info.verified_name ?? null,
+              estado_nombre: info.name_status ?? null,
+            } as never,
+            accion: diag.retirar ? "numero_retirado" : "avisar",
+          });
+        }
+        if (diag.retirar) {
+          await retirarNumero(fila.account_id, "Meta marcó el número como BANNED", info);
+          salida.push({ cuenta: fila.account_id, calidad: "UNKNOWN", limite: null, accion: "retirado" });
+          continue;
+        }
+
         const calidad = parseQualityRating(info.quality_rating);
         const limite =
           info.whatsapp_business_manager_messaging_limit ?? null;
@@ -90,10 +139,20 @@ export async function revisarCalidadDeNumeros(
           accion,
         });
       } catch (err) {
-        console.error(
-          "[calidad] no se pudo revisar el número:",
-          err instanceof Error ? err.message : err,
-        );
+        const mensaje = err instanceof Error ? err.message : String(err);
+        console.error("[calidad] no se pudo revisar el número:", mensaje);
+        // Sin acceso (app borrada, token muerto, WABA bloqueada): se avisa,
+        // pero NO se retira solo: puede ser un token mal pegado.
+        if (esPerdidaDeAcceso(mensaje) && !(await alertaReciente(db, fila.account_id, "numero_sin_acceso"))) {
+          await db.from("messaging_alerts").insert({
+            account_id: fila.account_id,
+            regla: "numero_sin_acceso",
+            severidad: "critical",
+            detalle: { phone_number_id: fila.phone_number_id, error: mensaje.slice(0, 500) } as never,
+            accion: "avisar",
+          });
+          salida.push({ cuenta: fila.account_id, calidad: "UNKNOWN", limite: null, accion: "sin_acceso" });
+        }
       }
     }
   } catch (err) {

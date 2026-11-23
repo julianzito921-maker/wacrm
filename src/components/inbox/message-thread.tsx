@@ -27,6 +27,7 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  StickyNote,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -50,6 +51,7 @@ import {
 } from "./message-composer";
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
 import { TemplatePicker } from "./template-picker";
+import { NotesPanel } from "./notes-panel";
 import { AiThreadBanner } from "./ai-thread-banner";
 import { buildReplyPreview } from "./reply-quote";
 import {
@@ -257,6 +259,7 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
   // Which attachment the media viewer is showing. Lives here rather than in
   // the bubble so the viewer can page through every image/video in the
   // thread (issue #373). Paired with the conversation it belongs to and read
@@ -1050,6 +1053,25 @@ export function MessageThread({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Internal notes toggle — team-only notes pinned to the
+              thread. Kept visible on all breakpoints since it's a
+              skinny icon button, unlike the contact panel. */}
+          <button
+            type="button"
+            onClick={() => setNotesOpen((v) => !v)}
+            aria-label={notesOpen ? t("hideNotes") : t("showNotes")}
+            title={notesOpen ? t("hideNotes") : t("showNotes")}
+            aria-pressed={notesOpen}
+            className={cn(
+              "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground",
+              notesOpen ? "text-primary" : "text-muted-foreground",
+            )}
+          >
+            <StickyNote
+              className={cn("h-3.5 w-3.5", notesOpen && "fill-current")}
+            />
+          </button>
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just
@@ -1306,6 +1328,10 @@ export function MessageThread({
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
       />
+
+      {/* Notas internas del equipo — solo las ve la cuenta, jamás la
+          clienta; no pasan por WhatsApp. */}
+      {notesOpen && <NotesPanel conversationId={conversation.id} />}
 
       <TemplatePicker
         open={templateModalOpen}
