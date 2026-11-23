@@ -15,6 +15,14 @@ const eslintConfig = defineConfig([
     // Vendored minified opus-recorder encoder worker (served statically).
     "public/opus/**",
   ]),
+  {
+    // Scripts operativos: hablan con APIs externas y usan `any` para
+    // inspeccionar respuestas crudas; no son código de producción.
+    files: ["scripts/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
