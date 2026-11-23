@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     | {
         name?: string
         description?: string | null
-        trigger_type?: 'keyword' | 'first_inbound_message' | 'manual'
+        trigger_type?: 'keyword' | 'first_inbound_message' | 'any_message' | 'manual'
         trigger_config?: Record<string, unknown>
         /**
          * If set, clone the matching template's name + trigger +
@@ -101,7 +101,7 @@ export async function POST(request: Request) {
         import_flow?: {
           name?: string
           description?: string | null
-          trigger_type?: 'keyword' | 'first_inbound_message' | 'manual'
+          trigger_type?: 'keyword' | 'first_inbound_message' | 'any_message' | 'manual'
           trigger_config?: Record<string, unknown>
           entry_node_id?: string | null
           nodes?: Array<{

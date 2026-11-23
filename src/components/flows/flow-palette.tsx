@@ -25,6 +25,7 @@ import { FlowPreview } from "./flow-preview";
 import {
   ATAJOS_MEDIA,
   CATALOGO_BLOQUES,
+  configAtajoMedio,
   DND_BLOQUE,
   nodeColors,
   type Bloque,
@@ -60,9 +61,10 @@ export function FlowPalette({
   const [plegado, setPlegado] = useState(false);
 
   const agregar = (tipo: NodeType, medio?: Medio) => {
+    // «Inicio» solo hay uno: si ya existe, addNode lo devuelve y se resalta.
     const key = addNode(tipo);
-    // El nodo de archivo nace como imagen; el atajo fija el medio pedido.
-    if (medio) updateNodeConfig(key, { media_type: medio });
+    // Atajo de multimedia: un Mensaje que ya trae esa burbuja.
+    if (medio) updateNodeConfig(key, configAtajoMedio(medio));
     requestFlash(key);
   };
 
@@ -211,9 +213,9 @@ export function FlowPalette({
                           type="button"
                           draggable
                           onDragStart={(e) =>
-                            alArrastrar(e, { tipo: "send_media", medio: a.medio })
+                            alArrastrar(e, { tipo: "send_message", medio: a.medio })
                           }
-                          onClick={() => agregar("send_media", a.medio)}
+                          onClick={() => agregar("send_message", a.medio)}
                           title={t(a.clave)}
                           aria-label={t(a.clave)}
                           className="flex h-6 w-6 cursor-grab items-center justify-center rounded-md border border-sidebar-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"

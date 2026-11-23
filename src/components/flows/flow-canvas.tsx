@@ -82,11 +82,13 @@ import {
   NODE_META,
   NodeIconChip,
   colorDeSalida,
+  configAtajoMedio,
   nodeColors,
   summarizeNode,
   type BuilderNode,
 } from './shared';
 import { useFlowEditor } from './flow-editor-state';
+import { NODOS_FIN_DE_RAMA } from '@/lib/flows/types';
 import { FlowEdge } from './flow-edge';
 import { NodeConfigForm } from './forms/node-config-form';
 import type { CargaArrastre } from './flow-palette';
@@ -116,12 +118,20 @@ function FlowNodeCard({ data, selected }: NodeProps) {
   // El contexto está disponible aquí porque las tarjetas las pinta
   // React-Flow dentro del proveedor: así el botón de borrar actúa
   // directo sobre el nodo, sin abrir el panel lateral.
-  const { removeNode, duplicateNode } = useFlowEditor();
+  const { removeNode, duplicateNode, state } = useFlowEditor();
   const { node, isEntry, isFlashed } = data as NodeData;
   const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
   const tSummary = useTranslations('Flows.summary');
-  const summary = summarizeNode(node, tSummary);
+  // El Inicio muestra su disparador (vive en el flujo, no en el nodo).
+  const summary =
+    node.node_type === 'start'
+      ? resumenDisparador(state.trigger_type, state.trigger_config, t)
+      : summarizeNode(node, tSummary);
+  // Nodo de una sola salida sin conexión: la rama termina aquí (no es error).
+  const finDeRama =
+    NODOS_FIN_DE_RAMA.has(node.node_type) &&
+    !(node.config as { next_node_key?: string }).next_node_key;
   const slots = outgoingSlots(node);
   // Start nodes are entry-only; nothing ever targets them, so they
   // don't need an incoming Handle. Every other node type accepts
@@ -271,6 +281,15 @@ function FlowNodeCard({ data, selected }: NodeProps) {
 
       </div>
 
+      {finDeRama && (
+        <span
+          title={t('endOfBranchHint')}
+          className="border-border bg-card text-muted-foreground absolute top-1/2 -right-[46px] -translate-y-1/2 rounded border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase"
+        >
+          {t('endOfBranch')}
+        </span>
+      )}
+
       {!isMultiSlot && slots.length === 1 && (
         <Handle
           type="source"
@@ -282,6 +301,23 @@ function FlowNodeCard({ data, selected }: NodeProps) {
       )}
     </div>
   );
+}
+
+/** «Palabra clave: chía, hola», «Cualquier mensaje», etc. */
+function resumenDisparador(
+  tipo: string,
+  config: Record<string, unknown>,
+  t: ReturnType<typeof useTranslations>,
+): string {
+  if (tipo === 'keyword') {
+    const claves = Array.isArray(config.keywords) ? (config.keywords as string[]).filter(Boolean) : [];
+    return claves.length > 0
+      ? `${t('triggerKeywordTitle')}: ${claves.join(', ')}`
+      : t('triggerKeywordsMissing');
+  }
+  if (tipo === 'any_message') return t('triggerAnyMessageTitle');
+  if (tipo === 'first_inbound_message') return t('triggerFirstInboundTitle');
+  return t('triggerManualTitle');
 }
 
 const NODE_TYPES = { flow: FlowNodeCard };
@@ -572,7 +608,14 @@ function FlowCanvasInner() {
       }
       const punto = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
       const key = addNode(carga.tipo);
-      if (carga.medio) updateNodeConfig(key, { media_type: carga.medio });
+      if (carga.medio) {
+        updateNodeConfig(
+          key,
+          carga.tipo === 'send_message'
+            ? configAtajoMedio(carga.medio)
+            : { media_type: carga.medio },
+        );
+      }
       updateNodePosition(key, punto.x - NODE_WIDTH / 2, punto.y - 24);
     },
     [addNode, reactFlow, updateNodeConfig, updateNodePosition]
@@ -709,7 +752,6 @@ function NodeEditSheet({
       </Sheet>
     );
   }
-  const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -747,22 +789,24 @@ function NodeEditSheet({
         </div>
 
         <SheetFooter className="border-border border-t px-5 py-3 sm:flex-row sm:justify-between">
-          {!isEntry ? (
+          {!isEntry && !allNodes.some((n) => n.node_type === 'start') ? (
             <Button variant="ghost" size="sm" onClick={onSetEntry}>
               {t('setAsEntry')}
             </Button>
           ) : (
             <span />
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDelete}
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t('deleteNode')}
-          </Button>
+          {node.node_type !== 'start' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t('deleteNode')}
+            </Button>
+          )}
         </SheetFooter>
       </SheetContent>
     </Sheet>

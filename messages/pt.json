@@ -1633,7 +1633,25 @@
         "kanbanCreate": "Criar o negócio se não tiver",
         "kanbanCreateHelp": "Quando o contato não tem negócio aberto nesse funil.",
         "kanbanTitle": "Título do negócio novo",
-        "kanbanTitleHelp": "Aceita fichas como '{{'contact.name'}}'."
+        "kanbanTitleHelp": "Aceita fichas como '{{'contact.name'}}'.",
+        "bubblesEmpty": "Ainda não há conteúdo. Adicione uma bolha abaixo.",
+        "addContent": "Adicionar conteúdo",
+        "bubbleType_text": "Texto",
+        "bubbleType_image": "Imagem",
+        "bubbleType_video": "Vídeo",
+        "bubbleType_audio": "Áudio",
+        "bubbleType_document": "Arquivo",
+        "bubbleType_sticker": "Figurinha",
+        "bubbleType_interval": "Intervalo",
+        "bubbleUp": "Subir",
+        "bubbleDown": "Descer",
+        "bubbleRemove": "Remover bolha",
+        "bubbleTextPlaceholder": "Escreva a mensagem…",
+        "typingDelay": "Atraso de digitando",
+        "typingDelayLongHelp": "Mais de 15 s: a execução é estacionada e o cron a retoma (pode demorar até um minuto a mais).",
+        "likeBeforeReply": "Reagir com 👍 à última mensagem antes de responder",
+        "stickerUploadHint": "Enviar figurinha (.webp)",
+        "endOfBranchHelp": "Se deixar vazio, o fluxo termina aqui e o chat volta para a IA."
       },
       "categories": {
         "messaging": "Mensagens",
@@ -1642,12 +1660,12 @@
       },
       "nodes": {
         "start": {
-          "label": "Início",
-          "blurb": "Ponto de entrada do fluxo"
+          "label": "Início / Gatilho",
+          "blurb": "Como o fluxo começa e para qual bloco segue"
         },
         "send_message": {
           "label": "Mensagem",
-          "blurb": "Envia uma mensagem de texto no WhatsApp"
+          "blurb": "Texto, mídia e pausas, em sequência"
         },
         "send_buttons": {
           "label": "Menu",
@@ -1706,7 +1724,12 @@
           "blurb": "Move o negócio do contato para uma etapa"
         }
       },
-      "canvasEmptyHint": "Arraste um bloco do painel ou clique em um para começar."
+      "canvasEmptyHint": "Arraste um bloco do painel ou clique em um para começar.",
+      "triggerAnyMessageTitle": "Qualquer mensagem",
+      "triggerAnyMessageHint": "Dispara uma vez por contato a cada 24 h, só quando nenhuma palavra-chave nem a primeira mensagem se aplica. Ao terminar, o chat volta para a IA.",
+      "triggerKeywordsMissing": "Palavra-chave: ainda sem palavras",
+      "endOfBranch": "Fim",
+      "endOfBranchHint": "Sem conexão: o fluxo termina aqui e o chat fica livre para a IA."
     },
     "validation": {
       "noIssues": "Nenhum problema. Pronto para ativar.",
@@ -1747,7 +1770,13 @@
       "tagPicked": "{mode} tag {tag}…",
       "tagNone": "{mode} tag (nenhuma escolhida)",
       "seconds": "{count} s",
-      "minutes": "{count} min"
+      "minutes": "{count} min",
+      "bubble_text": "Texto",
+      "bubble_image": "Imagem",
+      "bubble_video": "Vídeo",
+      "bubble_audio": "Áudio",
+      "bubble_document": "Arquivo",
+      "bubble_sticker": "Figurinha"
     },
     "header": {
       "backToFlows": "Voltar aos fluxos",
@@ -1854,6 +1883,10 @@
       "manipulador": {
         "label": "Manipulador",
         "blurb": "Edita variáveis e campos"
+      },
+      "inicio": {
+        "label": "Início / Gatilho",
+        "blurb": "Palavra-chave, qualquer mensagem ou primeira mensagem"
       }
     }
   },
@@ -2855,6 +2888,11 @@
       "startMissingNext": "O nó Início aponta para um nó inexistente: \"{key}\".",
       "sendMessageNeedsText": "O nó Enviar mensagem precisa de um texto.",
       "sendMessageNeedsNext": "O nó Enviar mensagem precisa apontar para um próximo nó.",
+      "bubbleNeedsType": "A bolha {n} da mensagem não tem um tipo válido.",
+      "bubbleNeedsText": "A bolha {n} da mensagem está vazia: escreva o texto.",
+      "bubbleNeedsFile": "A bolha {n} da mensagem precisa de um arquivo.",
+      "bubbleTypingRange": "O «digitando…» da bolha {n} deve ir de 0 a {max} s.",
+      "bubbleIntervalRange": "O intervalo da bolha {n} deve durar entre 1 s e 23 h.",
       "sendMessageMissingNext": "O nó Enviar mensagem aponta para um nó inexistente: \"{key}\".",
       "sendMediaNeedsType": "O nó Enviar mídia precisa de um tipo de mídia (imagem, vídeo ou documento).",
       "sendMediaNeedsFile": "O nó Enviar mídia precisa de um arquivo (envie um antes de ativar).",

@@ -28,11 +28,55 @@ export interface StartNodeConfig {
 }
 
 export interface SendMessageNodeConfig {
-  /** Plain text sent to the customer; can interpolate {{vars.X}}. */
+  /** Plain text sent to the customer; can interpolate {{vars.X}}.
+   *  Solo se usa en el formato viejo (sin `items`). */
   text: string;
-  /** Auto-advance target after the message lands at Meta. */
+  /**
+   * Mensaje compuesto (estilo contenedor multimensaje): burbujas que se
+   * mandan en orden. Si existe y tiene elementos, manda en lugar de
+   * `text`. Los nodos viejos no lo traen y siguen igual que antes.
+   */
+  items?: BurbujaMensaje[];
+  /** Auto-advance target after the message lands at Meta.
+   *  Vacío = fin de rama (la corrida termina limpia). */
   next_node_key: string;
 }
+
+export type TipoBurbuja =
+  | "text"
+  | "image"
+  | "video"
+  | "audio"
+  | "document"
+  | "sticker"
+  | "interval";
+
+/** Una burbuja del bloque Mensaje compuesto. */
+export interface BurbujaMensaje {
+  tipo: TipoBurbuja;
+  /** Texto (tipo text) o pie de foto (image/video/document). */
+  text?: string;
+  /** URL pública del archivo (todo menos text e interval). */
+  media_url?: string;
+  /** Nombre que ve la clienta (solo document). */
+  filename?: string;
+  /**
+   * text y medios: segundos de «escribiendo…» antes de mandar (0–60).
+   * interval: pausa sin «escribiendo…» (1 s – 23 h).
+   * Hasta WAIT_INLINE_MAX_SEGUNDOS se espera en el mismo avance; más que
+   * eso la corrida se estaciona y la retoma el cron.
+   */
+  segundos?: number;
+  /** Reaccionar con 👍 al último mensaje de la clienta antes de mandar. */
+  like?: boolean;
+}
+
+/** Tope del «escribiendo…» de una burbuja (el slider va de 0 a 60 s). */
+export const BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS = 60;
+/** «Escribiendo…» por defecto de cada burbuja nueva. */
+export const BURBUJA_ESCRIBIENDO_DEFECTO = 3;
+/** Clave reservada en `flow_runs.vars` para retomar un Mensaje a medias. */
+export const VAR_CURSOR_BURBUJA = "__burbuja";
 
 export interface SendButtonsNodeConfig {
   text: string;
@@ -337,7 +381,26 @@ export type FirstInboundTriggerConfig = Record<string, never>;
 export type FlowTriggerConfig =
   | { trigger_type: "keyword"; config: KeywordTriggerConfig }
   | { trigger_type: "first_inbound_message"; config: FirstInboundTriggerConfig }
+  | { trigger_type: "any_message"; config: Record<string, never> }
   | { trigger_type: "manual"; config: Record<string, never> };
+
+/**
+ * «Cualquier mensaje»: se dispara como mucho una vez por contacto en
+ * esta ventana, para que al terminar el flujo el chat quede para la IA
+ * y no se repita en bucle (decisión de Julián, 22-nov-2026).
+ */
+export const ANY_MESSAGE_COOLDOWN_MS = 24 * 3600 * 1000;
+
+/** Nodos de una sola salida: sin conexión = fin de rama (no es error). */
+export const NODOS_FIN_DE_RAMA: ReadonlySet<string> = new Set([
+  "send_message",
+  "send_media",
+  "wait",
+  "set_tag",
+  "meta_capi",
+  "send_template",
+  "move_kanban",
+]);
 
 // ============================================================
 // DB-row shapes (read by the engine via supabaseAdmin)
@@ -354,7 +417,7 @@ export interface FlowRow {
   name: string;
   description: string | null;
   status: "draft" | "active" | "archived";
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
+  trigger_type: "keyword" | "first_inbound_message" | "any_message" | "manual";
   trigger_config: KeywordTriggerConfig | FirstInboundTriggerConfig | Record<string, unknown>;
   entry_node_id: string | null;
   fallback_policy: FlowFallbackPolicy;

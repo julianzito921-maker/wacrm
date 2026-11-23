@@ -425,7 +425,7 @@ export async function sendTextMessage(
   return { messageId: data.messages[0].id }
 }
 
-export type MediaKind = 'image' | 'video' | 'document' | 'audio'
+export type MediaKind = 'image' | 'video' | 'document' | 'audio' | 'sticker'
 
 export interface SendMediaMessageArgs {
   phoneNumberId: string
@@ -464,7 +464,8 @@ export async function sendMediaMessage(
   // either yields a 400. image/video/document accept a caption; only
   // document accepts a filename.
   const media: Record<string, unknown> = { link }
-  if (caption && kind !== 'audio') media.caption = caption
+  // El sticker (.webp) tampoco admite pie de foto.
+  if (caption && kind !== 'audio' && kind !== 'sticker') media.caption = caption
   if (kind === 'document' && filename) media.filename = filename
 
   const body: Record<string, unknown> = {

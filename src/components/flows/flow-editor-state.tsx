@@ -58,6 +58,7 @@ import {
   unlinkNodeReferences,
 } from "@/lib/flows/edges";
 import type { FlowNodeRow, FlowRow } from "@/lib/flows/types";
+import { BURBUJA_ESCRIBIENDO_DEFECTO } from "@/lib/flows/types";
 import { NODE_META, slugify, type BuilderNode, type NodeType } from "./shared";
 
 // ============================================================
@@ -67,7 +68,7 @@ import { NODE_META, slugify, type BuilderNode, type NodeType } from "./shared";
 export interface BuilderState {
   name: string;
   description: string;
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
+  trigger_type: "keyword" | "first_inbound_message" | "any_message" | "manual";
   trigger_config: Record<string, unknown>;
   entry_node_id: string | null;
   status: FlowRow["status"];
@@ -171,7 +172,11 @@ export function buildNewNode(type: NodeType, existing: BuilderNode[]): BuilderNo
  * probar sin montar React.
  */
 export function removeNodeFromState(state: BuilderState, key: string): BuilderState {
-  if (!state.nodes.some((n) => n.node_key === key)) return state;
+  const objetivo = state.nodes.find((n) => n.node_key === key);
+  if (!objetivo) return state;
+  // El bloque «Inicio / Disparador» no se borra: sin él el flujo no
+  // tiene por dónde empezar.
+  if (objetivo.node_type === "start") return state;
 
   const aristas = deriveCanvasEdges(state.nodes);
   const entrantes = aristas.filter((e) => e.target === key);
@@ -220,6 +225,8 @@ export function duplicateNodeInState(
 ): BuilderState {
   const original = state.nodes.find((n) => n.node_key === key);
   if (!original) return state;
+  // Solo hay un Inicio: duplicarlo dejaría dos entradas y una muerta.
+  if (original.node_type === "start") return state;
 
   const copia: BuilderNode = {
     ...original,
@@ -263,6 +270,36 @@ export function duplicateNodeInState(
   return { ...state, nodes };
 }
 
+/**
+ * Todo flujo arranca en un bloque «Inicio / Disparador» (como en Leona).
+ *
+ * Si el flujo no tiene uno (flujos nuevos o anteriores al 22-nov-2026),
+ * se antepone uno que apunta a la entrada actual, y la entrada pasa a
+ * ser siempre el Inicio. Para el motor es lo mismo: el nodo `start`
+ * solo salta a su `next_node_key`. Solo toca el estado del editor; la
+ * base cambia cuando se guarda.
+ */
+export const KEY_INICIO = "inicio";
+
+export function conNodoInicio(state: BuilderState): BuilderState {
+  const inicio = state.nodes.find((n) => n.node_type === "start");
+  if (inicio) {
+    return state.entry_node_id === inicio.node_key
+      ? state
+      : { ...state, entry_node_id: inicio.node_key };
+  }
+  const entrada = state.nodes.find((n) => n.node_key === state.entry_node_id) ?? null;
+  const key = uniqueNodeKey(KEY_INICIO, state.nodes);
+  const nodo: BuilderNode = {
+    node_key: key,
+    node_type: "start",
+    config: { next_node_key: entrada?.node_key ?? "" },
+    position_x: (entrada?.position_x ?? 0) - 320,
+    position_y: entrada?.position_y ?? 0,
+  };
+  return { ...state, nodes: [nodo, ...state.nodes], entry_node_id: key };
+}
+
 export function appendNode(state: BuilderState, node: BuilderNode): BuilderState {
   return {
     ...state,
@@ -279,7 +316,13 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
     case "start":
       return { next_node_key: "" };
     case "send_message":
-      return { text: "", next_node_key: "" };
+      // Mensaje compuesto: nace con una burbuja de texto y 3 s de
+      // «escribiendo…» (decisión de Julián, 22-nov-2026).
+      return {
+        text: "",
+        items: [{ tipo: "text", text: "", segundos: BURBUJA_ESCRIBIENDO_DEFECTO, like: false }],
+        next_node_key: "",
+      };
     case "send_buttons":
       return {
         text: "",
@@ -419,7 +462,7 @@ export function FlowEditorProvider({
   const router = useRouter();
   const t = useTranslations("Flows.editorState");
 
-  const [state, setStateRaw] = useState<BuilderState>(() => ({
+  const [state, setStateRaw] = useState<BuilderState>(() => conNodoInicio({
     name: initialFlow.name,
     description: initialFlow.description ?? "",
     trigger_type: initialFlow.trigger_type,
@@ -657,6 +700,9 @@ export function FlowEditorProvider({
 
   const addNode = useCallback(
     (type: NodeType): string => {
+      // Solo hay un Inicio: pedirlo otra vez devuelve el que ya existe.
+      const inicio = latestNodesRef.current.find((n) => n.node_type === "start");
+      if (type === "start" && inicio) return inicio.node_key;
       const node = buildNewNode(type, latestNodesRef.current);
       latestNodesRef.current = [...latestNodesRef.current, node];
       setState((s) => appendNode(s, node));

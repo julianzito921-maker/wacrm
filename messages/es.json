@@ -1633,7 +1633,25 @@
         "kanbanCreate": "Crear el trato si no tiene",
         "kanbanCreateHelp": "Si el contacto no tiene trato abierto en ese embudo.",
         "kanbanTitle": "Título del trato nuevo",
-        "kanbanTitleHelp": "Admite fichas como '{{'contact.name'}}'."
+        "kanbanTitleHelp": "Admite fichas como '{{'contact.name'}}'.",
+        "bubblesEmpty": "Todavía no hay contenido. Agrega una burbuja abajo.",
+        "addContent": "Añadir contenido",
+        "bubbleType_text": "Texto",
+        "bubbleType_image": "Imagen",
+        "bubbleType_video": "Video",
+        "bubbleType_audio": "Audio",
+        "bubbleType_document": "Archivo",
+        "bubbleType_sticker": "Sticker",
+        "bubbleType_interval": "Intervalo",
+        "bubbleUp": "Subir",
+        "bubbleDown": "Bajar",
+        "bubbleRemove": "Quitar burbuja",
+        "bubbleTextPlaceholder": "Escribe el mensaje…",
+        "typingDelay": "Retraso de escribiendo",
+        "typingDelayLongHelp": "Más de 15 s: la corrida se estaciona y la retoma el cron (puede tardar hasta un minuto más).",
+        "likeBeforeReply": "Reaccionar con 👍 al último mensaje antes de responder",
+        "stickerUploadHint": "Subir sticker (.webp)",
+        "endOfBranchHelp": "Si lo dejas vacío, aquí termina el flujo y el chat queda para la IA."
       },
       "categories": {
         "messaging": "Mensajería",
@@ -1642,12 +1660,12 @@
       },
       "nodes": {
         "start": {
-          "label": "Inicio",
-          "blurb": "Punto de entrada del flujo"
+          "label": "Inicio / Disparador",
+          "blurb": "Cómo arranca el flujo y a qué bloque pasa"
         },
         "send_message": {
           "label": "Mensaje",
-          "blurb": "Envía un mensaje de texto de WhatsApp"
+          "blurb": "Texto, multimedia y pausas, en secuencia"
         },
         "send_buttons": {
           "label": "Menú",
@@ -1706,7 +1724,12 @@
           "blurb": "Mueve el trato del contacto a una etapa"
         }
       },
-      "canvasEmptyHint": "Arrastra un bloque desde el panel o haz clic en uno para empezar."
+      "canvasEmptyHint": "Arrastra un bloque desde el panel o haz clic en uno para empezar.",
+      "triggerAnyMessageTitle": "Cualquier mensaje",
+      "triggerAnyMessageHint": "Se dispara una vez por contacto cada 24 h y solo si no aplica una palabra clave ni el primer mensaje. Al terminar, el chat queda para la IA.",
+      "triggerKeywordsMissing": "Palabra clave: sin palabras todavía",
+      "endOfBranch": "Fin",
+      "endOfBranchHint": "Sin conexión: aquí termina el flujo y el chat queda libre para la IA."
     },
     "validation": {
       "noIssues": "Sin problemas. Listo para activar.",
@@ -1747,7 +1770,13 @@
       "tagPicked": "{mode} etiqueta {tag}…",
       "tagNone": "{mode} etiqueta (ninguna elegida)",
       "seconds": "{count} s",
-      "minutes": "{count} min"
+      "minutes": "{count} min",
+      "bubble_text": "Texto",
+      "bubble_image": "Imagen",
+      "bubble_video": "Video",
+      "bubble_audio": "Audio",
+      "bubble_document": "Archivo",
+      "bubble_sticker": "Sticker"
     },
     "header": {
       "backToFlows": "Volver a flujos",
@@ -1854,6 +1883,10 @@
       "manipulador": {
         "label": "Manipulador",
         "blurb": "Edita variables y campos"
+      },
+      "inicio": {
+        "label": "Inicio / Disparador",
+        "blurb": "Palabra clave, cualquier mensaje o primer mensaje"
       }
     }
   },
@@ -2855,6 +2888,11 @@
       "startMissingNext": "El nodo Inicio apunta a un nodo inexistente: \"{key}\".",
       "sendMessageNeedsText": "El nodo Enviar mensaje necesita un texto.",
       "sendMessageNeedsNext": "El nodo Enviar mensaje debe apuntar a un nodo siguiente.",
+      "bubbleNeedsType": "La burbuja {n} del mensaje no tiene un tipo válido.",
+      "bubbleNeedsText": "La burbuja {n} del mensaje está vacía: escribe el texto.",
+      "bubbleNeedsFile": "La burbuja {n} del mensaje necesita un archivo.",
+      "bubbleTypingRange": "El «escribiendo…» de la burbuja {n} debe ir de 0 a {max} s.",
+      "bubbleIntervalRange": "El intervalo de la burbuja {n} debe durar entre 1 s y 23 h.",
       "sendMessageMissingNext": "El nodo Enviar mensaje apunta a un nodo inexistente: \"{key}\".",
       "sendMediaNeedsType": "El nodo Enviar archivo necesita un tipo de medio (imagen, video o documento).",
       "sendMediaNeedsFile": "El nodo Enviar archivo necesita un archivo (sube uno antes de activar).",

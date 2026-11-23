@@ -1633,7 +1633,25 @@
         "kanbanCreate": "없으면 거래 만들기",
         "kanbanCreateHelp": "연락처에 해당 파이프라인의 열린 거래가 없을 때.",
         "kanbanTitle": "새 거래 제목",
-        "kanbanTitleHelp": "'{{'contact.name'}}' 같은 토큰을 쓸 수 있습니다."
+        "kanbanTitleHelp": "'{{'contact.name'}}' 같은 토큰을 쓸 수 있습니다.",
+        "bubblesEmpty": "No content yet. Add a bubble below.",
+        "addContent": "Add content",
+        "bubbleType_text": "Text",
+        "bubbleType_image": "Image",
+        "bubbleType_video": "Video",
+        "bubbleType_audio": "Audio",
+        "bubbleType_document": "File",
+        "bubbleType_sticker": "Sticker",
+        "bubbleType_interval": "Interval",
+        "bubbleUp": "Move up",
+        "bubbleDown": "Move down",
+        "bubbleRemove": "Remove bubble",
+        "bubbleTextPlaceholder": "Write the message…",
+        "typingDelay": "Typing delay",
+        "typingDelayLongHelp": "Over 15 s: the run is parked and resumed by the cron (may take up to a minute longer).",
+        "likeBeforeReply": "React with 👍 to the last message before replying",
+        "stickerUploadHint": "Upload sticker (.webp)",
+        "endOfBranchHelp": "Leave it empty and the flow ends here; the chat goes back to the AI."
       },
       "categories": {
         "messaging": "메시징",
@@ -1642,12 +1660,12 @@
       },
       "nodes": {
         "start": {
-          "label": "시작",
-          "blurb": "플로우의 진입점"
+          "label": "Start / Trigger",
+          "blurb": "How the flow starts and which block comes next"
         },
         "send_message": {
           "label": "메시지",
-          "blurb": "WhatsApp 텍스트 메시지를 보냅니다"
+          "blurb": "Text, media and pauses, in sequence"
         },
         "send_buttons": {
           "label": "메뉴",
@@ -1706,7 +1724,12 @@
           "blurb": "연락처의 거래를 단계로 이동"
         }
       },
-      "canvasEmptyHint": "패널에서 블록을 끌어오거나 클릭해 시작하세요."
+      "canvasEmptyHint": "패널에서 블록을 끌어오거나 클릭해 시작하세요.",
+      "triggerAnyMessageTitle": "Any message",
+      "triggerAnyMessageHint": "Fires once per contact every 24 h, only when no keyword or first-message flow applies. When it ends, the chat goes back to the AI.",
+      "triggerKeywordsMissing": "Keyword: no keywords yet",
+      "endOfBranch": "End",
+      "endOfBranchHint": "Not connected: the flow ends here and the chat is released to the AI."
     },
     "validation": {
       "noIssues": "문제가 없습니다. 활성화할 준비가 되었습니다.",
@@ -1747,7 +1770,13 @@
       "tagPicked": "{tag} 태그 {mode}…",
       "tagNone": "태그 {mode} (선택된 태그 없음)",
       "seconds": "{count}초",
-      "minutes": "{count}분"
+      "minutes": "{count}분",
+      "bubble_text": "Text",
+      "bubble_image": "Image",
+      "bubble_video": "Video",
+      "bubble_audio": "Audio",
+      "bubble_document": "File",
+      "bubble_sticker": "Sticker"
     },
     "header": {
       "backToFlows": "플로우로 돌아가기",
@@ -1854,6 +1883,10 @@
       "manipulador": {
         "label": "조작기",
         "blurb": "변수와 필드 편집"
+      },
+      "inicio": {
+        "label": "Start / Trigger",
+        "blurb": "Keyword, any message or first message"
       }
     }
   },
@@ -2855,6 +2888,11 @@
       "startMissingNext": "시작 노드가 존재하지 않는 노드 \"{key}\"을(를) 가리킵니다.",
       "sendMessageNeedsText": "메시지 보내기 노드에는 본문 텍스트가 필요합니다.",
       "sendMessageNeedsNext": "메시지 보내기 노드는 다음 노드를 가리켜야 합니다.",
+      "bubbleNeedsType": "메시지 말풍선 {n}의 유형이 올바르지 않습니다.",
+      "bubbleNeedsText": "메시지 말풍선 {n}이 비어 있습니다. 텍스트를 입력하세요.",
+      "bubbleNeedsFile": "메시지 말풍선 {n}에 파일이 필요합니다.",
+      "bubbleTypingRange": "말풍선 {n}의 입력 중 표시는 0~{max}초여야 합니다.",
+      "bubbleIntervalRange": "말풍선 {n}의 간격은 1초~23시간이어야 합니다.",
       "sendMessageMissingNext": "메시지 보내기 노드가 존재하지 않는 노드 \"{key}\"을(를) 가리킵니다.",
       "sendMediaNeedsType": "미디어 보내기 노드에는 미디어 유형(이미지, 동영상 또는 문서)이 필요합니다.",
       "sendMediaNeedsFile": "미디어 보내기 노드에는 파일이 필요합니다(활성화하기 전에 업로드하세요).",

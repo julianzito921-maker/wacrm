@@ -163,6 +163,21 @@ BEGIN
     RAISE EXCEPTION 'anon can execute dashboard_overview — migration 059 grants are wrong';
   END IF;
 
+  -- 080 widens flows.trigger_type with 'any_message' and adds the index
+  -- behind the once-per-contact-per-day rule. The CHECK is a DROP + ADD
+  -- by name: a wrong name would leave the old CHECK in place (silent
+  -- no-op), so assert the live constraint text actually allows the value.
+  IF pg_get_constraintdef(
+       (SELECT oid FROM pg_constraint WHERE conname = 'flows_trigger_type_check')
+     ) NOT LIKE '%any_message%' THEN
+    RAISE EXCEPTION
+      'flows_trigger_type_check does not allow any_message — migration 080 did not apply';
+  END IF;
+  IF to_regclass('public.idx_flow_runs_flow_contact_started') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_flow_runs_flow_contact_started is missing — migration 080 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

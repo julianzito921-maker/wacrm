@@ -40,6 +40,7 @@ export function cuentaCaracteres(texto: string): number {
 import { getT } from "@/lib/i18n/translate";
 import {
   AUTO_ADVANCING_NODE_TYPES,
+  BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS,
   MAX_AUTO_ADVANCING_CHAIN,
   META_CAPI_EVENTOS,
   WAIT_MAX_SEGUNDOS,
@@ -59,7 +60,7 @@ export interface ValidationIssue {
 
 interface FlowInput {
   name: string;
-  trigger_type: "keyword" | "first_inbound_message" | "manual";
+  trigger_type: "keyword" | "first_inbound_message" | "any_message" | "manual";
   trigger_config: Record<string, unknown>;
   entry_node_id: string | null;
 }
@@ -302,7 +303,7 @@ function validateTrigger(
       }
     }
   }
-  // first_inbound_message / manual have no config; nothing to validate.
+  // first_inbound_message / any_message / manual have no config; nothing to validate.
 
   return issues;
 }
@@ -310,6 +311,51 @@ function validateTrigger(
 // ============================================================
 // Per-node
 // ============================================================
+
+const TIPOS_BURBUJA = ["text", "image", "video", "audio", "document", "sticker", "interval"];
+
+/** Burbujas del Mensaje compuesto: contenido y rangos de tiempo. */
+function validarBurbujas(
+  node_key: string,
+  items: Array<Record<string, unknown>>,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const error = (field: string, message: string) =>
+    issues.push({ severity: "error", scope: "node", node_key, field, message });
+  items.forEach((b, i) => {
+    const tipo = String(b.tipo ?? "");
+    const n = i + 1;
+    if (!TIPOS_BURBUJA.includes(tipo)) {
+      error(`items.${i}.tipo`, t("bubbleNeedsType", { n }));
+      return;
+    }
+    const segundos = b.segundos === undefined ? null : Number(b.segundos);
+    if (tipo === "interval") {
+      if (segundos === null || !Number.isFinite(segundos) || segundos < 1 || segundos > WAIT_MAX_SEGUNDOS) {
+        error(`items.${i}.segundos`, t("bubbleIntervalRange", { n }));
+      }
+      return;
+    }
+    if (tipo === "text") {
+      if (!String(b.text ?? "").trim()) error(`items.${i}.text`, t("bubbleNeedsText", { n }));
+    } else {
+      if (!String(b.media_url ?? "").trim()) error(`items.${i}.media_url`, t("bubbleNeedsFile", { n }));
+      if (
+        typeof b.text === "string" &&
+        cuentaCaracteres(b.text) > INTERACTIVE_LIMITS.bodyMaxLength
+      ) {
+        error(`items.${i}.text`, t("captionTooLong", { max: INTERACTIVE_LIMITS.bodyMaxLength }));
+      }
+    }
+    if (
+      segundos !== null &&
+      (!Number.isFinite(segundos) || segundos < 0 || segundos > BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS)
+    ) {
+      error(`items.${i}.segundos`, t("bubbleTypingRange", { n, max: BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS }));
+    }
+  });
+  return issues;
+}
 
 function validateNode(
   node: NodeInput,
@@ -341,8 +387,14 @@ function validateNode(
     }
 
     case "send_message": {
-      const cfg = node.config as { text?: string; next_node_key?: string };
-      if (!cfg.text?.trim()) {
+      const cfg = node.config as {
+        text?: string;
+        items?: Array<Record<string, unknown>>;
+        next_node_key?: string;
+      };
+      const compuesto = Array.isArray(cfg.items) && cfg.items.length > 0;
+      if (compuesto) issues.push(...validarBurbujas(node.node_key, cfg.items!));
+      if (!compuesto && !cfg.text?.trim()) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -351,15 +403,8 @@ function validateNode(
           message: t("sendMessageNeedsText"),
         });
       }
-      if (!cfg.next_node_key) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: t("sendMessageNeedsNext"),
-        });
-      } else if (!knownKeys.has(cfg.next_node_key)) {
+      // Sin conexión = fin de rama: la corrida termina limpia (no es error).
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -410,15 +455,8 @@ function validateNode(
           message: t("captionTooLong", { max: INTERACTIVE_LIMITS.bodyMaxLength }),
         });
       }
-      if (!cfg.next_node_key) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: t("sendMediaNeedsNext"),
-        });
-      } else if (!knownKeys.has(cfg.next_node_key)) {
+      // Sin conexión = fin de rama: la corrida termina limpia (no es error).
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -734,15 +772,8 @@ function validateNode(
           message: t("waitSecondsRange"),
         });
       }
-      if (!cfg.next_node_key) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: t("waitNeedsNext"),
-        });
-      } else if (!knownKeys.has(cfg.next_node_key)) {
+      // Sin conexión = fin de rama: la corrida termina limpia (no es error).
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -803,9 +834,8 @@ function validateNode(
       if (node.node_type === "move_kanban" && (!cfg.pipeline_id || !cfg.stage_id)) {
         issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "stage_id", message: t("kanbanNeedsStage") });
       }
-      if (!cfg.next_node_key) {
-        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockNeedsNext") });
-      } else if (!knownKeys.has(cfg.next_node_key)) {
+      // Sin conexión = fin de rama: la corrida termina limpia (no es error).
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
         issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockMissingNext", { key: cfg.next_node_key }) });
       }
       break;
@@ -842,15 +872,8 @@ function validateNode(
           message: t("metaCapiPurchaseNeedsValue"),
         });
       }
-      if (!cfg.next_node_key) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: t("metaCapiNeedsNext"),
-        });
-      } else if (!knownKeys.has(cfg.next_node_key)) {
+      // Sin conexión = fin de rama: la corrida termina limpia (no es error).
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -1021,15 +1044,8 @@ function validateNode(
           message: t("setTagNeedsTag"),
         });
       }
-      if (!cfg.next_node_key) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: t("setTagNeedsNext"),
-        });
-      } else if (!knownKeys.has(cfg.next_node_key)) {
+      // Sin conexión = fin de rama: la corrida termina limpia (no es error).
+      if (cfg.next_node_key && !knownKeys.has(cfg.next_node_key)) {
         issues.push({
           severity: "error",
           scope: "node",

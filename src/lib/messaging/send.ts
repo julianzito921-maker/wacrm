@@ -48,7 +48,7 @@ export type OrigenSalida =
   /** Avisos internos a Julián (no van a clientas). */
   | "sistema";
 
-export type TipoSalida = "text" | "image" | "video" | "audio" | "document" | "buttons" | "list" | "template";
+export type TipoSalida = "text" | "image" | "video" | "audio" | "document" | "sticker" | "buttons" | "list" | "template";
 
 export interface ContextoSalida {
   accountId: string;

@@ -1,4 +1,5 @@
 import {
+  sendReactionMessage,
   sendTypingIndicator,
   type InteractiveButton,
   type InteractiveListSection,
@@ -381,7 +382,9 @@ export async function engineSendMedia(
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
     sender_type: 'bot',
-    content_type: args.kind,
+    // El sticker es una imagen .webp: se guarda como imagen para no tocar
+    // messages_content_type_check y que la bandeja lo muestre igual.
+    content_type: args.kind === 'sticker' ? 'image' : args.kind,
     content_text: args.caption ?? null,
     message_id: waMessageId,
     status: 'sent',
@@ -614,4 +617,37 @@ async function sendInteractiveViaMeta(
     .eq('account_id', input.accountId)
 
   return { whatsapp_message_id: waMessageId }
+}
+
+/**
+ * Reacción (p. ej. 👍) del flujo a un mensaje de la clienta.
+ *
+ * Cosmética, como el «escribiendo…»: el que llama la envuelve en
+ * try/catch y un fallo nunca frena el embudo. No es un mensaje (Meta no
+ * abre ni cobra conversación por ella), por eso no pasa por la cola.
+ */
+export async function engineSendReaction(args: {
+  accountId: string
+  contactId: string
+  /** wamid del mensaje entrante al que se reacciona. */
+  targetMessageId: string
+  emoji: string
+}): Promise<void> {
+  const db = supabaseAdmin()
+  const { data: contact } = await db
+    .from('contacts')
+    .select('id, phone, wa_user_id')
+    .eq('id', args.contactId)
+    .eq('account_id', args.accountId)
+    .maybeSingle()
+  const sendTarget = contact ? resolveContactSendTarget(contact) : null
+  if (!sendTarget) throw new Error(t('send.contactNotFound'))
+  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(db, args.accountId)
+  await sendReactionMessage({
+    phoneNumberId,
+    accessToken,
+    to: sendTarget.target,
+    targetMessageId: args.targetMessageId,
+    emoji: args.emoji,
+  })
 }

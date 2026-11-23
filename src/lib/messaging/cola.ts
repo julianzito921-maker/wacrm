@@ -122,7 +122,7 @@ async function enviarFila(fila: FilaCola): Promise<{ messageId: string }> {
     case "document":
       return enviarMedio({
         ...base,
-        kind: fila.message_type as "image" | "video" | "audio" | "document",
+        kind: fila.message_type as "image" | "video" | "audio" | "document" | "sticker",
         link: String(p.link ?? ""),
         ...(typeof p.caption === "string" ? { caption: p.caption } : {}),
         ...(typeof p.filename === "string" ? { filename: p.filename } : {}),

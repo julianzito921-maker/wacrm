@@ -374,6 +374,8 @@ export function summarizeNode(
     case 'end':
       return null;
     case 'send_message': {
+      const items = Array.isArray(cfg.items) ? (cfg.items as Array<Record<string, unknown>>) : [];
+      if (items.length > 0) return resumenBurbujas(items, t);
       const text = typeof cfg.text === 'string' ? cfg.text : '';
       return text.length > 0 ? truncate(text) : null;
     }
@@ -545,6 +547,7 @@ export function summarizeNode(
 // ============================================================
 
 export type BloqueId =
+  | 'inicio'
   | 'mensaje'
   | 'template'
   | 'etiquetas'
@@ -576,6 +579,7 @@ export interface Bloque {
 }
 
 export const CATALOGO_BLOQUES: Bloque[] = [
+  { id: 'inicio', icon: PlayCircle, tipo: 'start', tono: 'azul' },
   { id: 'mensaje', icon: MessageCircle, tipo: 'send_message', tono: 'violeta' },
   { id: 'template', icon: FileBadge, tipo: 'send_template', tono: 'violeta' },
   { id: 'etiquetas', icon: Tag, tipo: 'set_tag', tono: 'violeta' },
@@ -609,6 +613,46 @@ export const ATAJOS_MEDIA: {
   { medio: 'document', icon: FileText, clave: 'paletteDocument' },
   { medio: 'audio', icon: Mic, clave: 'paletteAudio' },
 ];
+
+/** Ícono de cada tipo de burbuja del Mensaje compuesto (tarjeta y panel). */
+export const EMOJI_BURBUJA: Record<string, string> = {
+  text: '💬',
+  image: '🖼',
+  video: '🎬',
+  audio: '🎤',
+  document: '📄',
+  sticker: '🏷',
+  interval: '⏱',
+};
+
+/**
+ * Resumen del Mensaje compuesto en la tarjeta del lienzo:
+ * «💬 Texto · 🖼 Imagen · ⏱ 10 s — Hola, ¿cómo estás?».
+ */
+export function resumenBurbujas(
+  items: Array<Record<string, unknown>>,
+  t?: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const partes = items.map((b) => {
+    const tipo = String(b.tipo ?? 'text');
+    const emoji = EMOJI_BURBUJA[tipo] ?? '•';
+    if (tipo === 'interval') return `${emoji} ${Number(b.segundos) || 0} s`;
+    return `${emoji} ${t ? t(`bubble_${tipo}`) : tipo}`;
+  });
+  const primerTexto = items.find((b) => b.tipo === 'text' && typeof b.text === 'string' && b.text.trim());
+  const cabeza = partes.join(' · ');
+  return primerTexto ? `${cabeza} — ${truncate(String(primerTexto.text), 60)}` : cabeza;
+}
+
+/**
+ * Atajo de multimedia de la paleta: un Mensaje que ya trae la burbuja
+ * de ese tipo (en lugar del nodo suelto send_media de antes).
+ */
+export function configAtajoMedio(medio: string): Record<string, unknown> {
+  return {
+    items: [{ tipo: medio, media_url: '', text: '', segundos: 3, like: false }],
+  };
+}
 
 /** Tipo MIME del arrastre de un bloque desde el panel hasta el lienzo. */
 export const DND_BLOQUE = 'application/x-wacrm-bloque';

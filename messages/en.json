@@ -1633,7 +1633,25 @@
         "kanbanCreate": "Create the deal if missing",
         "kanbanCreateHelp": "When the contact has no open deal in that pipeline.",
         "kanbanTitle": "New deal title",
-        "kanbanTitleHelp": "Supports tokens like '{{'contact.name'}}'."
+        "kanbanTitleHelp": "Supports tokens like '{{'contact.name'}}'.",
+        "bubblesEmpty": "No content yet. Add a bubble below.",
+        "addContent": "Add content",
+        "bubbleType_text": "Text",
+        "bubbleType_image": "Image",
+        "bubbleType_video": "Video",
+        "bubbleType_audio": "Audio",
+        "bubbleType_document": "File",
+        "bubbleType_sticker": "Sticker",
+        "bubbleType_interval": "Interval",
+        "bubbleUp": "Move up",
+        "bubbleDown": "Move down",
+        "bubbleRemove": "Remove bubble",
+        "bubbleTextPlaceholder": "Write the message…",
+        "typingDelay": "Typing delay",
+        "typingDelayLongHelp": "Over 15 s: the run is parked and resumed by the cron (may take up to a minute longer).",
+        "likeBeforeReply": "React with 👍 to the last message before replying",
+        "stickerUploadHint": "Upload sticker (.webp)",
+        "endOfBranchHelp": "Leave it empty and the flow ends here; the chat goes back to the AI."
       },
       "categories": {
         "messaging": "Messaging",
@@ -1642,12 +1660,12 @@
       },
       "nodes": {
         "start": {
-          "label": "Start",
-          "blurb": "Entry point of the flow"
+          "label": "Start / Trigger",
+          "blurb": "How the flow starts and which block comes next"
         },
         "send_message": {
           "label": "Message",
-          "blurb": "Sends a WhatsApp text message"
+          "blurb": "Text, media and pauses, in sequence"
         },
         "send_buttons": {
           "label": "Menu",
@@ -1706,7 +1724,12 @@
           "blurb": "Moves the contact's deal to a stage"
         }
       },
-      "canvasEmptyHint": "Drag a block from the panel or click one to start."
+      "canvasEmptyHint": "Drag a block from the panel or click one to start.",
+      "triggerAnyMessageTitle": "Any message",
+      "triggerAnyMessageHint": "Fires once per contact every 24 h, only when no keyword or first-message flow applies. When it ends, the chat goes back to the AI.",
+      "triggerKeywordsMissing": "Keyword: no keywords yet",
+      "endOfBranch": "End",
+      "endOfBranchHint": "Not connected: the flow ends here and the chat is released to the AI."
     },
     "validation": {
       "noIssues": "No issues. Ready to activate.",
@@ -1747,7 +1770,13 @@
       "tagPicked": "{mode} tag {tag}…",
       "tagNone": "{mode} tag (none picked)",
       "seconds": "{count} s",
-      "minutes": "{count} min"
+      "minutes": "{count} min",
+      "bubble_text": "Text",
+      "bubble_image": "Image",
+      "bubble_video": "Video",
+      "bubble_audio": "Audio",
+      "bubble_document": "File",
+      "bubble_sticker": "Sticker"
     },
     "header": {
       "backToFlows": "Back to Flows",
@@ -1854,6 +1883,10 @@
       "manipulador": {
         "label": "Manipulator",
         "blurb": "Edit variables and fields"
+      },
+      "inicio": {
+        "label": "Start / Trigger",
+        "blurb": "Keyword, any message or first message"
       }
     }
   },
@@ -2855,6 +2888,11 @@
       "startMissingNext": "Start points to non-existent node \"{key}\".",
       "sendMessageNeedsText": "Send-message node needs a text body.",
       "sendMessageNeedsNext": "Send-message node must point to a next node.",
+      "bubbleNeedsType": "Message bubble {n} has no valid type.",
+      "bubbleNeedsText": "Message bubble {n} is empty: write the text.",
+      "bubbleNeedsFile": "Message bubble {n} needs a file.",
+      "bubbleTypingRange": "Typing delay of bubble {n} must be between 0 and {max} s.",
+      "bubbleIntervalRange": "Interval of bubble {n} must last between 1 s and 23 h.",
       "sendMessageMissingNext": "Send-message points to non-existent node \"{key}\".",
       "sendMediaNeedsType": "Send-media node needs a media type (image, video, or document).",
       "sendMediaNeedsFile": "Send-media node needs a file (upload one before activating).",

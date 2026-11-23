@@ -281,3 +281,52 @@ describe("duplicateNodeInState", () => {
     expect(duplicateNodeInState(estado, "no_existe", "x")).toBe(estado);
   });
 });
+
+describe("bloque Inicio / Disparador", () => {
+  const base = (nodes: BuilderNode[], entry: string | null): BuilderState => ({
+    name: "x",
+    description: "",
+    trigger_type: "keyword",
+    trigger_config: { keywords: ["chia"] },
+    entry_node_id: entry,
+    status: "draft",
+    nodes,
+  });
+
+  it("antepone un Inicio que apunta a la entrada vieja y lo vuelve la entrada", async () => {
+    const { conNodoInicio } = await import("./flow-editor-state");
+    const s = conNodoInicio(
+      base([{ node_key: "hola", node_type: "send_message", config: { text: "Hola", next_node_key: "" }, position_x: 400, position_y: 80 }], "hola"),
+    );
+    expect(s.entry_node_id).toBe("inicio");
+    expect(s.nodes[0]).toMatchObject({
+      node_key: "inicio",
+      node_type: "start",
+      config: { next_node_key: "hola" },
+      position_x: 80,
+      position_y: 80,
+    });
+    // Idempotente: no agrega un segundo Inicio.
+    expect(conNodoInicio(s).nodes.filter((n) => n.node_type === "start")).toHaveLength(1);
+  });
+
+  it("flujo nuevo vacío: Inicio sin conexión", async () => {
+    const { conNodoInicio } = await import("./flow-editor-state");
+    const s = conNodoInicio(base([], null));
+    expect(s.nodes).toHaveLength(1);
+    expect(s.entry_node_id).toBe("inicio");
+  });
+
+  it("el Inicio no se puede borrar", async () => {
+    const { conNodoInicio, removeNodeFromState } = await import("./flow-editor-state");
+    const s = conNodoInicio(base([], null));
+    expect(removeNodeFromState(s, "inicio")).toBe(s);
+  });
+
+  it("un Mensaje nuevo nace con una burbuja de texto de 3 s", () => {
+    expect(defaultConfigFor("send_message")).toMatchObject({
+      items: [{ tipo: "text", text: "", segundos: 3, like: false }],
+      next_node_key: "",
+    });
+  });
+});

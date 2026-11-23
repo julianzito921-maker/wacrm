@@ -37,6 +37,7 @@ import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
   engineSendMedia,
+  engineSendReaction,
   engineSendText,
   mostrarEscribiendo,
 } from "./meta-send";
@@ -137,8 +138,14 @@ import {
   type MoveKanbanNodeConfig,
   type SendPaymentNodeConfig,
   type SendTemplateNodeConfig,
+  type BurbujaMensaje,
+  ANY_MESSAGE_COOLDOWN_MS,
   AUTO_ADVANCING_NODE_TYPES,
+  BURBUJA_ESCRIBIENDO_DEFECTO,
+  BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS,
   MAX_NODES_PER_ADVANCE,
+  NODOS_FIN_DE_RAMA,
+  VAR_CURSOR_BURBUJA,
   VENTANA_SERVICIO_MS,
   WAIT_INLINE_MAX_SEGUNDOS,
   WAIT_MAX_SEGUNDOS,
@@ -551,6 +558,7 @@ async function isDuplicateInbound(
 async function findEntryFlow(
   db: AdminClient,
   accountId: string,
+  contactId: string,
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
@@ -576,23 +584,39 @@ async function findEntryFlow(
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
+  // Prioridad (regla de Julián, 22-nov-2026): palabra clave → primer
+  // mensaje → cualquier mensaje. Dentro de cada grupo, el más antiguo.
   for (const flow of typed) {
-    if (flow.trigger_type === "keyword") {
-      const cfg = flow.trigger_config as KeywordTriggerConfig;
-      if (candidates.some((text) => matchesKeywordTrigger(text, cfg))) {
-        return flow;
-      }
-    } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
-      // Also reachable by a tap now: a broadcast template with a
-      // quick-reply button can genuinely be what prompts a contact's
-      // first-ever inbound. The automations dispatcher has always
-      // treated a tap that way (the webhook pushes
-      // `first_inbound_message` regardless of envelope) — flows were
-      // the inconsistent half.
+    if (flow.trigger_type !== "keyword") continue;
+    const cfg = flow.trigger_config as KeywordTriggerConfig;
+    if (candidates.some((text) => matchesKeywordTrigger(text, cfg))) {
       return flow;
     }
-    // 'manual' triggers do not auto-start from inbound messages.
   }
+  if (isFirstInbound) {
+    // Also reachable by a tap: a broadcast template with a quick-reply
+    // button can genuinely be what prompts a contact's first-ever
+    // inbound (the webhook pushes `first_inbound_message` regardless
+    // of envelope).
+    const primero = typed.find((f) => f.trigger_type === "first_inbound_message");
+    if (primero) return primero;
+  }
+  for (const flow of typed) {
+    if (flow.trigger_type !== "any_message") continue;
+    // Una vez por contacto cada 24 h: si no, al terminar el flujo el
+    // siguiente mensaje lo volvería a arrancar y la IA nunca tomaría el chat.
+    const desde = new Date(Date.now() - ANY_MESSAGE_COOLDOWN_MS).toISOString();
+    const { data: reciente, error: errReciente } = await db
+      .from("flow_runs")
+      .select("id")
+      .eq("flow_id", flow.id)
+      .eq("contact_id", contactId)
+      .gte("started_at", desde)
+      .limit(1);
+    if (errReciente) continue;
+    if (!reciente || reciente.length === 0) return flow;
+  }
+  // 'manual' triggers do not auto-start from inbound messages.
   return null;
 }
 
@@ -822,6 +846,180 @@ async function endRun(
     .eq("status", "active");
 }
 
+/** Fin de rama: un nodo de una sola salida sin conexión cierra la corrida
+ *  como completada y el chat queda libre para la IA. */
+async function terminarFinDeRama(
+  db: AdminClient,
+  run: FlowRunRow,
+  nodeKey: string,
+): Promise<void> {
+  await logEvent(db, run.id, "completed", nodeKey, { reason: "fin_de_rama" });
+  await endRun(db, run.id, "completed", "fin_de_rama");
+}
+
+function dormir(segundos: number): Promise<void> {
+  // En las pruebas no se espera de verdad (mismo criterio que mostrarEscribiendo).
+  if (segundos <= 0 || process.env.NODE_ENV === "test") return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, segundos * 1000));
+}
+
+function acotar(valor: unknown, min: number, max: number, defecto: number): number {
+  if (valor === undefined || valor === null || valor === "") return defecto;
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return defecto;
+  return Math.min(Math.max(n, min), max);
+}
+
+/** Cursor de un Mensaje compuesto estacionado, si pertenece a este nodo. */
+export function leerCursorBurbuja(
+  vars: Record<string, unknown> | null | undefined,
+  nodeKey: string,
+): number | null {
+  const c = (vars ?? {})[VAR_CURSOR_BURBUJA] as { nodo?: unknown; i?: unknown } | undefined;
+  if (!c || c.nodo !== nodeKey) return null;
+  const i = Number(c.i);
+  return Number.isInteger(i) && i >= 0 ? i : null;
+}
+
+function varsSinCursor(vars: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const copia = { ...(vars ?? {}) };
+  delete copia[VAR_CURSOR_BURBUJA];
+  return copia;
+}
+
+/**
+ * Manda las burbujas de un Mensaje compuesto desde `desde`, en orden.
+ *
+ * Cada burbuja: 👍 opcional al último mensaje de la clienta →
+ * «escribiendo…» durante sus segundos → envío. Un «intervalo» es una
+ * pausa sin «escribiendo…». Si una espera pasa de 15 s, la corrida se
+ * estaciona como el Smart Delay (`resume_reason: 'delay'`) con el
+ * cursor en `vars.__burbuja`, y el cron la retoma en esa misma burbuja
+ * sin volver a esperar (`retomada`).
+ */
+async function ejecutarBurbujas(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  desde: number,
+  retomada: boolean,
+): Promise<"ok" | "estacionada" | "fallo"> {
+  const items = ((node.config as unknown as SendMessageNodeConfig).items ?? []) as BurbujaMensaje[];
+
+  const estacionar = async (i: number, segundos: number): Promise<"estacionada"> => {
+    const vars = { ...(run.vars ?? {}), [VAR_CURSOR_BURBUJA]: { nodo: node.node_key, i } };
+    const ok = await advanceCurrentNodeKey(db, run.id, run.current_node_key, node.node_key, {
+      next_run_at: new Date(Date.now() + segundos * 1000).toISOString(),
+      resume_reason: "delay",
+      vars,
+    });
+    if (ok) {
+      run.vars = vars;
+      run.current_node_key = node.node_key;
+    } else {
+      await logEvent(db, run.id, "error", node.node_key, {
+        reason: "lost_race_during_advance",
+      });
+    }
+    return "estacionada";
+  };
+
+  for (let i = desde; i < items.length; i += 1) {
+    const b = items[i] ?? ({ tipo: "text" } as BurbujaMensaje);
+    const yaEsperada = retomada && i === desde;
+
+    if (b.tipo === "interval") {
+      if (yaEsperada) continue;
+      const segundos = acotar(b.segundos, 0, WAIT_MAX_SEGUNDOS, 0);
+      if (segundos > WAIT_INLINE_MAX_SEGUNDOS) return estacionar(i, segundos);
+      await dormir(segundos);
+      continue;
+    }
+
+    const esTexto = b.tipo === "text";
+    const texto = (b.text ?? "").trim();
+    if (esTexto ? !texto : !b.media_url?.trim()) {
+      // Burbuja vacía (el validador ya la marca): se salta sin romper la corrida.
+      await logEvent(db, run.id, "error", node.node_key, {
+        reason: "burbuja_vacia",
+        burbuja: i,
+      });
+      continue;
+    }
+
+    if (!yaEsperada) {
+      const wamid = await wamidEntrante(db, run.conversation_id);
+      if (b.like && wamid) {
+        try {
+          await engineSendReaction({
+            accountId: run.account_id,
+            contactId: run.contact_id!,
+            targetMessageId: wamid,
+            emoji: "👍",
+          });
+        } catch (err) {
+          console.warn("[flows] no se pudo reaccionar 👍:", err instanceof Error ? err.message : err);
+        }
+      }
+      const segundos = acotar(
+        b.segundos,
+        0,
+        BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS,
+        BURBUJA_ESCRIBIENDO_DEFECTO,
+      );
+      if (segundos > 0) {
+        try {
+          await mostrarEscribiendo({ accountId: run.account_id, messageId: wamid, esperar: false });
+        } catch {
+          // Cosmético: nunca frena el envío.
+        }
+      }
+      if (segundos > WAIT_INLINE_MAX_SEGUNDOS) return estacionar(i, segundos);
+      await dormir(segundos);
+    }
+
+    try {
+      const { whatsapp_message_id } = esTexto
+        ? await engineSendText({
+            accountId: run.account_id,
+            userId: run.user_id,
+            conversationId: run.conversation_id!,
+            contactId: run.contact_id!,
+            text: interpolateVars(texto, run.vars),
+          })
+        : await engineSendMedia({
+            accountId: run.account_id,
+            userId: run.user_id,
+            conversationId: run.conversation_id!,
+            contactId: run.contact_id!,
+            kind: b.tipo as "image" | "video" | "audio" | "document" | "sticker",
+            link: b.media_url!,
+            caption:
+              b.text?.trim() && b.tipo !== "audio" && b.tipo !== "sticker"
+                ? interpolateVars(b.text, run.vars)
+                : undefined,
+            filename: b.tipo === "document" ? b.filename : undefined,
+          });
+      await logEvent(db, run.id, "message_sent", node.node_key, {
+        node_type: "send_message",
+        burbuja: i,
+        tipo: b.tipo,
+        whatsapp_message_id,
+      });
+    } catch (err) {
+      await logEvent(db, run.id, "error", node.node_key, {
+        reason: "send_bubble_failed",
+        burbuja: i,
+        tipo: b.tipo,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      await endRun(db, run.id, "failed", "send_bubble_failed");
+      return "fallo";
+    }
+  }
+  return "ok";
+}
+
 // ============================================================
 // The synchronous advance loop. Walks through auto-advance nodes
 // until it hits one that suspends (send_buttons/send_list) or
@@ -836,7 +1034,14 @@ async function advanceFromNodeKey(
   nodes: Map<string, FlowNodeRow>,
 ): Promise<{ outcome: "advanced" | "completed" | "handed_off" }> {
   let currentKey: string | null = startNodeKey;
+  // Último nodo ejecutado: decide si una salida vacía es un fin de rama
+  // limpio o un error.
+  let anterior: FlowNodeRow | null = null;
   for (let safety = 0; safety < MAX_NODES_PER_ADVANCE; safety += 1) {
+    if (!currentKey && anterior && NODOS_FIN_DE_RAMA.has(anterior.node_type)) {
+      await terminarFinDeRama(db, run, anterior.node_key);
+      return { outcome: "completed" };
+    }
     if (!currentKey) {
       await logEvent(db, run.id, "error", null, {
         reason: "next_node_key was null mid-advance",
@@ -855,6 +1060,7 @@ async function advanceFromNodeKey(
     await logEvent(db, run.id, "node_entered", node.node_key, {
       node_type: node.node_type,
     });
+    anterior = node;
 
     // Texto que se va a mandar en este paso: sirve para calcular cuánto
     // tarda «escribiendo…» (a más texto, más tiempo).
@@ -873,6 +1079,14 @@ async function advanceFromNodeKey(
     }
     if (node.node_type === "send_message") {
       const cfg = node.config as unknown as SendMessageNodeConfig;
+      if (Array.isArray(cfg.items) && cfg.items.length > 0) {
+        // Mensaje compuesto: las burbujas salen en orden dentro del nodo.
+        const r = await ejecutarBurbujas(db, run, node, 0, false);
+        if (r === "estacionada") return { outcome: "advanced" };
+        if (r === "fallo") return { outcome: "completed" };
+        currentKey = cfg.next_node_key;
+        continue;
+      }
       try {
         await ritmoHumano(db, run, textoDelNodo);
         const { whatsapp_message_id } = await engineSendText({
@@ -1822,14 +2036,22 @@ async function resumeDelay(
     loadAllNodes(db, run.flow_id),
   ]);
   const nodo = nodes.get(run.current_node_key);
-  if (!flow || flow.status !== "active" || !nodo || nodo.node_type !== "wait") {
+  // Mensaje compuesto estacionado a media secuencia (escribiendo/intervalo > 15 s).
+  const cursor = nodo ? leerCursorBurbuja(run.vars, nodo.node_key) : null;
+  const esMensaje = nodo?.node_type === "send_message" && cursor !== null;
+  if (
+    !flow ||
+    flow.status !== "active" ||
+    !nodo ||
+    (nodo.node_type !== "wait" && !esMensaje)
+  ) {
     // El flujo se pausó o se editó mientras esperaba: se cierra limpio.
     await endRun(db, run.id, "cancelled", "delay_sin_flujo_activo");
     return false;
   }
-  const cfg = nodo.config as unknown as WaitNodeConfig;
   // Reclamo atómico: suelta el temporizador solo si nadie se adelantó.
   const nextSeq = (run.transition_seq ?? 0) + 1;
+  const varsLimpias = esMensaje ? varsSinCursor(run.vars) : null;
   const { data: reclamada } = await db
     .from("flow_runs")
     .update({
@@ -1837,6 +2059,7 @@ async function resumeDelay(
       resume_reason: null,
       transition_seq: nextSeq,
       last_advanced_at: now.toISOString(),
+      ...(varsLimpias ? { vars: varsLimpias } : {}),
     })
     .eq("id", run.id)
     .eq("status", "active")
@@ -1844,16 +2067,24 @@ async function resumeDelay(
     .select("id");
   if (!Array.isArray(reclamada) || reclamada.length !== 1) return false;
   run.transition_seq = nextSeq;
+  if (varsLimpias) run.vars = varsLimpias;
   if (await cerrarSiFueraDeVentana(db, run, nodo.node_key, now)) return true;
   await logEvent(db, run.id, "node_entered", nodo.node_key, {
-    node_type: "wait",
+    node_type: nodo.node_type,
     delay_vencido: true,
+    ...(esMensaje ? { burbuja: cursor } : {}),
   });
-  if (!cfg.next_node_key) {
-    await endRun(db, run.id, "failed", "missing_next_node");
+  if (esMensaje) {
+    const r = await ejecutarBurbujas(db, run, nodo, cursor!, true);
+    if (r !== "ok") return true;
+  }
+  const next = (nodo.config as { next_node_key?: string }).next_node_key;
+  if (!next) {
+    // Espera o Mensaje sin conexión: fin de rama, no error.
+    await terminarFinDeRama(db, run, nodo.node_key);
     return true;
   }
-  await advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
+  await advanceFromNodeKey(db, run, next, nodes);
   return true;
 }
 
@@ -1918,6 +2149,7 @@ export async function dispatchInboundToFlows(
     const flow = await findEntryFlow(
       db,
       input.accountId,
+      input.contactId,
       input.message,
       input.isFirstInboundMessage,
     );
@@ -1966,7 +2198,11 @@ async function handleReplyForActiveRun(
   // conversación. El mensaje queda registrado, no cuenta como respuesta
   // equivocada y nadie más contesta (ni la IA): la corrida sigue cuando
   // venza su espera.
-  if (currentNode.node_type === "wait") {
+  if (
+    currentNode.node_type === "wait" ||
+    (currentNode.node_type === "send_message" &&
+      leerCursorBurbuja(run.vars, currentNode.node_key) !== null)
+  ) {
     return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
   }
 

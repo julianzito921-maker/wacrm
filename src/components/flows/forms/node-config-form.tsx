@@ -50,6 +50,8 @@ import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media"
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
 import { MoveKanbanForm, SendPaymentForm, SendTemplateForm } from "./bloques-forms";
+import { MensajeForm } from "./mensaje-form";
+import { TriggerFields } from "./trigger-fields";
 import {
   META_CAPI_EVENTOS,
   WAIT_INLINE_MAX_SEGUNDOS,
@@ -73,7 +75,7 @@ function unidadDe(segundos: number): UnidadDelay {
  * siempre en segundos. Hasta 15 s espera en el momento; más que eso,
  * el cron lo retoma. Tope 23 h (ventana de 24 h de WhatsApp).
  */
-function SmartDelayField({
+export function SmartDelayField({
   segundos,
   onChange,
   t,
@@ -155,25 +157,12 @@ export function NodeConfigForm({
   const cfg = node.config;
   switch (node.node_type) {
     case "start":
-      return (
-        <NextNodeRow
-          value={(cfg as { next_node_key?: string }).next_node_key ?? ""}
-          allNodes={allNodes}
-          currentKey={node.node_key}
-          onChange={(v) => onUpdateConfig({ next_node_key: v })}
-          label={t("advancesTo")}
-        />
-      );
-
-    case "send_message":
+      // «Inicio / Disparador»: el disparador se edita aquí mismo (es el
+      // del flujo, el mismo que la vista Lista) y la conexión define la
+      // entrada.
       return (
         <>
-          <TextRow
-            label={t("textToCustomer")}
-            value={(cfg as { text?: string }).text ?? ""}
-            onChange={(v) => onUpdateConfig({ text: v })}
-            rows={3}
-          />
+          <TriggerFields layout="stack" />
           <NextNodeRow
             value={(cfg as { next_node_key?: string }).next_node_key ?? ""}
             allNodes={allNodes}
@@ -182,6 +171,17 @@ export function NodeConfigForm({
             label={t("advancesTo")}
           />
         </>
+      );
+
+    case "send_message":
+      return (
+        <MensajeForm
+          cfg={cfg as Parameters<typeof MensajeForm>[0]["cfg"]}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
       );
 
     case "send_buttons":
