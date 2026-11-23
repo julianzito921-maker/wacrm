@@ -119,8 +119,13 @@ export interface HandoffNodeConfig {
 export interface WaitNodeConfig {
   /**
    * Cuánto esperar antes de seguir con el mensaje siguiente, en
-   * segundos. Tope duro de 5 minutos: la espera se hace dentro del
-   * mismo paso del motor, así que no puede quedar abierta horas.
+   * segundos (Smart Delay).
+   *   - Hasta WAIT_INLINE_MAX_SEGUNDOS (15 s): se espera dentro del
+   *     mismo avance, como siempre.
+   *   - Más que eso, hasta WAIT_MAX_SEGUNDOS (23 h): la corrida se
+   *     estaciona con `flow_runs.next_run_at` y el cron de cada minuto
+   *     la retoma. Si al vencer ya se cerró la ventana de 24 h de
+   *     WhatsApp, la corrida termina sin mandar nada.
    */
   segundos: number;
   /** Nodo al que sigue después de la espera. */
@@ -201,6 +206,36 @@ export interface SetTagNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Dispara un evento de la API de conversiones para mensajes (Meta CAPI,
+ * business_messaging) ligado al clic del anuncio de la clienta
+ * (`ctwa_clid`). Sin clic de anuncio no se manda nada y el flujo sigue.
+ * Nunca frena el flujo: si Meta falla, se anota y avanza.
+ */
+export type MetaCapiEventName =
+  | "Purchase"
+  | "Lead"
+  | "InitiateCheckout"
+  | "AddToCart"
+  | "ViewContent";
+
+export const META_CAPI_EVENTOS: readonly MetaCapiEventName[] = [
+  "Purchase",
+  "Lead",
+  "InitiateCheckout",
+  "AddToCart",
+  "ViewContent",
+];
+
+export interface MetaCapiNodeConfig {
+  event_name: MetaCapiEventName;
+  /** Monto del evento (obligatorio en Purchase). */
+  value?: number;
+  /** Moneda ISO; por defecto MXN. */
+  currency?: string;
+  next_node_key: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -224,6 +259,7 @@ export type FlowNodeConfig =
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
+  | { node_type: "meta_capi"; config: MetaCapiNodeConfig }
   | { node_type: "end"; config: EndNodeConfig };
 
 export type FlowNodeType = FlowNodeConfig["node_type"];
@@ -311,6 +347,9 @@ export interface FlowRunRow {
   last_advanced_at: string;
   ended_at: string | null;
   end_reason: string | null;
+  /** Migración 077: cuándo la retoma el cron (null = no está estacionada). */
+  next_run_at?: string | null;
+  resume_reason?: "delay" | "reply_timeout" | null;
 }
 
 // ============================================================
@@ -392,6 +431,8 @@ export interface DispatchInboundResult {
     | "handed_off"
     | "fallback_fired"
     | "duplicate_inbound_ignored"
+    /** La corrida está en un Smart Delay: el mensaje se queda en el flujo. */
+    | "waiting"
     | "run_error"
     | "no_match";
   /**
@@ -417,7 +458,18 @@ export const AUTO_ADVANCING_NODE_TYPES: ReadonlySet<string> = new Set([
   "condition",
   "set_tag",
   "wait",
+  "meta_capi",
 ]);
+
+/** Smart Delay: hasta aquí se espera en el mismo avance (15 s, para el «escribiendo…»). Más que eso nunca ocupa el webhook: lo retoma el cron. */
+export const WAIT_INLINE_MAX_SEGUNDOS = 15;
+/** Smart Delay: tope total (23 h), para no salir de la ventana de 24 h. */
+export const WAIT_MAX_SEGUNDOS = 23 * 3600;
+/**
+ * Ventana de servicio de WhatsApp con margen: pasado este tiempo desde el
+ * último mensaje de la clienta, el flujo ya no manda mensajes libres.
+ */
+export const VENTANA_SERVICIO_MS = 23.5 * 3600 * 1000;
 
 export const MAX_NODES_PER_ADVANCE = 25;
 

@@ -38,7 +38,12 @@ export function cuentaCaracteres(texto: string): number {
   return Array.from(texto).length;
 }
 import { getT } from "@/lib/i18n/translate";
-import { AUTO_ADVANCING_NODE_TYPES, MAX_AUTO_ADVANCING_CHAIN } from "./types";
+import {
+  AUTO_ADVANCING_NODE_TYPES,
+  MAX_AUTO_ADVANCING_CHAIN,
+  META_CAPI_EVENTOS,
+  WAIT_MAX_SEGUNDOS,
+} from "./types";
 
 const t = getT("Validation.flows");
 
@@ -720,7 +725,7 @@ function validateNode(
     case "wait": {
       const cfg = node.config as { segundos?: number; next_node_key?: string };
       const segundos = Number(cfg.segundos);
-      if (!Number.isFinite(segundos) || segundos < 1 || segundos > 300) {
+      if (!Number.isFinite(segundos) || segundos < 1 || segundos > WAIT_MAX_SEGUNDOS) {
         issues.push({
           severity: "error",
           scope: "node",
@@ -744,6 +749,57 @@ function validateNode(
           node_key: node.node_key,
           field: "next_node_key",
           message: t("waitMissingNext", { key: cfg.next_node_key }),
+        });
+      }
+      break;
+    }
+
+    case "meta_capi": {
+      const cfg = node.config as {
+        event_name?: string;
+        value?: number;
+        next_node_key?: string;
+      };
+      if (
+        !cfg.event_name ||
+        !(META_CAPI_EVENTOS as readonly string[]).includes(cfg.event_name)
+      ) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "event_name",
+          message: t("metaCapiNeedsEvent"),
+        });
+      }
+      const valor = Number(cfg.value);
+      if (
+        cfg.event_name === "Purchase" &&
+        (!Number.isFinite(valor) || valor <= 0)
+      ) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "value",
+          message: t("metaCapiPurchaseNeedsValue"),
+        });
+      }
+      if (!cfg.next_node_key) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: t("metaCapiNeedsNext"),
+        });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: t("metaCapiMissingNext", { key: cfg.next_node_key }),
         });
       }
       break;
@@ -978,9 +1034,20 @@ function outgoingEdges(node: NodeInput): string[] {
     case "send_message":
     case "send_media":
     case "collect_input":
+    case "wait":
+    case "meta_capi":
     case "set_tag": {
       const cfg = node.config as { next_node_key?: string };
       return cfg.next_node_key ? [cfg.next_node_key] : [];
+    }
+    case "save_reply": {
+      const cfg = node.config as {
+        contesto_next?: string;
+        no_contesto_next?: string;
+      };
+      return [cfg.contesto_next, cfg.no_contesto_next].filter(
+        (k): k is string => !!k,
+      );
     }
     case "condition": {
       const cfg = node.config as {

@@ -60,6 +60,13 @@ export function createFakeDb(tables: FakeTables, failingTables: ReadonlySet<stri
         filters.push((r) => (readColumn(r, column) ?? null) === value);
         return builder;
       },
+      lte: (column: string, value: unknown) => {
+        filters.push((r) => {
+          const v = readColumn(r, column);
+          return v !== null && v !== undefined && String(v) <= String(value);
+        });
+        return builder;
+      },
       in: (column: string, values: unknown[]) => {
         filters.push((r) => values.includes(readColumn(r, column)));
         return builder;

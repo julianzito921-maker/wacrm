@@ -49,6 +49,87 @@ import { cn } from "@/lib/utils";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
+import {
+  META_CAPI_EVENTOS,
+  WAIT_INLINE_MAX_SEGUNDOS,
+  WAIT_MAX_SEGUNDOS,
+} from "@/lib/flows/types";
+
+type FormT = ReturnType<typeof useTranslations>;
+
+const UNIDADES_DELAY = { s: 1, min: 60, h: 3600 } as const;
+type UnidadDelay = keyof typeof UNIDADES_DELAY;
+
+/** Unidad más cómoda para mostrar una espera ya guardada en segundos. */
+function unidadDe(segundos: number): UnidadDelay {
+  if (segundos >= 3600 && segundos % 3600 === 0) return "h";
+  if (segundos >= 60 && segundos % 60 === 0) return "min";
+  return "s";
+}
+
+/**
+ * Smart Delay: cantidad + unidad (segundos, minutos u horas), guardado
+ * siempre en segundos. Hasta 15 s espera en el momento; más que eso,
+ * el cron lo retoma. Tope 23 h (ventana de 24 h de WhatsApp).
+ */
+function SmartDelayField({
+  segundos,
+  onChange,
+  t,
+}: {
+  segundos: number;
+  onChange: (segundos: number) => void;
+  t: FormT;
+}) {
+  const [unidad, setUnidad] = useState<UnidadDelay>(() => unidadDe(segundos));
+  const factor = UNIDADES_DELAY[unidad];
+  const cantidad = Math.round((segundos / factor) * 100) / 100;
+  const fijar = (valor: number, u: UnidadDelay) =>
+    onChange(
+      Math.min(
+        Math.max(Math.round((valor || 0) * UNIDADES_DELAY[u]), 1),
+        WAIT_MAX_SEGUNDOS,
+      ),
+    );
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-muted-foreground">
+        {t("waitSecondsLabel")}
+      </label>
+      <div className="grid grid-cols-3 gap-2">
+        <Input
+          type="number"
+          min={1}
+          value={cantidad}
+          onChange={(e) => fijar(Number(e.target.value), unidad)}
+          className="col-span-2 bg-muted"
+        />
+        <Select
+          value={unidad}
+          onValueChange={(v) => {
+            const u = v as UnidadDelay;
+            setUnidad(u);
+            fijar(cantidad, u);
+          }}
+        >
+          <SelectTrigger className="bg-muted">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="s">{t("waitUnitSeconds")}</SelectItem>
+            <SelectItem value="min">{t("waitUnitMinutes")}</SelectItem>
+            <SelectItem value="h">{t("waitUnitHours")}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        {segundos > WAIT_INLINE_MAX_SEGUNDOS
+          ? t("waitLongHelp")
+          : t("waitSecondsHelp")}
+      </p>
+    </div>
+  );
+}
 
 interface NodeConfigFormProps {
   node: BuilderNode;
@@ -134,29 +215,11 @@ export function NodeConfigForm({
     case "wait":
       return (
         <>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
-              {t("waitSecondsLabel")}
-            </label>
-            <Input
-              type="number"
-              min={1}
-              max={300}
-              value={(cfg as { segundos?: number }).segundos ?? 15}
-              onChange={(e) =>
-                onUpdateConfig({
-                  segundos: Math.min(
-                    Math.max(Number(e.target.value) || 0, 1),
-                    300,
-                  ),
-                })
-              }
-              className="bg-muted"
-            />
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              {t("waitSecondsHelp")}
-            </p>
-          </div>
+          <SmartDelayField
+            segundos={(cfg as { segundos?: number }).segundos ?? 15}
+            onChange={(segundos) => onUpdateConfig({ segundos })}
+            t={t}
+          />
           <NextNodeRow
             value={(cfg as { next_node_key?: string }).next_node_key ?? ""}
             allNodes={allNodes}
@@ -288,6 +351,74 @@ export function NodeConfigForm({
           t={t}
         />
       );
+
+    case "meta_capi": {
+      const c = cfg as { event_name?: string; value?: number; currency?: string; next_node_key?: string };
+      return (
+        <>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              {t("metaCapiEventLabel")}
+            </label>
+            <Select
+              value={c.event_name ?? "Purchase"}
+              onValueChange={(v) => onUpdateConfig({ event_name: v })}
+            >
+              <SelectTrigger className="bg-muted">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {META_CAPI_EVENTOS.map((ev) => (
+                  <SelectItem key={ev} value={ev}>
+                    {t(`metaCapiEvents.${ev}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs text-muted-foreground">
+                {t("metaCapiValueLabel")}
+              </label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={c.value ?? ""}
+                onChange={(e) =>
+                  onUpdateConfig({
+                    value: e.target.value === "" ? undefined : Math.max(Number(e.target.value) || 0, 0),
+                  })
+                }
+                className="bg-muted"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                {t("metaCapiCurrencyLabel")}
+              </label>
+              <Input
+                value={c.currency ?? "MXN"}
+                maxLength={3}
+                onChange={(e) =>
+                  onUpdateConfig({ currency: e.target.value.toUpperCase().replace(/[^A-Z]/g, "") })
+                }
+                className="bg-muted font-mono text-xs"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">{t("metaCapiHelp")}</p>
+          <NextNodeRow
+            value={c.next_node_key ?? ""}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onChange={(v) => onUpdateConfig({ next_node_key: v })}
+            label={t("advancesTo")}
+          />
+        </>
+      );
+    }
 
     case "handoff":
       return (

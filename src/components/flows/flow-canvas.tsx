@@ -756,6 +756,9 @@ const ADD_NODE_TYPES: NodeType[] = [
   'collect_input',
   'condition',
   'set_tag',
+  'wait',
+  'save_reply',
+  'meta_capi',
   'handoff',
   'end',
 ];

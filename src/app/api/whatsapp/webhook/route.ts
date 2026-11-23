@@ -21,6 +21,7 @@ import {
 import { readCappedBody } from '@/lib/whatsapp/webhook-body'
 import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { flujoEsDuenoDelMensaje } from '@/lib/flows/convivencia'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
@@ -32,7 +33,6 @@ import { transcribirNotaDeVozDeCuenta } from '@/lib/ai/transcribe'
 import { procesarComprobante } from '@/lib/ventas/comprobante'
 import { marcarPagaManana } from '@/lib/ventas/paga-manana'
 import { agendarRecordatorioPago } from '@/lib/ventas/paga-en'
-import { textoConExtra } from '@/lib/ventas/mensaje-extra'
 import { guardarReferenciaAnuncio, type ReferenciaAnuncio } from '@/lib/ventas/conversiones'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
@@ -922,28 +922,20 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
-  // Etapa 2 (Melissa autónoma): si el agente está encendido para esta
-  // cuenta, él lleva la conversación. Va ANTES de los flujos para que no
-  // contesten los dos: si el agente atiende, no se disparan flujos,
-  // automatizaciones ni la IA de texto.
+  // CONVIVENCIA FLOW BUILDER ↔ IA (22-nov-2026, regla de Julián).
   //
-  // El respondedor NUNCA lanza: si algo falla, devuelve `atendio: false` y
-  // el camino de siempre (el embudo) sigue como hasta hoy. Es la red de
-  // seguridad para que el agente no pueda dejar a nadie mudo.
-  const agente = await responderConAgente({
-    accountId,
-    userId: configOwnerUserId,
-    conversationId: conversation.id,
-    contactId: contactRecord.id,
-    metaMessageId: message.id,
-  })
-  if (agente.atendio) {
-    console.info(
-      `[webhook] el agente atendió este mensaje (${agente.motivo ?? "respuesta enviada"})`,
-    )
-    return
-  }
-
+  // El flujo visual va PRIMERO. Si el contacto tiene una corrida activa
+  // (aunque el mensaje no avance el flujo, p. ej. durante un Smart Delay o
+  // con fallback «ignore») o el mensaje dispara un flujo nuevo, el flujo es
+  // dueño del mensaje y aquí se corta: no contestan el agente, ni la IA
+  // (tampoco por «mensaje con extra» ni por «botón sin dueño»), ni las
+  // automatizaciones, ni el lector de comprobantes, ni «mañana pago».
+  // Solo se avisa al webhook público (message.received), que no contesta.
+  //
+  // Sin corrida activa (o con el flujo ya terminado), el mensaje sigue el
+  // camino de siempre: agente → automatizaciones → IA → comprobantes →
+  // «mañana pago».
+  // ============================================================
   const flowResult = await dispatchInboundToFlows({
     accountId,
     userId: configOwnerUserId,
@@ -964,7 +956,40 @@ async function processMessage(
           },
     isFirstInboundMessage,
   })
-  const flowConsumed = flowResult.consumed
+  if (flujoEsDuenoDelMensaje(flowResult)) {
+    console.info(
+      `[webhook] el flujo atendió este mensaje (${flowResult.outcome ?? 'consumido'}); la IA no contesta`,
+    )
+    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
+      conversation_id: conversation.id,
+      contact_id: contactRecord.id,
+      whatsapp_message_id: message.id,
+      content_type: contentType,
+      text: contentText,
+    })
+    return
+  }
+
+  // Etapa 2 (Melissa autónoma): si el agente está encendido para esta
+  // cuenta, él lleva la conversación (ya sin flujo de por medio): si
+  // atiende, no se disparan automatizaciones ni la IA de texto.
+  //
+  // El respondedor NUNCA lanza: si algo falla, devuelve `atendio: false` y
+  // el camino de siempre sigue como hasta hoy. Es la red de seguridad para
+  // que el agente no pueda dejar a nadie mudo.
+  const agente = await responderConAgente({
+    accountId,
+    userId: configOwnerUserId,
+    conversationId: conversation.id,
+    contactId: contactRecord.id,
+    metaMessageId: message.id,
+  })
+  if (agente.atendio) {
+    console.info(
+      `[webhook] el agente atendió este mensaje (${agente.motivo ?? "respuesta enviada"})`,
+    )
+    return
+  }
 
   // Fire any automations that react to this webhook event. All dispatches
   // run here (not earlier) so the contact, conversation, and inbound
@@ -979,20 +1004,18 @@ async function processMessage(
   // message, that suppresses the content-level triggers and AI reply
   // below so the customer doesn't get a second bot answering. Runs
   // BEFORE the trigger dispatch so the message that parks a run can
-  // never also resume it. Flows still win: only checked if no flow
-  // consumed the message. Never throws.
-  const automationConsumed = flowConsumed
-    ? false
-    : await resumeAwaitingReply({
-        accountId,
-        contactId: contactRecord.id,
-        context: {
-          message_text: inboundText,
-          conversation_id: conversation.id,
-          interactive_reply_id: interactiveReplyId ?? undefined,
-        },
-      })
-  const contentConsumed = flowConsumed || automationConsumed
+  // never also resume it. Flows still win: if a flow owned the message
+  // the webhook already returned above. Never throws.
+  const automationConsumed = await resumeAwaitingReply({
+    accountId,
+    contactId: contactRecord.id,
+    context: {
+      message_text: inboundText,
+      conversation_id: conversation.id,
+      interactive_reply_id: interactiveReplyId ?? undefined,
+    },
+  })
+  const contentConsumed = automationConsumed
 
   const automationTriggers: (
     | 'new_contact_created'
@@ -1091,21 +1114,12 @@ async function processMessage(
     !contentConsumed &&
     !!interactiveReplyId &&
     !(await botonDeAutomatizacion(accountId, interactiveReplyId))
-  // Texto que el embudo tomó pero que trae algo más (datos, enfermedades, preguntas): el
-  // embudo sigue Y la IA contesta esa parte (caso Graciela, 13-nov-2026).
-  // El flujo puede pedir que la IA NO se sume a lo que él ya contesta
-  // (`extra_para_ia: false` en su disparador). Es lo que evita que, al
-  // arrancar el embudo, la IA mande encima su propia respuesta.
-  const flujoAdmiteIaExtra =
-    (flowResult.flow?.trigger_config as { extra_para_ia?: boolean } | undefined)
-      ?.extra_para_ia !== false
-  const extraParaIa =
-    flowConsumed &&
-    flujoAdmiteIaExtra &&
-    !interactiveReplyId &&
-    textoConExtra(inboundText, flowResult.outcome === 'started')
+  // «Mensaje con extra» (caso Graciela, 13-nov-2026): ya NO pasa a la IA
+  // cuando un flujo tomó el mensaje — regla de convivencia del 22-nov-2026;
+  // el webhook corta arriba en cuanto el flujo es dueño.
   if (
-    ((!contentConsumed && (!interactiveReplyId || botonSinDueno)) || extraParaIa) &&
+    !contentConsumed &&
+    (!interactiveReplyId || botonSinDueno) &&
     textoParaIa.trim()
   ) {
     await dispatchInboundToAiReply({

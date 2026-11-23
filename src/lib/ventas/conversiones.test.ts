@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { valorDeCompra } from './conversiones'
+import { armarEventoMeta, valorDeCompra } from './conversiones'
 
 describe('valorDeCompra', () => {
   it('usa el monto que leyó el lector de comprobantes', () => {
@@ -25,5 +25,25 @@ describe('valorDeCompra', () => {
   })
   it('un monto leído vacío (ya usado) no cuenta', () => {
     expect(valorDeCompra('pagado', [], { monto_pagado: '' })).toBe(99)
+  })
+})
+
+describe('armarEventoMeta (nodo Meta CAPI del Flow Builder)', () => {
+  const base = { eventId: 'run-1-capi', wabaId: 'waba-1', ctwaClid: 'clid-1', ahora: new Date('2026-11-22T12:00:00Z') }
+
+  it('Compra con valor y moneda, ligada al clic del anuncio', () => {
+    expect(armarEventoMeta({ ...base, eventName: 'Purchase', value: 99, currency: 'MXN' })).toEqual({
+      event_name: 'Purchase',
+      event_time: Math.floor(base.ahora.getTime() / 1000),
+      event_id: 'run-1-capi',
+      action_source: 'business_messaging',
+      messaging_channel: 'whatsapp',
+      user_data: { whatsapp_business_account_id: 'waba-1', ctwa_clid: 'clid-1' },
+      custom_data: { currency: 'MXN', value: 99 },
+    })
+  })
+
+  it('Lead sin valor no manda value; la moneda por defecto es MXN', () => {
+    expect(armarEventoMeta({ ...base, eventName: 'Lead' }).custom_data).toEqual({ currency: 'MXN' })
   })
 })

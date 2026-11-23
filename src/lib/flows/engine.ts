@@ -94,6 +94,7 @@ async function ritmoHumano(
   }
 }
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
+import { enviarEventoMeta } from "@/lib/ventas/conversiones";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { checkRunTimeout, markRunTimedOut, type RunTimeoutCheck } from "./timeout";
@@ -115,8 +116,12 @@ import {
   type SetTagNodeConfig,
   type StartNodeConfig,
   type KeywordTriggerConfig,
+  type MetaCapiNodeConfig,
   AUTO_ADVANCING_NODE_TYPES,
   MAX_NODES_PER_ADVANCE,
+  VENTANA_SERVICIO_MS,
+  WAIT_INLINE_MAX_SEGUNDOS,
+  WAIT_MAX_SEGUNDOS,
 } from "./types";
 
 // ============================================================
@@ -314,7 +319,8 @@ export type ActiveRunClosure =
   | { kind: "timeout"; check: RunTimeoutCheck };
 
 export function closureForActiveRun(args: {
-  run: Pick<FlowRunRow, "current_node_key" | "last_advanced_at">;
+  run: Pick<FlowRunRow, "current_node_key" | "last_advanced_at"> &
+    Partial<Pick<FlowRunRow, "next_run_at">>;
   flow: Pick<FlowRow, "status" | "fallback_policy"> | null;
   nodeKeys: ReadonlySet<string> | { has(key: string): boolean };
   now: Date;
@@ -322,12 +328,17 @@ export function closureForActiveRun(args: {
   if (!args.flow || args.flow.status !== "active") {
     return { kind: "cancel", reason: "flow_not_active" };
   }
+  // Una corrida estacionada a propósito (Smart Delay o espera de
+  // respuesta) no se da por abandonada antes de que venza su temporizador.
+  const estacionada =
+    !!args.run.next_run_at &&
+    new Date(args.run.next_run_at).getTime() > args.now.getTime();
   const check = checkRunTimeout(
     args.run.last_advanced_at,
     args.flow.fallback_policy,
     args.now,
   );
-  if (check.timedOut) return { kind: "timeout", check };
+  if (check.timedOut && !estacionada) return { kind: "timeout", check };
   if (!args.run.current_node_key) {
     return { kind: "fail", reason: "active_run_missing_current_node" };
   }
@@ -898,18 +909,68 @@ async function advanceFromNodeKey(
       continue;
     }
     if (node.node_type === "wait") {
-      // Espera real antes del mensaje siguiente. Se hace dentro del
-      // mismo avance, así que el tope son 5 minutos: para esperas más
-      // largas (horas, días) hace falta un programador, no este nodo.
+      // Smart Delay. Hasta 15 s se espera dentro del mismo avance; más
+      // que eso, la corrida se estaciona con `next_run_at` y el cron de
+      // cada minuto la retoma (resumeDueRuns). Tope: 23 h.
       const cfg = node.config as unknown as WaitNodeConfig;
-      const segundos = Math.min(Math.max(Number(cfg.segundos) || 0, 0), 300);
+      const segundos = Math.min(
+        Math.max(Number(cfg.segundos) || 0, 0),
+        WAIT_MAX_SEGUNDOS,
+      );
       await logEvent(db, run.id, "node_entered", node.node_key, {
         node_type: "wait",
         seconds: segundos,
       });
+      if (segundos > WAIT_INLINE_MAX_SEGUNDOS) {
+        const estacionada = await advanceCurrentNodeKey(
+          db,
+          run.id,
+          run.current_node_key,
+          node.node_key,
+          {
+            next_run_at: new Date(Date.now() + segundos * 1000).toISOString(),
+            resume_reason: "delay",
+          },
+        );
+        if (!estacionada) {
+          await logEvent(db, run.id, "error", node.node_key, {
+            reason: "lost_race_during_advance",
+          });
+        }
+        return { outcome: "advanced" };
+      }
       if (segundos > 0) {
         await new Promise((resolve) => setTimeout(resolve, segundos * 1000));
       }
+      currentKey = cfg.next_node_key;
+      continue;
+    }
+    if (node.node_type === "meta_capi") {
+      // Evento de Meta CAPI ligado al clic del anuncio. Nunca frena el
+      // flujo: si no hay anuncio o Meta lo rechaza, se anota y sigue.
+      const cfg = node.config as unknown as MetaCapiNodeConfig;
+      const resultado = await enviarEventoMeta({
+        accountId: run.account_id,
+        contactId: run.contact_id!,
+        eventName: cfg.event_name,
+        // Un evento por nodo y corrida: Meta deduplica con este id.
+        eventId: `${run.id}-${node.node_key}`,
+        value: cfg.value,
+        currency: cfg.currency,
+      });
+      await logEvent(
+        db,
+        run.id,
+        resultado.enviado ? "node_entered" : "error",
+        node.node_key,
+        resultado.enviado
+          ? { node_type: "meta_capi", event_name: cfg.event_name, enviado: true }
+          : {
+              node_type: "meta_capi",
+              event_name: cfg.event_name,
+              reason: `meta_capi_${resultado.motivo}`,
+            },
+      );
       currentKey = cfg.next_node_key;
       continue;
     }
@@ -941,11 +1002,19 @@ async function advanceFromNodeKey(
           return { outcome: "completed" };
         }
       }
+      // El cron la retoma por «no contesta» cuando vence (tope 23 h).
+      const esperaMin = Math.min(Number(cfg.espera_minutos) || 0, 23 * 60);
       const avanzado = await advanceCurrentNodeKey(
         db,
         run.id,
         run.current_node_key,
         node.node_key,
+        esperaMin > 0
+          ? {
+              next_run_at: new Date(Date.now() + esperaMin * 60_000).toISOString(),
+              resume_reason: "reply_timeout",
+            }
+          : {},
       );
       if (!avanzado) {
         await logEvent(db, run.id, "error", node.node_key, {
@@ -1148,12 +1217,15 @@ async function advanceCurrentNodeKey(
   runId: string,
   expectedOldKey: string | null,
   newKey: string,
+  /** Campos extra, p. ej. `next_run_at` para estacionar la corrida. */
+  extra: Record<string, unknown> = {},
 ): Promise<boolean> {
   // PostgREST: when expectedOldKey is null we can't `.eq` (would match
   // any row); use `.is('current_node_key', null)` instead.
   let q = db
     .from("flow_runs")
     .update({
+      ...extra,
       current_node_key: newKey,
       last_advanced_at: new Date().toISOString(),
     })
@@ -1184,6 +1256,9 @@ async function claimReplyTransition(
   const { data, error } = await db
     .from("flow_runs")
     .update({
+      // Al avanzar se suelta cualquier temporizador del nodo anterior.
+      next_run_at: null,
+      resume_reason: null,
       ...extra,
       current_node_key: nextNodeKey,
       transition_seq: nextSeq,
@@ -1264,8 +1339,11 @@ export async function resumeSaveReplyTimeout(
   const espera = Math.min(Number(cfg.espera_minutos) || 0, 23 * 60);
   const minutos =
     (now.getTime() - new Date(run.last_advanced_at).getTime()) / 60_000;
-  if (!(espera > 0) || minutos < espera) return false;
+  // 30 s de tolerancia: next_run_at se calcula unos milisegundos antes
+  // que last_advanced_at al estacionar la corrida.
+  if (!(espera > 0) || minutos < espera - 0.5) return false;
   if (!cfg.no_contesto_next) return false;
+  if (await cerrarSiFueraDeVentana(db, run, nodo.node_key, now)) return true;
   if (!(await claimReplyTransition(db, run, cfg.no_contesto_next))) return false;
 
   await logEvent(db, run.id, "node_entered", nodo.node_key, {
@@ -1273,6 +1351,137 @@ export async function resumeSaveReplyTimeout(
     sin_respuesta: true,
   });
   await advanceFromNodeKey(db, run, cfg.no_contesto_next, nodes);
+  return true;
+}
+
+/**
+ * Ventana de 24 h: si el último mensaje de la clienta ya tiene más de
+ * 23,5 h, la corrida termina sin mandar nada (un mensaje libre fuera de
+ * la ventana es un rechazo de Meta y una señal de spam). Devuelve true
+ * si la cerró.
+ */
+async function cerrarSiFueraDeVentana(
+  db: AdminClient,
+  run: FlowRunRow,
+  nodeKey: string,
+  now: Date,
+): Promise<boolean> {
+  if (!run.conversation_id) return false;
+  const { data } = await db
+    .from("messages")
+    .select("created_at")
+    .eq("conversation_id", run.conversation_id)
+    .eq("sender_type", "customer")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ultima = (data as { created_at?: string } | null)?.created_at;
+  if (ultima && now.getTime() - new Date(ultima).getTime() <= VENTANA_SERVICIO_MS) {
+    return false;
+  }
+  await logEvent(db, run.id, "timeout", nodeKey, {
+    reason: "fuera_de_ventana_24h",
+  });
+  await endRun(db, run.id, "cancelled", "fuera_de_ventana_24h");
+  return true;
+}
+
+/**
+ * Cron de cada minuto: retoma las corridas estacionadas cuyo
+ * `next_run_at` ya venció.
+ *   - 'delay'         → sigue después del Smart Delay.
+ *   - 'reply_timeout' → «guardar respuesta» sin contestación.
+ * Seguro ante dos crons a la vez: cada corrida se reclama con
+ * `transition_seq` y solo uno gana. Devuelve cuántas retomó.
+ */
+export async function resumeDueRuns(
+  db: AdminClient,
+  now: Date = new Date(),
+  limite = 200,
+): Promise<number> {
+  const { data, error } = await db
+    .from("flow_runs")
+    .select("*")
+    .eq("status", "active")
+    .lte("next_run_at", now.toISOString())
+    .order("next_run_at", { ascending: true })
+    .limit(limite);
+  if (error) {
+    console.error("[flows] resumeDueRuns:", error.message);
+    return 0;
+  }
+  let retomadas = 0;
+  for (const run of (data ?? []) as FlowRunRow[]) {
+    try {
+      if (run.resume_reason === "reply_timeout") {
+        if (await resumeSaveReplyTimeout(db, run.id, now)) {
+          retomadas += 1;
+        } else {
+          // Ya no aplica (el nodo cambió o alguien se adelantó): se suelta
+          // el temporizador para no volver a leerla cada minuto.
+          await db
+            .from("flow_runs")
+            .update({ next_run_at: null, resume_reason: null })
+            .eq("id", run.id)
+            .eq("status", "active")
+            .eq("transition_seq", run.transition_seq ?? 0);
+        }
+        continue;
+      }
+      if (await resumeDelay(db, run, now)) retomadas += 1;
+    } catch (err) {
+      console.error(
+        "[flows] resumeDueRuns falló en una corrida:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  return retomadas;
+}
+
+async function resumeDelay(
+  db: AdminClient,
+  run: FlowRunRow,
+  now: Date,
+): Promise<boolean> {
+  if (!run.current_node_key) return false;
+  const [flow, nodes] = await Promise.all([
+    loadFlow(db, run.flow_id),
+    loadAllNodes(db, run.flow_id),
+  ]);
+  const nodo = nodes.get(run.current_node_key);
+  if (!flow || flow.status !== "active" || !nodo || nodo.node_type !== "wait") {
+    // El flujo se pausó o se editó mientras esperaba: se cierra limpio.
+    await endRun(db, run.id, "cancelled", "delay_sin_flujo_activo");
+    return false;
+  }
+  const cfg = nodo.config as unknown as WaitNodeConfig;
+  // Reclamo atómico: suelta el temporizador solo si nadie se adelantó.
+  const nextSeq = (run.transition_seq ?? 0) + 1;
+  const { data: reclamada } = await db
+    .from("flow_runs")
+    .update({
+      next_run_at: null,
+      resume_reason: null,
+      transition_seq: nextSeq,
+      last_advanced_at: now.toISOString(),
+    })
+    .eq("id", run.id)
+    .eq("status", "active")
+    .eq("transition_seq", run.transition_seq ?? 0)
+    .select("id");
+  if (!Array.isArray(reclamada) || reclamada.length !== 1) return false;
+  run.transition_seq = nextSeq;
+  if (await cerrarSiFueraDeVentana(db, run, nodo.node_key, now)) return true;
+  await logEvent(db, run.id, "node_entered", nodo.node_key, {
+    node_type: "wait",
+    delay_vencido: true,
+  });
+  if (!cfg.next_node_key) {
+    await endRun(db, run.id, "failed", "missing_next_node");
+    return true;
+  }
+  await advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
   return true;
 }
 
@@ -1380,6 +1589,14 @@ async function handleReplyForActiveRun(
   });
 
   const currentNode = nodes.get(run.current_node_key!)!;
+
+  // Smart Delay en curso: el flujo sigue siendo dueño de la
+  // conversación. El mensaje queda registrado, no cuenta como respuesta
+  // equivocada y nadie más contesta (ni la IA): la corrida sigue cuando
+  // venza su espera.
+  if (currentNode.node_type === "wait") {
+    return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+  }
 
   // Two ways a reply can advance:
   //   1. Interactive button/list tap on a send_buttons/send_list node.

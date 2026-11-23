@@ -8,6 +8,11 @@ const h = vi.hoisted(() => ({
   dispatchInboundToAiReply: vi.fn(),
   dispatchWebhookEvent: vi.fn(),
   applyMessageStatus: vi.fn(),
+  responderConAgente: vi.fn(),
+  marcarPagaManana: vi.fn(),
+  agendarRecordatorioPago: vi.fn(),
+  procesarComprobante: vi.fn(),
+  tienePagoPendiente: vi.fn(),
   state: {
     // Result the message upsert's .select() resolves to. A genuine insert
     // returns the row; a replayed delivery conflicts and returns [].
@@ -276,6 +281,22 @@ vi.mock('@/lib/webhooks/deliver', () => ({
 vi.mock('@/lib/whatsapp/message-status-sync', () => ({
   applyMessageStatus: h.applyMessageStatus,
 }))
+// Convivencia Flow Builder ↔ IA: se espían el agente, «mañana pago», «pago
+// en X horas» y el lector de comprobantes para comprobar que no corren
+// mientras un flujo es dueño del mensaje.
+vi.mock('@/lib/agente/responder', () => ({
+  responderConAgente: h.responderConAgente,
+}))
+vi.mock('@/lib/ventas/paga-manana', () => ({
+  marcarPagaManana: h.marcarPagaManana,
+}))
+vi.mock('@/lib/ventas/paga-en', () => ({
+  agendarRecordatorioPago: h.agendarRecordatorioPago,
+}))
+vi.mock('@/lib/ventas/comprobante', () => ({
+  procesarComprobante: h.procesarComprobante,
+  tienePagoPendiente: h.tienePagoPendiente,
+}))
 
 import { POST } from './route'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
@@ -400,6 +421,11 @@ beforeEach(() => {
   h.dispatchInboundToAiReply.mockResolvedValue(undefined)
   h.dispatchWebhookEvent.mockResolvedValue(undefined)
   h.applyMessageStatus.mockResolvedValue([])
+  h.responderConAgente.mockResolvedValue({ atendio: false })
+  h.marcarPagaManana.mockResolvedValue(undefined)
+  h.agendarRecordatorioPago.mockResolvedValue(undefined)
+  h.procesarComprobante.mockResolvedValue(undefined)
+  h.tienePagoPendiente.mockResolvedValue(false)
   h.runAutomationsForTrigger.mockImplementation(() => {
     h.state.automationStarted++
     return new Promise<void>((resolve) => {
@@ -1171,5 +1197,151 @@ describe('inbound webhook: first_inbound_message fires once', () => {
     h.state.messageUpsertResult = []
     await runWebhook()
     expect(h.state.firstInboundClaims).toBe(0)
+  })
+})
+
+describe('convivencia Flow Builder ↔ IA (22-nov-2026)', () => {
+  // Texto que antes disparaba `extraParaIa` (datos de salud + pregunta) y
+  // además «mañana pago».
+  const TEXTO_CON_EXTRA = {
+    ...TEXT_MESSAGE,
+    id: 'wamid.EXTRA1',
+    text: {
+      body: '¡Hola! Quiero mi dosis de chía, tengo 58 años, peso 95 y diabetes ¿me sirve? mañana pago',
+    },
+  }
+  const TOQUE_BOTON = {
+    id: 'wamid.BTN-VIEJO',
+    from: '15551230000',
+    timestamp: '1700000000',
+    type: 'button',
+    button: { text: 'Más de 20 kg', payload: 'boton_viejo' },
+  }
+  const FOTO = {
+    id: 'wamid.FOTO1',
+    from: '15551230000',
+    timestamp: '1700000000',
+    type: 'image',
+    image: { id: '1234567890123456', mime_type: 'image/jpeg' },
+  }
+  const triggers = () =>
+    h.runAutomationsForTrigger.mock.calls.map(
+      (call) => (call[0] as { triggerType: string }).triggerType,
+    )
+
+  function nadieMasContesto() {
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled()
+    expect(h.responderConAgente).not.toHaveBeenCalled()
+    expect(h.resumeAwaitingReply).not.toHaveBeenCalled()
+    expect(triggers()).toEqual([])
+    expect(h.marcarPagaManana).not.toHaveBeenCalled()
+    expect(h.agendarRecordatorioPago).not.toHaveBeenCalled()
+    expect(h.procesarComprobante).not.toHaveBeenCalled()
+  }
+
+  it('un flujo que arranca por palabra clave: ni extraParaIa ni «mañana pago»', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'started',
+      flow: { trigger_config: { keywords: ['chía'] } },
+    })
+    await runWebhook(TEXTO_CON_EXTRA)
+    nadieMasContesto()
+    // El webhook público sí se entera (no contesta a nadie).
+    expect(h.dispatchWebhookEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc-1',
+      'message.received',
+      expect.objectContaining({ whatsapp_message_id: 'wamid.EXTRA1' }),
+    )
+  })
+
+  it('corrida activa que avanza con el texto: la IA no contesta', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'advanced',
+    })
+    await runWebhook(TEXTO_CON_EXTRA)
+    nadieMasContesto()
+  })
+
+  it('corrida activa con fallback «ignore» (no consumió): igual es dueña', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({
+      consumed: false,
+      flow_run_id: 'run-1',
+      outcome: 'no_match',
+    })
+    await runWebhook(TEXTO_CON_EXTRA)
+    nadieMasContesto()
+  })
+
+  it('durante un Smart Delay el mensaje se queda en el flujo', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'waiting',
+    })
+    await runWebhook(TEXTO_CON_EXTRA)
+    nadieMasContesto()
+  })
+
+  it('botón sin dueño con corrida activa: ni la IA ni automatizaciones', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({
+      consumed: false,
+      flow_run_id: 'run-1',
+      outcome: 'no_match',
+    })
+    await runWebhook(TOQUE_BOTON)
+    nadieMasContesto()
+  })
+
+  it('foto con corrida activa: no entra el lector de comprobantes', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({
+      consumed: true,
+      flow_run_id: 'run-1',
+      outcome: 'advanced',
+    })
+    await runWebhook(FOTO)
+    nadieMasContesto()
+  })
+
+  it('el flujo se evalúa ANTES que el agente', async () => {
+    const orden: string[] = []
+    h.dispatchInboundToFlows.mockImplementation(async () => {
+      orden.push('flujo')
+      return { consumed: false, outcome: 'no_match' }
+    })
+    h.responderConAgente.mockImplementation(async () => {
+      orden.push('agente')
+      return { atendio: false }
+    })
+    await runWebhook(TEXTO_CON_EXTRA)
+    expect(orden).toEqual(['flujo', 'agente'])
+  })
+
+  it('sin flujo activo: pasan el agente, la IA y «mañana pago» como siempre', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({ consumed: false, outcome: 'no_match' })
+    await runWebhook(TEXTO_CON_EXTRA)
+    expect(h.responderConAgente).toHaveBeenCalledTimes(1)
+    expect(h.dispatchInboundToAiReply).toHaveBeenCalledTimes(1)
+    expect(h.marcarPagaManana).toHaveBeenCalledTimes(1)
+    expect(h.agendarRecordatorioPago).toHaveBeenCalledTimes(1)
+    expect(triggers()).toEqual(
+      expect.arrayContaining(['new_message_received', 'keyword_match']),
+    )
+  })
+
+  it('sin flujo activo: la foto sí llega al lector de comprobantes', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({ consumed: false, outcome: 'no_match' })
+    await runWebhook(FOTO)
+    expect(h.procesarComprobante).toHaveBeenCalledTimes(1)
+  })
+
+  it('sin flujo activo: el botón sigue llegando a las automatizaciones', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({ consumed: false, outcome: 'no_match' })
+    await runWebhook(TOQUE_BOTON)
+    expect(triggers()).toContain('interactive_reply')
   })
 })

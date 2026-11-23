@@ -309,6 +309,8 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
     case "wait":
       // 15 s por defecto: tiempo de lectura humano sin frenar el embudo.
       return { segundos: 15, next_node_key: "" };
+    case "meta_capi":
+      return { event_name: "Purchase", value: 99, currency: "MXN", next_node_key: "" };
     case "save_reply":
       return {
         prompt_text: "",

@@ -77,40 +77,61 @@ export function valorDeCompra(etiqueta: string, tags: string[], valores: Record<
     + (tags.includes('quiere-recetario') ? 49 : 0) + (tags.includes('quiere-ligas') ? 49 : 0)   // order bumps de Glúteos
 }
 
-export async function enviarCompraMeta(args: { accountId: string; contactId: string; etiqueta: string }): Promise<void> {
+/** Arma el evento de Meta CAPI (business_messaging). Exportado para pruebas. */
+export function armarEventoMeta(args: {
+  eventName: string; eventId: string; wabaId: string; ctwaClid: string
+  value?: number; currency?: string; ahora?: Date
+}) {
+  const valor = Number(args.value)
+  return {
+    event_name: args.eventName,
+    event_time: Math.floor((args.ahora ?? new Date()).getTime() / 1000),
+    event_id: args.eventId,
+    action_source: 'business_messaging',
+    messaging_channel: 'whatsapp',
+    user_data: { whatsapp_business_account_id: args.wabaId, ctwa_clid: args.ctwaClid },
+    custom_data: Number.isFinite(valor) && valor > 0
+      ? { currency: args.currency || 'MXN', value: valor }
+      : { currency: args.currency || 'MXN' },
+  }
+}
+
+export type ResultadoEventoMeta =
+  | { enviado: true }
+  | { enviado: false; motivo: 'sin_dataset' | 'sin_anuncio' | 'sin_waba' | 'rechazado' | 'error'; detalle?: string }
+
+/**
+ * Manda un evento a Meta ligado al clic del anuncio de la clienta. Deja una
+ * nota «📊» en el contacto. Nunca lanza: devuelve qué pasó.
+ */
+export async function enviarEventoMeta(args: {
+  accountId: string; contactId: string; eventName: string; eventId: string
+  value?: number; currency?: string
+  /** Valores ya leídos (para no consultarlos dos veces). */
+  valores?: Record<string, string>
+}): Promise<ResultadoEventoMeta> {
   const db = supabaseAdmin()
   const nota = async (texto: string) => {
     const { data: c } = await db.from('contacts').select('user_id').eq('id', args.contactId).maybeSingle()
     if (c) await db.from('contact_notes').insert({ contact_id: args.contactId, user_id: c.user_id, account_id: args.accountId, note_text: texto })
   }
+  const monto = Number(args.value) > 0 ? ` de $${args.value} ${args.currency || 'MXN'}` : ''
   try {
     const dataset = process.env.META_DATASET_ID
-    if (!dataset) return
-    const valores = await leerValores(args.accountId, args.contactId)
-    const { data: filas } = await db.from('contact_tags').select('tags(name)').eq('contact_id', args.contactId)
-    const tags = (filas ?? []).map((f) => (f as unknown as { tags: { name: string } | null }).tags?.name).filter(Boolean) as string[]
-    const valor = valorDeCompra(args.etiqueta, tags, valores)
-    if (valores.monto_pagado) {   // se usa una sola vez: la siguiente venta se calcula de nuevo
-      const { data: c } = await db.from('contacts').select('user_id').eq('id', args.contactId).maybeSingle()
-      if (c) await guardarValor(args.accountId, c.user_id, args.contactId, 'monto_pagado', '')
-    }
+    if (!dataset) return { enviado: false, motivo: 'sin_dataset' }
+    const valores = args.valores ?? await leerValores(args.accountId, args.contactId)
     const clid = valores.ctwa_clid
     if (!clid) {
-      await nota(`📊 Venta de $${valor} sin anuncio de origen (llegó orgánica): no se envió a Meta.`)
-      return
+      await nota(`📊 ${args.eventName}${monto} sin anuncio de origen (llegó orgánica): no se envió a Meta.`)
+      return { enviado: false, motivo: 'sin_anuncio' }
     }
     const { data: cfg } = await db.from('whatsapp_config').select('waba_id, access_token').eq('account_id', args.accountId).maybeSingle()
-    if (!cfg?.waba_id) return
+    if (!cfg?.waba_id) return { enviado: false, motivo: 'sin_waba' }
     const token = process.env.META_EVENTS_TOKEN || decrypt(cfg.access_token)
-    const evento = {
-      event_name: 'Purchase',
-      event_time: Math.floor(Date.now() / 1000),
-      event_id: `${args.contactId}-${args.etiqueta}-${new Date().toISOString().slice(0, 10)}`,
-      action_source: 'business_messaging',
-      messaging_channel: 'whatsapp',
-      user_data: { whatsapp_business_account_id: cfg.waba_id, ctwa_clid: clid },
-      custom_data: { currency: 'MXN', value: valor },
-    }
+    const evento = armarEventoMeta({
+      eventName: args.eventName, eventId: args.eventId, wabaId: cfg.waba_id, ctwaClid: clid,
+      value: args.value, currency: args.currency,
+    })
     const res = await fetch(`${GRAPH}/${dataset}/events`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -119,9 +140,40 @@ export async function enviarCompraMeta(args: { accountId: string; contactId: str
     })
     const cuerpo = await res.text()
     await nota(res.ok
-      ? `📊 Compra de $${valor} MXN enviada a Meta (anuncio ${valores.anuncio_id ?? '?'}).`
-      : `📊 Meta rechazó la compra de $${valor}: ${res.status} ${cuerpo.slice(0, 200)}`)
-    if (!res.ok) console.warn('[conversiones] Meta rechazó el evento:', res.status, cuerpo.slice(0, 300))
+      ? `📊 ${args.eventName}${monto} enviado a Meta (anuncio ${valores.anuncio_id ?? '?'}).`
+      : `📊 Meta rechazó ${args.eventName}${monto}: ${res.status} ${cuerpo.slice(0, 200)}`)
+    if (!res.ok) {
+      console.warn('[conversiones] Meta rechazó el evento:', res.status, cuerpo.slice(0, 300))
+      return { enviado: false, motivo: 'rechazado', detalle: `${res.status}` }
+    }
+    return { enviado: true }
+  } catch (err) {
+    console.error('[conversiones] falló:', err instanceof Error ? err.message : err)
+    return { enviado: false, motivo: 'error', detalle: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function enviarCompraMeta(args: { accountId: string; contactId: string; etiqueta: string }): Promise<void> {
+  const db = supabaseAdmin()
+  try {
+    if (!process.env.META_DATASET_ID) return
+    const valores = await leerValores(args.accountId, args.contactId)
+    const { data: filas } = await db.from('contact_tags').select('tags(name)').eq('contact_id', args.contactId)
+    const tags = (filas ?? []).map((f) => (f as unknown as { tags: { name: string } | null }).tags?.name).filter(Boolean) as string[]
+    const valor = valorDeCompra(args.etiqueta, tags, valores)
+    if (valores.monto_pagado) {   // se usa una sola vez: la siguiente venta se calcula de nuevo
+      const { data: c } = await db.from('contacts').select('user_id').eq('id', args.contactId).maybeSingle()
+      if (c) await guardarValor(args.accountId, c.user_id, args.contactId, 'monto_pagado', '')
+    }
+    await enviarEventoMeta({
+      accountId: args.accountId,
+      contactId: args.contactId,
+      eventName: 'Purchase',
+      eventId: `${args.contactId}-${args.etiqueta}-${new Date().toISOString().slice(0, 10)}`,
+      value: valor,
+      currency: 'MXN',
+      valores,
+    })
   } catch (err) {
     console.error('[conversiones] falló:', err instanceof Error ? err.message : err)
   }

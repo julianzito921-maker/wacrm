@@ -9,7 +9,7 @@ import {
 } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
-import { resumeSaveReplyTimeout } from '@/lib/flows/engine'
+import { resumeDueRuns, resumeSaveReplyTimeout } from '@/lib/flows/engine'
 import { procesarLote } from '@/lib/messaging/cola'
 import { evaluarAlertas } from '@/lib/messaging/riesgo'
 import { revisarCalidadDeNumeros } from '@/lib/messaging/calidad'
@@ -102,7 +102,9 @@ export async function GET(request: Request) {
   //    Resumen de lo que falló en el embudo desde el último aviso.
   const aviso = await avisarProblemasDelEmbudo()
 
-  // ---- 2. Flujos: «guardar respuesta» sin contestación --------------
+  // ---- 2. Flujos: temporizadores vencidos (Smart Delay y «guardar
+  //    respuesta», migración 077) y, para corridas viejas, el escaneo de siempre.
+  const retomadas = await resumeDueRuns(admin, ahora)
   let rescatados = 0
   {
     const corte = ahora.getTime() - 60_000
@@ -110,6 +112,7 @@ export async function GET(request: Request) {
       .from('flow_runs')
       .select('id, flow_id, current_node_key, last_advanced_at')
       .eq('status', 'active')
+      .is('next_run_at', null)
       .limit(TIMEOUT_SWEEP_PAGE_SIZE)
     const activas = (activasCrudas ?? []).filter(
       (r) => r.current_node_key && new Date(r.last_advanced_at ?? 0).getTime() <= corte,
@@ -200,7 +203,7 @@ export async function GET(request: Request) {
     alertas,
     calidad,
     aviso: aviso ? { problemas: aviso } : null,
-    flujos: { rescatados, swept },
+    flujos: { rescatados, retomadas, swept },
     automatizaciones: { processed, expired, requeued },
   })
 }

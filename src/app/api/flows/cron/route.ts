@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
 
-import { resumeSaveReplyTimeout } from '@/lib/flows/engine'
+import { resumeDueRuns, resumeSaveReplyTimeout } from '@/lib/flows/engine'
 
 const TIMEOUT_SWEEP_PAGE_SIZE = 500
 const TIMEOUT_SWEEP_MAX_PAGES = 20
@@ -59,6 +59,11 @@ export async function GET(request: Request) {
   const admin = supabaseAdmin()
   const now = new Date()
 
+  // 0) Corridas estacionadas cuyo temporizador ya venció (Smart Delay y
+  //    «guardar respuesta» sin contestación, migración 077). Va antes del
+  //    barrido de abandonadas para que una espera larga no cuente como abandono.
+  const retomadas = await resumeDueRuns(admin, now)
+
   // 1) «Guardar respuesta» sin contestación: si el flujo lleva
   //    esperando más de lo que pide el nodo, se va por «no contesta».
   let rescatados = 0
@@ -68,6 +73,8 @@ export async function GET(request: Request) {
       .from('flow_runs')
       .select('id, flow_id, current_node_key, last_advanced_at')
       .eq('status', 'active')
+      // Solo las de antes de la 077 (sin temporizador): las demás las retoma resumeDueRuns.
+      .is('next_run_at', null)
       .limit(TIMEOUT_SWEEP_PAGE_SIZE)
     // El corte se aplica aquí (no con `.lt`) para no depender de filtros
     // de fecha en la consulta: son pocas filas y así el barrido también
@@ -128,5 +135,9 @@ export async function GET(request: Request) {
 
   // `rescatados` solo aparece cuando hubo alguno: mantiene la forma de
   // la respuesta para quien ya la consumía.
-  return NextResponse.json(rescatados > 0 ? { swept, rescatados } : { swept })
+  return NextResponse.json({
+    swept,
+    ...(rescatados > 0 ? { rescatados } : {}),
+    ...(retomadas > 0 ? { retomadas } : {}),
+  })
 }

@@ -27,6 +27,7 @@ import {
   Paperclip,
   PlayCircle,
   Tag,
+  Target,
   Timer,
   UserPlus,
   Workflow,
@@ -54,6 +55,7 @@ export type NodeType =
   | 'condition'
   | 'set_tag'
   | 'handoff'
+  | 'meta_capi'
   | 'end';
 
 export interface BuilderNode {
@@ -161,6 +163,12 @@ export const NODE_META: Record<
     color: 'text-pink-400',
     category: 'logic',
   },
+  meta_capi: {
+    slugSeed: 'Meta CAPI',
+    icon: Target,
+    color: 'text-blue-400',
+    category: 'logic',
+  },
   handoff: {
     slugSeed: 'Handoff to agent',
     icon: UserPlus,
@@ -214,6 +222,7 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   condition: { l: 0.72, c: 0.15, h: 65 }, // amber — a fork in the road
   set_tag: { l: 0.65, c: 0.15, h: 350 }, // pink
   handoff: { l: 0.65, c: 0.17, h: 16 }, // rose — hands off
+  meta_capi: { l: 0.6, c: 0.16, h: 240 }, // azul Meta — evento de conversión
   end: { l: 0.55, c: 0.01, h: 260 }, // neutral grey — terminal
 };
 
@@ -389,9 +398,22 @@ export function summarizeNode(
     }
     case 'wait': {
       const segundos = typeof cfg.segundos === 'number' ? cfg.segundos : 0;
-      return segundos > 0
-        ? t ? t('seconds', { count: segundos }) : `${segundos} s`
-        : null;
+      if (!(segundos > 0)) return null;
+      if (segundos >= 3600) {
+        const h = Math.floor(segundos / 3600);
+        const m = Math.round((segundos % 3600) / 60);
+        return m > 0 ? `${h} h ${m} min` : `${h} h`;
+      }
+      if (segundos >= 60 && segundos % 60 === 0) {
+        return t ? t('minutes', { count: segundos / 60 }) : `${segundos / 60} min`;
+      }
+      return t ? t('seconds', { count: segundos }) : `${segundos} s`;
+    }
+    case 'meta_capi': {
+      const ev = typeof cfg.event_name === 'string' ? cfg.event_name : '';
+      const valor = typeof cfg.value === 'number' && cfg.value > 0 ? cfg.value : 0;
+      const moneda = typeof cfg.currency === 'string' && cfg.currency ? cfg.currency : 'MXN';
+      return ev ? (valor ? `${ev} · $${valor} ${moneda}` : ev) : null;
     }
     case 'save_reply': {
       const varKey = typeof cfg.var_key === 'string' ? cfg.var_key : '';
