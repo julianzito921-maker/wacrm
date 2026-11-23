@@ -35,6 +35,7 @@ import { procesarComprobante } from '@/lib/ventas/comprobante'
 import { marcarPagaManana } from '@/lib/ventas/paga-manana'
 import { agendarRecordatorioPago } from '@/lib/ventas/paga-en'
 import { guardarReferenciaAnuncio, type ReferenciaAnuncio } from '@/lib/ventas/conversiones'
+import { reclamarCodigoDeEnlace } from '@/lib/tracking/attribution'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   applyBroadcastRecipientStatus,
@@ -232,10 +233,13 @@ export async function GET(request: Request) {
       )
     }
 
-    // Fetch all whatsapp configs to check verify tokens
-    const { data: configs, error: configError } = await supabaseAdmin()
-      .from('whatsapp_config')
-      .select('id, verify_token')
+    // Fetch legacy configs and new connections: both may hold the
+    // verify token used when registering the webhook.
+    const [{ data: configs, error: configError }, { data: conexiones }] =
+      await Promise.all([
+        supabaseAdmin().from('whatsapp_config').select('id, verify_token'),
+        supabaseAdmin().from('whatsapp_connections').select('id, verify_token'),
+      ])
 
     if (configError || !configs) {
       console.error('Error fetching configs for verification:', configError)
@@ -286,6 +290,20 @@ export async function GET(request: Request) {
       })
     }
 
+    for (const conn of conexiones ?? []) {
+      if (!conn.verify_token) continue
+      try {
+        if (verifyTokenMatches(decrypt(conn.verify_token as string), verifyToken)) {
+          return new Response(challenge, {
+            status: 200,
+            headers: { 'Content-Type': 'text/plain' },
+          })
+        }
+      } catch {
+        // Fila con token ilegible: se ignora.
+      }
+    }
+
     return NextResponse.json(
       { error: 'Verification token mismatch' },
       { status: 403 }
@@ -310,19 +328,49 @@ export async function POST(request: Request) {
   }
   const signature = request.headers.get('x-hub-signature-256')
 
-  if (!verifyMetaWebhookSignature(rawBody, signature)) {
-    // 401 (not 200) — we want Meta's delivery dashboard to show failures
-    // loudly if a misconfiguration causes signatures to stop matching,
-    // rather than silently eating events.
-    console.warn('[webhook] rejected request with invalid signature')
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
-  }
-
+  // Parse first only to resolve which connection (and therefore which
+  // app_secret) signed the payload. The HMAC still runs over the exact
+  // raw bytes before anything is processed.
   let body: { entry?: WhatsAppWebhookEntry[] }
   try {
     body = JSON.parse(rawBody)
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  const phoneNumberIdFirma =
+    body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id
+  let secretoConexion: string | null = null
+  if (phoneNumberIdFirma) {
+    const { data: conexion } = await supabaseAdmin()
+      .from('whatsapp_connections')
+      .select('app_secret')
+      .eq('phone_number_id', phoneNumberIdFirma)
+      .maybeSingle()
+    if (conexion?.app_secret) {
+      try {
+        secretoConexion = decrypt(conexion.app_secret as string)
+      } catch (err) {
+        console.warn(
+          '[webhook] app_secret de la conexión ilegible:',
+          err instanceof Error ? err.message : err,
+        )
+      }
+    }
+  }
+
+  if (
+    !verifyMetaWebhookSignature(
+      rawBody,
+      signature,
+      secretoConexion ? [secretoConexion] : [],
+    )
+  ) {
+    // 401 (not 200) — we want Meta's delivery dashboard to show failures
+    // loudly if a misconfiguration causes signatures to stop matching,
+    // rather than silently eating events.
+    console.warn('[webhook] rejected request with invalid signature')
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
   // Process AFTER the response so we ack Meta within their ~20s timeout
@@ -354,6 +402,13 @@ async function resolveAccountForPhoneNumber(
   phoneNumberId: string | undefined
 ): Promise<string | null> {
   if (!phoneNumberId) return null
+  const { data: conexion } = await supabaseAdmin()
+    .from('whatsapp_connections')
+    .select('account_id')
+    .eq('phone_number_id', phoneNumberId)
+    .maybeSingle()
+  if (conexion?.account_id) return conexion.account_id as string
+
   const { data, error } = await supabaseAdmin()
     .from('whatsapp_config')
     .select('account_id')
@@ -419,44 +474,70 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const phoneNumberId = value.metadata.phone_number_id
 
-      // Find user's config by phone_number_id. `.single()` returns
-      // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
-      // operators see the real cause in logs. ≥2 rows shouldn't happen
-      // post-migration 013 (UNIQUE constraint), but a row created
-      // before the constraint, or a race, would still surface here.
-      const { data: configRows, error: configError } = await supabaseAdmin()
-        .from('whatsapp_config')
-        .select('*')
+      // Resolver la conexión por phone_number_id. Las conexiones nuevas
+      // viven en whatsapp_connections; whatsapp_config queda como
+      // respaldo de una release para no cortar números ya existentes.
+      const { data: conexion } = await supabaseAdmin()
+        .from('whatsapp_connections')
+        .select('id, account_id, access_token, status')
         .eq('phone_number_id', phoneNumberId)
+        .maybeSingle()
 
-      if (configError) {
-        console.error(
-          'Error fetching whatsapp_config for phone_number_id:',
-          phoneNumberId,
-          configError
-        )
-        continue
+      let accountId: string | null = null
+      let senderUserId: string | null = null
+      let decryptedAccessToken: string | null = null
+      let connectionId: string | null = null
+      let mirrorMedia = true
+
+      if (conexion?.account_id && conexion.access_token) {
+        const { data: cuenta } = await supabaseAdmin()
+          .from('accounts')
+          .select('owner_user_id')
+          .eq('id', conexion.account_id)
+          .maybeSingle()
+        if (cuenta?.owner_user_id) {
+          accountId = conexion.account_id as string
+          senderUserId = cuenta.owner_user_id as string
+          decryptedAccessToken = decrypt(conexion.access_token as string)
+          connectionId = conexion.id as string
+        }
       }
 
-      if (!configRows || configRows.length === 0) {
-        console.error('No config found for phone_number_id:', phoneNumberId)
-        continue
+      if (!accountId || !senderUserId || !decryptedAccessToken) {
+        const { data: configRows, error: configError } = await supabaseAdmin()
+          .from('whatsapp_config')
+          .select('*')
+          .eq('phone_number_id', phoneNumberId)
+
+        if (configError) {
+          console.error(
+            'Error fetching whatsapp_config for phone_number_id:',
+            phoneNumberId,
+            configError
+          )
+          continue
+        }
+        if (!configRows || configRows.length === 0) {
+          console.error('No config found for phone_number_id:', phoneNumberId)
+          continue
+        }
+        if (configRows.length > 1) {
+          console.error(
+            `Multiple configs (${configRows.length}) found for phone_number_id:`,
+            phoneNumberId,
+            '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
+            'Account owners:',
+            configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
+          )
+          continue
+        }
+        const config = configRows[0]
+        accountId = config.account_id as string
+        senderUserId = config.user_id as string
+        decryptedAccessToken = decrypt(config.access_token as string)
+        connectionId = null
+        mirrorMedia = config.mirror_inbound_media !== false
       }
-
-      if (configRows.length > 1) {
-        console.error(
-          `Multiple configs (${configRows.length}) found for phone_number_id:`,
-          phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
-          'Account owners:',
-          configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
-        )
-        continue
-      }
-
-      const config = configRows[0]
-
-      const decryptedAccessToken = decrypt(config.access_token)
 
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i]
@@ -465,18 +546,11 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         await processMessage(
           message,
           contact,
-          // Tenancy — drives every contact / conversation lookup
-          // and the engines' active-row dispatch.
-          config.account_id,
-          // Audit / sender-of-record — used as the user_id on row
-          // inserts that need it for NOT NULL FK compliance. Always
-          // the admin who saved the WhatsApp config.
-          config.user_id,
+          accountId,
+          senderUserId,
           decryptedAccessToken,
-          // Default ON: the column is NOT NULL DEFAULT TRUE, but a row
-          // read before migration 039 lands would have it undefined,
-          // and losing attachments is the failure mode worth avoiding.
-          config.mirror_inbound_media !== false
+          mirrorMedia,
+          connectionId
         )
       }
     }
@@ -663,7 +737,9 @@ async function processMessage(
   accessToken: string,
   // Per-account opt-out for the inbound-media mirror (migration 039).
   // See parseMessageContent for what it turns off.
-  mirrorMedia: boolean
+  mirrorMedia: boolean,
+  /** Conexión de whatsapp_connections (null en filas legacy). */
+  connectionId: string | null
 ) {
   // Phone number OR business-scoped user ID — Meta sends only the
   // latter for a sender who has adopted a WhatsApp username (#519).
@@ -702,7 +778,8 @@ async function processMessage(
   const convResult = await findOrCreateConversation(
     accountId,
     configOwnerUserId,
-    contactRecord.id
+    contactRecord.id,
+    connectionId
   )
   if (!convResult) return
   const conversation = convResult.conversation
@@ -727,23 +804,42 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
-    await parseMessageContent(
-      message,
-      accessToken,
-      mirrorMedia ? { accountId } : null,
-      // Etapa 3: las notas de voz se transcriben con DeepSeek ASR (solo español)
-      // usando la clave de la cuenta; si el orquestador está apagado, dentro de
-      // `transcribirNotaDeVozDeCuenta` se usa el respaldo de siempre.
-      async (url, mimeType) =>
-        transcribirNotaDeVozDeCuenta({
-          db: supabaseAdmin(),
-          accountId,
-          mediaUrl: url,
-          accessToken,
-          mimeType,
-        })
+  const parseado = await parseMessageContent(
+    message,
+    accessToken,
+    mirrorMedia ? { accountId } : null,
+    // Etapa 3: las notas de voz se transcriben con DeepSeek ASR (solo español)
+    // usando la clave de la cuenta; si el orquestador está apagado, dentro de
+    // `transcribirNotaDeVozDeCuenta` se usa el respaldo de siempre.
+    async (url, mimeType) =>
+      transcribirNotaDeVozDeCuenta({
+        db: supabaseAdmin(),
+        accountId,
+        mediaUrl: url,
+        accessToken,
+        mimeType,
+      })
+  )
+  const { mediaUrl, mediaType, interactiveReplyId } = parseado
+  let contentText = parseado.contentText
+
+  // Enlaces de atribución: si el primer mensaje trae el «#token» del
+  // mensaje prellenado, se ata el clic al contacto y se quita del texto
+  // para que no ensucie el historial ni los disparadores.
+  try {
+    const atribucion = await reclamarCodigoDeEnlace({
+      accountId,
+      userId: configOwnerUserId,
+      contactId: contactRecord.id,
+      texto: contentText,
+    })
+    if (atribucion) contentText = atribucion.texto
+  } catch (err) {
+    console.error(
+      '[webhook] no se pudo atribuir el código del enlace:',
+      err instanceof Error ? err.message : err
     )
+  }
 
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
@@ -942,6 +1038,7 @@ async function processMessage(
     userId: configOwnerUserId,
     contactId: contactRecord.id,
     conversationId: conversation.id,
+    connectionId,
     message: mensajeParaFlujo(message, interactiveReplyId, contentText),
     isFirstInboundMessage,
   })
@@ -1566,25 +1663,22 @@ async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
   contactId: string,
+  connectionId: string | null,
 ) {
-  // Look for an existing conversation in this account, oldest-first.
-  //
-  // We deliberately do NOT use `.single()` here. `.single()` errors on
-  // *both* 0 rows and ≥2 rows, and the old code treated any error as
-  // "none found" and inserted a new row. So once two conversations
-  // existed for a contact (from a race — Meta retries a delivery, or a
-  // batch fans out to concurrent runs), every subsequent inbound
-  // message errored on the lookup and created yet another conversation,
-  // snowballing into a wall of duplicate chats (issue #363).
-  //
-  // Ordering oldest-first and taking one row makes the lookup resolve to
-  // the same canonical survivor the dedup migration (036) keeps, so any
-  // pre-existing duplicates converge instead of compounding.
-  const { data: existingRows, error: findError } = await supabaseAdmin()
-    .from('conversations')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('contact_id', contactId)
+  // Un hilo por contacto y conexión (migración 089). Las filas legacy
+  // sin conexión siguen resolviéndose por (account, contact, null).
+  const porContacto = () => {
+    const q = supabaseAdmin()
+      .from('conversations')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+    return connectionId
+      ? q.eq('connection_id', connectionId)
+      : q.is('connection_id', null)
+  }
+
+  const { data: existingRows, error: findError } = await porContacto()
     .order('created_at', { ascending: true })
     .limit(1)
 
@@ -1605,21 +1699,17 @@ async function findOrCreateConversation(
       account_id: accountId,
       user_id: configOwnerUserId,
       contact_id: contactId,
+      connection_id: connectionId,
     })
     .select()
     .single()
 
   if (createError) {
     // Lost a race: a concurrent inbound delivery created the
-    // conversation between our lookup and insert, and the unique index
-    // (migration 036) rejected the duplicate. Re-resolve the winning
-    // row instead of dropping the message — mirrors findOrCreateContact.
+    // conversation between our lookup and insert. Re-resolve the
+    // winning row instead of dropping the message.
     if (isUniqueViolation(createError)) {
-      const { data: raced } = await supabaseAdmin()
-        .from('conversations')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('contact_id', contactId)
+      const { data: raced } = await porContacto()
         .order('created_at', { ascending: true })
         .limit(1)
       if (raced && raced.length > 0) {

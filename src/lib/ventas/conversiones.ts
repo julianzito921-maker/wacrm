@@ -1,21 +1,31 @@
-// ============================================================
+﻿// ============================================================
 // API de conversiones para mensajes de negocios (Meta) — SCALE WHATSAPP.
 //
 // 1) guardarReferenciaAnuncio: cuando una clienta escribe desde un anuncio de
 //    clic a WhatsApp, el webhook trae `referral.ctwa_clid` (el clic). Se guarda
-//    en campos personalizados del contacto (ctwa_clid, anuncio_id, anuncio_fecha).
+//    en `contact_attribution` y en los campos personalizados de siempre
+//    (ctwa_clid, anuncio_id, anuncio_fecha).
 // 2) enviarCompraMeta: al ponerse «pagado» o «extra-pagado», se manda a Meta un
 //    evento Purchase con el monto, ligado a ese clic, para que la campaña
 //    aprenda quién compra.
 //
-// Variables de entorno:
-//   META_DATASET_ID     conjunto de datos ligado a la cuenta de WhatsApp (POST /{waba}/dataset)
-//   META_EVENTS_TOKEN   token con permiso whatsapp_business_manage_events
-//                       (si falta, se usa el token de WhatsApp de la cuenta)
+// Credenciales, en orden:
+//   1. Píxel Meta activo de la cuenta en `tracking_pixels` (token cifrado,
+//      test_event_code opcional).
+//   2. Respaldo por entorno: META_DATASET_ID + META_EVENTS_TOKEN.
+//   3. Token de WhatsApp de la cuenta si no hay token de eventos.
+//
 // Nunca lanza.
 // ============================================================
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { guardarValor, leerValores } from './contact-values'
+import { leerAtribucion, upsertContactAttribution } from '@/lib/tracking/attribution'
+import { monedaDeCuenta, resolverCredencialesMeta } from '@/lib/tracking/pixels'
+import { parametrosDeUrl } from '@/lib/tracking/links'
+
+// Compatibilidad: el motor de flujos importa `guardarValor` desde aquí.
+export { guardarValor } from './contact-values'
 
 const GRAPH = 'https://graph.facebook.com/v21.0'
 
@@ -27,41 +37,37 @@ export interface ReferenciaAnuncio {
   headline?: string
 }
 
-async function campoId(accountId: string, userId: string, nombre: string): Promise<string | null> {
-  const db = supabaseAdmin()
-  const { data } = await db.from('custom_fields').select('id').eq('account_id', accountId).eq('field_name', nombre).maybeSingle()
-  if (data) return data.id
-  const { data: nuevo } = await db.from('custom_fields')
-    .insert({ account_id: accountId, user_id: userId, field_name: nombre, field_type: 'text' }).select('id').single()
-  return nuevo?.id ?? null
-}
-
-export async function guardarValor(accountId: string, userId: string, contactId: string, nombre: string, valor: string) {
-  const id = await campoId(accountId, userId, nombre)
-  if (!id) return
-  await supabaseAdmin().from('contact_custom_values')
-    .upsert({ contact_id: contactId, custom_field_id: id, value: valor }, { onConflict: 'contact_id,custom_field_id' })
-}
-
-async function leerValores(accountId: string, contactId: string): Promise<Record<string, string>> {
-  const db = supabaseAdmin()
-  const { data } = await db.from('contact_custom_values')
-    .select('value, custom_fields!inner(field_name, account_id)')
-    .eq('contact_id', contactId).eq('custom_fields.account_id', accountId)
-  const out: Record<string, string> = {}
-  for (const f of (data ?? []) as unknown as { value: string; custom_fields: { field_name: string } }[]) out[f.custom_fields.field_name] = f.value
-  return out
-}
-
 export async function guardarReferenciaAnuncio(args: {
-  accountId: string; userId: string; contactId: string; referral: ReferenciaAnuncio | undefined
+  accountId: string
+  userId: string
+  contactId: string
+  referral: ReferenciaAnuncio | undefined
 }): Promise<void> {
   try {
     const clid = args.referral?.ctwa_clid
     if (!clid) return
+    // Compatibilidad con CAPI y el inbox (antes de existir la tabla).
     await guardarValor(args.accountId, args.userId, args.contactId, 'ctwa_clid', clid)
-    if (args.referral?.source_id) await guardarValor(args.accountId, args.userId, args.contactId, 'anuncio_id', args.referral.source_id)
-    await guardarValor(args.accountId, args.userId, args.contactId, 'anuncio_fecha', new Date().toISOString())
+    if (args.referral?.source_id) {
+      await guardarValor(args.accountId, args.userId, args.contactId, 'anuncio_id', args.referral.source_id)
+    }
+    await guardarValor(
+      args.accountId,
+      args.userId,
+      args.contactId,
+      'anuncio_fecha',
+      new Date().toISOString(),
+    )
+    await upsertContactAttribution({
+      accountId: args.accountId,
+      userId: null, // los campos ya se escribieron arriba
+      contactId: args.contactId,
+      source: 'meta',
+      ctwaClid: clid,
+      ad: args.referral?.source_id ?? null,
+      utm: parametrosDeUrl(args.referral?.source_url),
+      raw: { ...args.referral },
+    })
   } catch (err) {
     console.error('[conversiones] no se pudo guardar el anuncio:', err instanceof Error ? err.message : err)
   }
@@ -98,7 +104,11 @@ export function armarEventoMeta(args: {
 
 export type ResultadoEventoMeta =
   | { enviado: true }
-  | { enviado: false; motivo: 'sin_dataset' | 'sin_anuncio' | 'sin_waba' | 'rechazado' | 'error'; detalle?: string }
+  | {
+      enviado: false
+      motivo: 'sin_pixel' | 'sin_token' | 'sin_anuncio' | 'sin_waba' | 'rechazado' | 'error'
+      detalle?: string
+    }
 
 /**
  * Manda un evento a Meta ligado al clic del anuncio de la clienta. Deja una
@@ -115,24 +125,45 @@ export async function enviarEventoMeta(args: {
     const { data: c } = await db.from('contacts').select('user_id').eq('id', args.contactId).maybeSingle()
     if (c) await db.from('contact_notes').insert({ contact_id: args.contactId, user_id: c.user_id, account_id: args.accountId, note_text: texto })
   }
-  const monto = Number(args.value) > 0 ? ` de $${args.value} ${args.currency || 'MXN'}` : ''
   try {
-    const dataset = process.env.META_DATASET_ID
-    if (!dataset) return { enviado: false, motivo: 'sin_dataset' }
+    const moneda = args.currency || await monedaDeCuenta(args.accountId)
+    const monto = Number(args.value) > 0 ? ` de $${args.value} ${moneda}` : ''
+    const creds = await resolverCredencialesMeta(args.accountId)
+    if (!creds) return { enviado: false, motivo: 'sin_pixel' }
+
     const valores = args.valores ?? await leerValores(args.accountId, args.contactId)
-    const clid = valores.ctwa_clid
+    const atribucion = await leerAtribucion(args.accountId, args.contactId)
+    const clid = atribucion?.ctwa_clid ?? valores.ctwa_clid
     if (!clid) {
       await nota(`📊 ${args.eventName}${monto} sin anuncio de origen (llegó orgánica): no se envió a Meta.`)
       return { enviado: false, motivo: 'sin_anuncio' }
     }
+
     const { data: cfg } = await db.from('whatsapp_config').select('waba_id, access_token').eq('account_id', args.accountId).maybeSingle()
     if (!cfg?.waba_id) return { enviado: false, motivo: 'sin_waba' }
-    const token = process.env.META_EVENTS_TOKEN || decrypt(cfg.access_token)
+
+    let token = creds.token
+    if (!token) {
+      try {
+        token = decrypt(cfg.access_token as string)
+      } catch {
+        token = null
+      }
+    }
+    if (!token) return { enviado: false, motivo: 'sin_token' }
+
     const evento = armarEventoMeta({
-      eventName: args.eventName, eventId: args.eventId, wabaId: cfg.waba_id, ctwaClid: clid,
-      value: args.value, currency: args.currency,
+      eventName: args.eventName,
+      eventId: args.eventId,
+      wabaId: cfg.waba_id as string,
+      ctwaClid: clid,
+      value: args.value,
+      currency: moneda,
     })
-    const res = await fetch(`${GRAPH}/${dataset}/events`, {
+    const qs = creds.testEventCode
+      ? `?test_event_code=${encodeURIComponent(creds.testEventCode)}`
+      : ''
+    const res = await fetch(`${GRAPH}/${creds.pixelId}/events${qs}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: [evento] }),
@@ -156,7 +187,6 @@ export async function enviarEventoMeta(args: {
 export async function enviarCompraMeta(args: { accountId: string; contactId: string; etiqueta: string }): Promise<void> {
   const db = supabaseAdmin()
   try {
-    if (!process.env.META_DATASET_ID) return
     const valores = await leerValores(args.accountId, args.contactId)
     const { data: filas } = await db.from('contact_tags').select('tags(name)').eq('contact_id', args.contactId)
     const tags = (filas ?? []).map((f) => (f as unknown as { tags: { name: string } | null }).tags?.name).filter(Boolean) as string[]
@@ -171,7 +201,7 @@ export async function enviarCompraMeta(args: { accountId: string; contactId: str
       eventName: 'Purchase',
       eventId: `${args.contactId}-${args.etiqueta}-${new Date().toISOString().slice(0, 10)}`,
       value: valor,
-      currency: 'MXN',
+      currency: await monedaDeCuenta(args.accountId),
       valores,
     })
   } catch (err) {

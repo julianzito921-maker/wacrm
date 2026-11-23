@@ -90,9 +90,14 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
       }
 
       case "save_reply": {
-        const contesto = (cfg as { contesto_next?: string }).contesto_next;
-        const noContesto = (cfg as { no_contesto_next?: string })
-          .no_contesto_next;
+        const srCfg = cfg as {
+          contesto_next?: string;
+          no_contesto_next?: string;
+          esperar_indefinido?: boolean;
+        };
+        const contesto = srCfg.contesto_next;
+        // «Esperar indefinidamente» no tiene segunda salida.
+        const noContesto = srCfg.esperar_indefinido ? undefined : srCfg.no_contesto_next;
         if (contesto && knownKeys.has(contesto)) {
           edges.push({
             id: `${node.node_key}--contesto--${contesto}`,
@@ -247,7 +252,10 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
     case "save_reply":
       return [
         { id: "contesto", label: "Si contesta" },
-        { id: "no_contesto", label: "Si no contesta" },
+        // «Esperar indefinidamente» no tiene salida por timeout.
+        ...((cfg as { esperar_indefinido?: boolean }).esperar_indefinido
+          ? []
+          : [{ id: "no_contesto", label: "Si no contesta" }]),
       ];
 
     case "condition":

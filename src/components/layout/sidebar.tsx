@@ -119,7 +119,7 @@ const SECTIONS: NavSection[] = [
       // se conservan aunque la guía no las nombraba.
       { href: "/automations", labelKey: "automations", icon: Zap },
       {
-        href: "/settings?tab=whatsapp",
+        href: "/connections",
         labelKey: "connections",
         icon: PlugZap,
         atajo: true,

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * In-memory per-key rate limiter.
  *
  * Fixed-window counter (not token bucket): every identifier gets a
@@ -154,6 +154,8 @@ export const RATE_LIMITS = {
    *  enabling brute-force token enumeration. With 256-bit tokens the
    *  enumeration risk is theoretical; this is belt-and-braces. */
   invitationPeek: { limit: 30, windowMs: 60_000 },
+  /** Clic en un enlace público de Seguimiento (por IP). */ 
+  trackingClick: { limit: 120, windowMs: 60_000 },
   /** Invitation redeem (authed, per-IP+user). Tighter than peek —
    *  successful redemption mutates two profiles and an invite row, so
    *  the abuse surface is "spam join attempts." */

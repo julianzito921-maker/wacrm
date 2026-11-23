@@ -335,7 +335,10 @@ export async function enviarTexto({ ctx, ...args }: ArgsTexto) {
     tipo: "text",
     contenido: args.text,
     enviar: () => sendTextMessage(args),
-    payloadParaCola: { text: args.text },
+    payloadParaCola: {
+      text: args.text,
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
+    },
   });
 }
 
@@ -355,6 +358,7 @@ export async function enviarMedio({ ctx, kind, caption, filename, ...args }: Arg
       link: (args as { link?: string }).link ?? "",
       ...(caption ? { caption } : {}),
       ...(filename ? { filename } : {}),
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
     },
   });
 }
@@ -368,6 +372,7 @@ export async function enviarPlantilla({ ctx, ...args }: ArgsPlantilla) {
       templateName: args.templateName,
       ...(args.language ? { language: args.language } : {}),
       ...(args.params ? { params: args.params } : {}),
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
     },
   });
 }
@@ -377,7 +382,11 @@ export async function enviarBotones({ ctx, ...args }: ArgsBotones) {
     tipo: "buttons",
     contenido: args.bodyText,
     enviar: () => sendInteractiveButtons(args),
-    payloadParaCola: { bodyText: args.bodyText, buttons: args.buttons as never },
+    payloadParaCola: {
+      bodyText: args.bodyText,
+      buttons: args.buttons as never,
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
+    },
   });
 }
 
@@ -390,6 +399,7 @@ export async function enviarLista({ ctx, ...args }: ArgsLista) {
       bodyText: args.bodyText,
       buttonLabel: args.buttonLabel,
       sections: args.sections as never,
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
     },
   });
 }

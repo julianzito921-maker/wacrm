@@ -1,4 +1,5 @@
-import {
+﻿import {
+  BrainCircuit,
   Coins,
   FileText,
   Inbox,
@@ -8,6 +9,7 @@ import {
   PlugZap,
   Shield,
   Tags,
+  Target,
   User,
   UsersRound,
   Zap,
@@ -35,6 +37,8 @@ export const SETTINGS_SECTIONS = [
   'deals',
   'members',
   'api',
+  'tracking',
+  'mcp',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -46,7 +50,7 @@ export interface SectionMeta {
   id: SettingsSection;
   label: string;
   icon: LucideIcon;
-  group: 'top' | 'account' | 'workspace';
+  group: 'top' | 'account' | 'integrations' | 'workspace';
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
@@ -62,11 +66,14 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
+  tracking: { id: 'tracking', label: 'Tracking', icon: Target, group: 'integrations' },
+  mcp: { id: 'mcp', label: 'MCP tools', icon: BrainCircuit, group: 'integrations' },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [
   { label: null, group: 'top' },
   { label: 'Account', group: 'account' },
+  { label: 'Integrations', group: 'integrations' },
   { label: 'Workspace', group: 'workspace' },
 ];
 

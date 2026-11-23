@@ -1,4 +1,4 @@
-import crypto from 'node:crypto'
+﻿import crypto from 'node:crypto'
 
 /**
  * Verify the HMAC-SHA256 signature Meta attaches to webhook POSTs.
@@ -54,8 +54,12 @@ function signatureMatches(rawBody: string, signatureHeader: string, secret: stri
 export function verifyMetaWebhookSignature(
   rawBody: string,
   signatureHeader: string | null,
+  extraSecrets: string[] = [],
 ): boolean {
-  const secrets = parseAppSecrets(process.env.META_APP_SECRET)
+  const secrets = [
+    ...parseAppSecrets(process.env.META_APP_SECRET),
+    ...extraSecrets.filter((s) => typeof s === 'string' && s.length > 0),
+  ]
   if (secrets.length === 0) {
     console.error(
       '[webhook] META_APP_SECRET is not set — rejecting request. ' +

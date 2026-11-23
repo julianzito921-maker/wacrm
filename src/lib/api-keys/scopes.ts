@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // API key scopes — pure, unit-testable, no I/O.
 //
 // Authorization for the public API is *scopes-only*: a key's
@@ -21,6 +21,7 @@ export const API_SCOPES = [
   'conversations:read',
   'broadcasts:send',
   'webhooks:manage',
+  'tracking:events',
 ] as const;
 
 export type ApiScope = (typeof API_SCOPES)[number];
@@ -34,6 +35,7 @@ export const SCOPE_DESCRIPTIONS: Record<ApiScope, string> = {
   'conversations:read': 'List and read conversations',
   'broadcasts:send': 'Launch broadcast campaigns',
   'webhooks:manage': 'Register and manage outbound event webhooks',
+  'tracking:events': 'Send conversion events to the connected tracking pixels',
 };
 
 /** Type-narrow an unknown value into a valid `ApiScope`. */

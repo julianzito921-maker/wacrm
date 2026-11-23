@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // COLA DE SALIDA — worker (Fase 4)
 //
 // Un solo sitio donde esperar, reintentar y cancelar mensajes.
@@ -18,6 +18,7 @@
 // ============================================================
 
 import { supabaseAdmin } from "@/lib/flows/admin-client";
+import { credencialesDeConexion, credencialesDeConversacion } from "@/lib/whatsapp/connections";
 import { loadAccountMetaCredentials } from "@/lib/flows/meta-send";
 import { resolveContactSendTarget } from "@/lib/whatsapp/wa-identity";
 import { marcarFila } from "./cola-store";
@@ -52,6 +53,7 @@ export interface FilaCola {
   id: string;
   account_id: string;
   conversation_id: string | null;
+  connection_id: string | null;
   contact_id: string | null;
   message_type: string;
   payload: Record<string, unknown>;
@@ -95,10 +97,12 @@ async function enviarFila(fila: FilaCola): Promise<{ messageId: string }> {
   );
   if (!destino) throw new Error("contacto sin dirección de WhatsApp");
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    fila.account_id,
-  );
+  const creds =
+    (fila.connection_id
+      ? await credencialesDeConexion(db, fila.connection_id)
+      : await credencialesDeConversacion(db, fila.conversation_id, fila.account_id)) ??
+    (await loadAccountMetaCredentials(db, fila.account_id));
+  const { phoneNumberId, accessToken } = creds;
   const ctx: ContextoSalida = {
     accountId: fila.account_id,
     conversationId: fila.conversation_id,
@@ -115,7 +119,13 @@ async function enviarFila(fila: FilaCola): Promise<{ messageId: string }> {
 
   switch (fila.message_type) {
     case "text":
-      return enviarTexto({ ...base, text: String(p.text ?? "") });
+      return enviarTexto({
+        ...base,
+        text: String(p.text ?? ""),
+        ...(typeof p.contextMessageId === "string"
+          ? { contextMessageId: p.contextMessageId }
+          : {}),
+      });
     case "image":
     case "video":
     case "audio":
@@ -126,6 +136,9 @@ async function enviarFila(fila: FilaCola): Promise<{ messageId: string }> {
         link: String(p.link ?? ""),
         ...(typeof p.caption === "string" ? { caption: p.caption } : {}),
         ...(typeof p.filename === "string" ? { filename: p.filename } : {}),
+        ...(typeof p.contextMessageId === "string"
+          ? { contextMessageId: p.contextMessageId }
+          : {}),
       });
     case "template":
       return enviarPlantilla({
@@ -133,12 +146,18 @@ async function enviarFila(fila: FilaCola): Promise<{ messageId: string }> {
         templateName: String(p.templateName ?? ""),
         ...(typeof p.language === "string" ? { language: p.language } : {}),
         ...(Array.isArray(p.params) ? { params: p.params as string[] } : {}),
+        ...(typeof p.contextMessageId === "string"
+          ? { contextMessageId: p.contextMessageId }
+          : {}),
       });
     case "buttons":
       return enviarBotones({
         ...base,
         bodyText: String(p.bodyText ?? ""),
         buttons: (p.buttons ?? []) as never,
+        ...(typeof p.contextMessageId === "string"
+          ? { contextMessageId: p.contextMessageId }
+          : {}),
       });
     case "list":
       return enviarLista({
@@ -146,6 +165,9 @@ async function enviarFila(fila: FilaCola): Promise<{ messageId: string }> {
         bodyText: String(p.bodyText ?? ""),
         buttonLabel: String(p.buttonLabel ?? ""),
         sections: (p.sections ?? []) as never,
+        ...(typeof p.contextMessageId === "string"
+          ? { contextMessageId: p.contextMessageId }
+          : {}),
       });
     default:
       throw new Error(`tipo no soportado en la cola: ${fila.message_type}`);

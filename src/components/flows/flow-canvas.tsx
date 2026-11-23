@@ -57,7 +57,7 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, Pencil, Save, Trash2 } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
@@ -83,12 +83,16 @@ import {
   NodeIconChip,
   colorDeSalida,
   configAtajoMedio,
+  formatearEspera,
   nodeColors,
   summarizeNode,
   type BuilderNode,
 } from './shared';
 import { useFlowEditor } from './flow-editor-state';
-import { NODOS_FIN_DE_RAMA } from '@/lib/flows/types';
+import {
+  NODOS_FIN_DE_RAMA,
+  type SaveReplyNodeConfig,
+} from '@/lib/flows/types';
 import { FlowEdge } from './flow-edge';
 import { NodeConfigForm } from './forms/node-config-form';
 import type { CargaArrastre } from './flow-palette';
@@ -100,6 +104,10 @@ interface NodeData extends Record<string, unknown> {
   /** Validator's "look here" pulse — flashes the card border for
    *  ~1.6s. Drives a CSS animation, doesn't change layout. */
   isFlashed: boolean;
+  /** ENTRADAS / AVANCES del nodo (últimos 30 días). */
+  stats?: { entradas: number; avances: number };
+  /** Abre el panel lateral desde los botones de la tarjeta. */
+  onEdit?: (key: string) => void;
 }
 
 const NODE_WIDTH = 260;
@@ -123,6 +131,11 @@ function FlowNodeCard({ data, selected }: NodeProps) {
   const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
   const tSummary = useTranslations('Flows.summary');
+  // «Esperar respuesta» tiene tarjeta propia (diseño Leona): dos salidas
+  // visibles, métricas y acciones rápidas.
+  if (node.node_type === 'save_reply') {
+    return <SaveReplyCard data={data} selected={selected} />;
+  }
   // El Inicio muestra su disparador (vive en el flujo, no en el nodo).
   const summary =
     node.node_type === 'start'
@@ -303,6 +316,171 @@ function FlowNodeCard({ data, selected }: NodeProps) {
   );
 }
 
+/**
+ * Tarjeta de «Esperar respuesta» al estilo Leona: encabezado naranja
+ * sólido, métricas del nodo y las dos salidas visibles (respuesta y
+ * timeout), con el panel lateral a un clic.
+ */
+function SaveReplyCard({
+  data,
+  selected,
+}: {
+  data: Record<string, unknown>;
+  selected?: boolean;
+}) {
+  const t = useTranslations('Flows.builder.saveReply');
+  const tSummary = useTranslations('Flows.summary');
+  const { removeNode, duplicateNode } = useFlowEditor();
+  const { node, isFlashed, stats, onEdit } = data as NodeData;
+  const cfg = node.config as unknown as SaveReplyNodeConfig;
+  const indefinido = Boolean(cfg.esperar_indefinido);
+  const segundos =
+    typeof cfg.espera_segundos === 'number'
+      ? cfg.espera_segundos
+      : (Number(cfg.espera_minutos) || 0) * 60;
+  const entradas = stats?.entradas ?? 0;
+  const avances = stats?.avances ?? 0;
+  const tasa = entradas > 0 ? Math.round((avances / entradas) * 100) : null;
+  const colorContesto = colorDeSalida('save_reply', 'contesto');
+  const colorTimeout = colorDeSalida('save_reply', 'no_contesto');
+  const handleClass =
+    '!bg-card !relative !top-auto !right-auto !h-2.5 !w-2.5 !translate-x-[16px] !transform-none !border-2';
+
+  return (
+    <div
+      className={cn(
+        'bg-card relative w-[260px] rounded-xl border text-left shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8)] transition-[box-shadow,border-color]',
+        selected ? 'border-[#EA580C]' : 'border-border hover:border-orange-400/60',
+        isFlashed && '!border-amber-400 ring-2 ring-amber-400/60'
+      )}
+    >
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!bg-card !h-2.5 !w-2.5 !border-2 !border-orange-300"
+      />
+
+      <div
+        className="flex items-center gap-2 rounded-t-xl px-2.5 py-2"
+        style={{ background: '#EA580C' }}
+      >
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/20 text-white">
+          <Save size={13} />
+        </span>
+        <span className="flex-1 truncate text-[10.5px] font-semibold tracking-wider text-white uppercase">
+          {t('title')}
+        </span>
+        <QuickButton label={t('edit')} onClick={() => onEdit?.(node.node_key)}>
+          <Pencil className="h-3 w-3" />
+        </QuickButton>
+        <QuickButton
+          label={t('duplicate')}
+          onClick={() => duplicateNode(node.node_key)}
+        >
+          <Copy className="h-3 w-3" />
+        </QuickButton>
+        <QuickButton
+          label={t('delete')}
+          danger
+          onClick={() => removeNode(node.node_key)}
+        >
+          <Trash2 className="h-3 w-3" />
+        </QuickButton>
+      </div>
+
+      <div className="bg-background/50 border-border grid grid-cols-3 border-b">
+        <StatCell label={t('entries')} value={String(entradas)} first />
+        <StatCell label={t('advances')} value={String(avances)} />
+        <StatCell label={t('rate')} value={tasa === null ? '—' : `${tasa}%`} />
+      </div>
+
+      <div className="flex flex-col gap-2 px-3 py-3">
+        <div className="border-border bg-background/60 text-foreground/85 flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px] leading-snug">
+          <span>{t('waitCustomer')}</span>
+          <Handle
+            type="source"
+            id="contesto"
+            position={Position.Right}
+            style={{ borderColor: colorContesto, background: colorContesto }}
+            className={handleClass}
+          />
+        </div>
+
+        <div className="text-muted-foreground text-center text-[9px] font-semibold tracking-[0.12em] uppercase">
+          {t('orNoReply')}
+        </div>
+
+        {!indefinido && (
+          <div className="border-border bg-background/60 text-foreground/85 flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px] leading-snug">
+            <span>
+              {t('after')}{' '}
+              <span className="text-foreground font-medium">
+                {formatearEspera(segundos, tSummary)}
+              </span>
+            </span>
+            <Handle
+              type="source"
+              id="no_contesto"
+              position={Position.Right}
+              style={{ borderColor: colorTimeout, background: colorTimeout }}
+              className={handleClass}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuickButton({
+  label,
+  onClick,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={cn(
+        'flex h-5 w-5 shrink-0 items-center justify-center rounded text-white/80 transition-colors',
+        danger ? 'hover:bg-black/20 hover:text-white' : 'hover:bg-white/20 hover:text-white'
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatCell({
+  label,
+  value,
+  first,
+}: {
+  label: string;
+  value: string;
+  first?: boolean;
+}) {
+  return (
+    <div className={cn('px-1.5 py-1.5', !first && 'border-border border-l')}>
+      <div className="text-muted-foreground truncate text-[8.5px] font-semibold tracking-[0.1em] uppercase">
+        {label}
+      </div>
+      <div className="text-foreground font-mono text-[12px] leading-tight">{value}</div>
+    </div>
+  );
+}
+
 /** «Palabra clave: chía, hola», «Cualquier mensaje», etc. */
 function resumenDisparador(
   tipo: string,
@@ -355,10 +533,44 @@ function FlowCanvasInner() {
     updateNodePositions,
     removeNode,
     flashKey,
+    flow,
+    saving,
   } = useFlowEditor();
   const reactFlow = useReactFlow();
   const builderNodes = state.nodes;
   const entryNodeId = state.entry_node_id;
+
+  // Métricas de la tarjeta de «Esperar respuesta». Se recargan cuando
+  // termina un guardado; si fallan, la tarjeta muestra «—».
+  const [stats, setStats] = useState<
+    Record<string, { entradas: number; avances: number }>
+  >({});
+  useEffect(() => {
+    if (saving) return;
+    let vivo = true;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/flows/${flow.id}/stats`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          nodes?: Array<{ node_key: string; entradas: number; avances: number }>;
+        };
+        if (!vivo) return;
+        const mapa: Record<string, { entradas: number; avances: number }> = {};
+        for (const f of json.nodes ?? []) {
+          mapa[f.node_key] = { entradas: f.entradas, avances: f.avances };
+        }
+        setStats(mapa);
+      } catch {
+        // Cosmético: sin métricas la tarjeta sigue funcionando.
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [flow.id, saving]);
 
   // Side-panel state — which node's form is open. Canvas-only UI; the
   // list view's analogue is the per-card expanded set in
@@ -380,7 +592,9 @@ function FlowCanvasInner() {
           builderNodes.map((n) => ({
             id: n.node_key,
             width: NODE_WIDTH,
-            height: NODE_HEIGHT,
+            // La tarjeta de «Esperar respuesta» es más alta (métricas +
+            // dos cajas de salida).
+            height: n.node_type === 'save_reply' ? 230 : NODE_HEIGHT,
           })),
           canvasEdges.map((e) => ({ source: e.source, target: e.target })),
           { direction: 'TB' }
@@ -417,12 +631,14 @@ function FlowCanvasInner() {
           node: n,
           isEntry: n.node_key === entryNodeId,
           isFlashed: n.node_key === flashKey,
+          stats: stats[n.node_key],
+          onEdit: setSelectedNodeKey,
         },
       };
     });
 
     return nodes;
-  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions]);
+  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions, stats]);
 
   const [rfNodes, setRfNodes] = useState<RfNode<NodeData>[]>(derivedRfNodes);
 

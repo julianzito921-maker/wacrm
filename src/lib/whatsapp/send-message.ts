@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Outbound message send — the core that both the dashboard's
 // `/api/whatsapp/send` route and the public `/api/v1/messages`
 // endpoint call.
@@ -34,7 +34,7 @@ import {
   interactivePayloadPreviewText,
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
-import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { credencialesDeConversacion } from '@/lib/whatsapp/connections';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
@@ -258,14 +258,9 @@ export async function sendMessageToConversation(
   const hasValidPhone = resolvedTarget.isPhone;
   const sanitizedPhone = hasValidPhone ? sendTarget : '';
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-
-  if (configError || !config) {
+  // Credenciales de la conexión de esta conversación.
+  const creds = await credencialesDeConversacion(db, conversationId, accountId);
+  if (!creds) {
     throw new SendMessageError(
       'whatsapp_not_configured',
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
@@ -273,23 +268,7 @@ export async function sendMessageToConversation(
     );
   }
 
-  const accessToken = decrypt(config.access_token);
-
-  // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
-    void db
-      .from('whatsapp_config')
-      .update({ access_token: encrypt(accessToken) })
-      .eq('id', config.id)
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) {
-          console.warn(
-            '[send-message] access_token GCM upgrade failed:',
-            error.message
-          );
-        }
-      });
-  }
+  const accessToken = creds.accessToken;
 
   // Resolve the reply target to its Meta message_id. The parent must
   // belong to this same conversation — otherwise a caller could quote
@@ -358,7 +337,7 @@ export async function sendMessageToConversation(
     if (messageType === 'template') {
       const result = await enviarPlantilla({
         ctx: ctxSalida,
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: creds.phoneNumberId,
         accessToken,
         to: phone,
         templateName: templateName!,
@@ -373,7 +352,7 @@ export async function sendMessageToConversation(
     if (isMediaKind) {
       const result = await enviarMedio({
         ctx: ctxSalida,
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: creds.phoneNumberId,
         accessToken,
         to: phone,
         kind: messageType as MediaKind,
@@ -389,7 +368,7 @@ export async function sendMessageToConversation(
       if (p.kind === 'buttons') {
         const result = await enviarBotones({
           ctx: ctxSalida,
-          phoneNumberId: config.phone_number_id,
+          phoneNumberId: creds.phoneNumberId,
           accessToken,
           to: phone,
           bodyText: p.body,
@@ -402,7 +381,7 @@ export async function sendMessageToConversation(
       }
       const result = await enviarLista({
         ctx: ctxSalida,
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: creds.phoneNumberId,
         accessToken,
         to: phone,
         bodyText: p.body,
@@ -416,7 +395,7 @@ export async function sendMessageToConversation(
     }
     const result = await enviarTexto({
       ctx: ctxSalida,
-      phoneNumberId: config.phone_number_id,
+      phoneNumberId: creds.phoneNumberId,
       accessToken,
       to: phone,
       text: contentText!,

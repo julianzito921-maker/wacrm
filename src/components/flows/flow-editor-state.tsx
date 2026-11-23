@@ -384,7 +384,14 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return {
         prompt_text: "",
         var_key: "respuesta",
-        espera_minutos: 30,
+        // 1 día: el caso típico del «Después de 1 día» de la tarjeta.
+        espera_segundos: 86_400,
+        espera_minutos: 1_440,
+        esperar_indefinido: false,
+        buffer_segundos: 0,
+        citar_respuesta: false,
+        reaccionar: false,
+        campo_contacto: "",
         contesto_next: "",
         no_contesto_next: "",
       };

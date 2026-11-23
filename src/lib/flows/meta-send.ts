@@ -1,4 +1,4 @@
-import {
+﻿import {
   sendReactionMessage,
   sendTypingIndicator,
   type InteractiveButton,
@@ -12,7 +12,10 @@ import {
   enviarTexto,
 } from '@/lib/messaging/send'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import {
+  credencialesDeConversacion,
+  credencialesPrimarias,
+} from '@/lib/whatsapp/connections'
 import {
   phoneVariants,
   isRecipientNotAllowedError,
@@ -40,27 +43,31 @@ const t = getT('LibErrors')
 // ------------------------------------------------------------
 
 /**
- * Resolve the account's Meta sending credentials: the phone number id
- * plus the DECRYPTED access token from `whatsapp_config`. The single
- * home for that decrypt step — callers outside this file (the AI
- * auto-reply's typing indicator) reuse it rather than growing a copy.
+ * Resolve the account's Meta sending credentials (the primary
+ * connection, falling back to the legacy whatsapp_config row). Kept for
+ * callers that only have an accountId (alerts, typing indicators).
  */
 export async function loadAccountMetaCredentials(
   db: ReturnType<typeof supabaseAdmin>,
   accountId: string,
 ): Promise<{ phoneNumberId: string; accessToken: string }> {
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('phone_number_id, access_token')
-    .eq('account_id', accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error(t('send.notConfigured'))
-  }
-  return {
-    phoneNumberId: config.phone_number_id,
-    accessToken: decrypt(config.access_token),
-  }
+  const creds = await credencialesPrimarias(db, accountId)
+  if (!creds) throw new Error(t('send.notConfigured'))
+  return { phoneNumberId: creds.phoneNumberId, accessToken: creds.accessToken }
+}
+
+/**
+ * Credenciales de la conversación concreta: cada número tiene su token.
+ * Si el hilo es legacy (sin connection_id) cae a la primaria.
+ */
+export async function loadConversationMetaCredentials(
+  db: ReturnType<typeof supabaseAdmin>,
+  conversationId: string,
+  accountId: string,
+): Promise<{ phoneNumberId: string; accessToken: string }> {
+  const creds = await credencialesDeConversacion(db, conversationId, accountId)
+  if (!creds) throw new Error(t('send.notConfigured'))
+  return { phoneNumberId: creds.phoneNumberId, accessToken: creds.accessToken }
 }
 
 /**
@@ -153,6 +160,9 @@ interface SendTextEngineArgs extends AuditoriaEnvio {
    *  badges it as an AI reply. Only the auto-reply bot sets this;
    *  deterministic Flow/automation sends leave it false. */
   aiGenerated?: boolean
+  /** Meta message_id to quote (reply preview). Comes from the customer's
+   *  captured reply when the node has «citar respuesta» on. */
+  contextMessageId?: string
 }
 
 /**
@@ -196,10 +206,7 @@ export async function engineSendText(
   }
   const sanitized = sendTarget.target
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    args.accountId,
-  )
+  const { phoneNumberId, accessToken } = await loadConversationMetaCredentials(db, args.conversationId, args.accountId)
 
   const attempt = async (phone: string): Promise<string> => {
     const r = await enviarTexto({
@@ -219,6 +226,7 @@ export async function engineSendText(
       accessToken,
       to: phone,
       text: args.text,
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
     })
     return r.messageId
   }
@@ -282,6 +290,8 @@ interface SendMediaEngineArgs extends AuditoriaEnvio {
   caption?: string
   /** Document-only; ignored by Meta for image/video. */
   filename?: string
+  /** Meta message_id to quote (reply preview). */
+  contextMessageId?: string
 }
 
 /**
@@ -322,10 +332,7 @@ export async function engineSendMedia(
   }
   const sanitized = sendTarget.target
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    args.accountId,
-  )
+  const { phoneNumberId, accessToken } = await loadConversationMetaCredentials(db, args.conversationId, args.accountId)
 
   const attempt = async (phone: string): Promise<string> => {
     const r = await enviarMedio({
@@ -348,6 +355,7 @@ export async function engineSendMedia(
       link: args.link,
       caption: args.caption,
       filename: args.filename,
+      ...(args.contextMessageId ? { contextMessageId: args.contextMessageId } : {}),
     })
     return r.messageId
   }
@@ -415,6 +423,8 @@ interface SendInteractiveButtonsEngineArgs extends AuditoriaEnvio {
   buttons: InteractiveButton[]
   headerText?: string
   footerText?: string
+  /** Meta message_id to quote (reply preview). */
+  contextMessageId?: string
 }
 
 interface SendInteractiveListEngineArgs extends AuditoriaEnvio {
@@ -427,6 +437,8 @@ interface SendInteractiveListEngineArgs extends AuditoriaEnvio {
   sections: InteractiveListSection[]
   headerText?: string
   footerText?: string
+  /** Meta message_id to quote (reply preview). */
+  contextMessageId?: string
 }
 
 /**
@@ -492,10 +504,7 @@ async function sendInteractiveViaMeta(
   }
   const sanitized = sendTarget.target
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    input.accountId,
-  )
+  const { phoneNumberId, accessToken } = await loadConversationMetaCredentials(db, input.conversationId, input.accountId)
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'buttons') {
@@ -515,6 +524,7 @@ async function sendInteractiveViaMeta(
         buttons: input.buttons,
         headerText: input.headerText,
         footerText: input.footerText,
+        ...(input.contextMessageId ? { contextMessageId: input.contextMessageId } : {}),
       })
       return r.messageId
     }
@@ -535,6 +545,7 @@ async function sendInteractiveViaMeta(
       sections: input.sections,
       headerText: input.headerText,
       footerText: input.footerText,
+      ...(input.contextMessageId ? { contextMessageId: input.contextMessageId } : {}),
     })
     return r.messageId
   }

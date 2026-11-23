@@ -1,4 +1,4 @@
--- Post-migration assertions for the CI job in
+﻿-- Post-migration assertions for the CI job in
 -- `.github/workflows/migrations.yml`.
 --
 -- `supabase db reset` already fails on any statement Postgres rejects,
@@ -178,6 +178,115 @@ BEGIN
       'idx_flow_runs_flow_contact_started is missing — migration 080 did not apply';
   END IF;
 
+  -- 081 widens the resume_reason CHECK for the reply buffer and the
+  -- indefinite wait, and adds the per-node stats RPC behind the new
+  -- Esperar respuesta card. Same drop-and-re-add-by-name pitfall as
+  -- 080: assert the live constraint actually allows both values.
+  IF pg_get_constraintdef(
+       (SELECT oid FROM pg_constraint WHERE conname = 'flow_runs_resume_reason_check')
+     ) NOT LIKE '%reply_buffer%'
+     OR pg_get_constraintdef(
+       (SELECT oid FROM pg_constraint WHERE conname = 'flow_runs_resume_reason_check')
+     ) NOT LIKE '%awaiting_reply%' THEN
+    RAISE EXCEPTION
+      'flow_runs_resume_reason_check does not allow reply_buffer/awaiting_reply — migration 081 did not apply';
+  END IF;
+  IF to_regprocedure('public.flow_node_stats(uuid,timestamp with time zone)') IS NULL THEN
+    RAISE EXCEPTION
+      'public.flow_node_stats(uuid, timestamptz) is missing — migration 081 did not apply';
+  END IF;
+  IF pg_get_functiondef(
+       'public.list_timed_out_flow_runs(timestamp with time zone,integer)'::regprocedure
+     ) NOT LIKE '%awaiting_reply%' THEN
+    RAISE EXCEPTION
+      'list_timed_out_flow_runs still sweeps awaiting_reply runs — migration 081 did not apply';
+  END IF;
+
+  -- 082 adds the Tracking section tables: pixels, links, clicks and the
+  -- per-contact attribution row. Assert the four exist and that RLS is on
+  -- (the webhook writes clicks/attribution with service_role only).
+  IF to_regclass('public.tracking_pixels') IS NULL
+     OR to_regclass('public.tracking_links') IS NULL
+     OR to_regclass('public.tracking_clicks') IS NULL
+     OR to_regclass('public.contact_attribution') IS NULL THEN
+    RAISE EXCEPTION
+      'tracking tables are missing — migration 082 did not apply';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.tracking_clicks'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.contact_attribution'::regclass) THEN
+    RAISE EXCEPTION
+      'RLS is off on the tracking tables — migration 082 did not apply';
+  END IF;
+
+  -- 084 adds the MCP credentials store. Assert the table, RLS and the
+  -- unique hash index the bearer lookup depends on.
+  IF to_regclass('public.mcp_credentials') IS NULL THEN
+    RAISE EXCEPTION 'mcp_credentials is missing — migration 084 did not apply';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.mcp_credentials'::regclass) THEN
+    RAISE EXCEPTION 'RLS is off on mcp_credentials — migration 084 did not apply';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'mcp_credentials'
+      AND indexdef ILIKE '%UNIQUE%key_hash%'
+  ) THEN
+    RAISE EXCEPTION 'mcp_credentials.key_hash is not unique — migration 084 did not apply';
+  END IF;
+
+  -- 085 adds the service-role-only graph writer the MCP server uses.
+  -- It must NOT be executable by authenticated users.
+  IF to_regprocedure('public.replace_flow_graph_admin(uuid,uuid,jsonb,jsonb)') IS NULL THEN
+    RAISE EXCEPTION
+      'replace_flow_graph_admin is missing — migration 085 did not apply';
+  END IF;
+  IF has_function_privilege(
+       'authenticated',
+       'public.replace_flow_graph_admin(uuid,uuid,jsonb,jsonb)',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION
+      'authenticated can execute replace_flow_graph_admin — migration 085 did not apply';
+  END IF;
+
+  -- 087 adds the sales history, ad spend and the dashboard RPCs, plus
+  -- the stable lead number on contacts.
+  IF to_regclass('public.sales') IS NULL OR to_regclass('public.ad_spend') IS NULL THEN
+    RAISE EXCEPTION 'sales/ad_spend are missing — migration 087 did not apply';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'contacts' AND column_name = 'lead_number'
+  ) THEN
+    RAISE EXCEPTION 'contacts.lead_number is missing — migration 087 did not apply';
+  END IF;
+  IF to_regprocedure(
+       'public.dashboard_sales(timestamp with time zone,timestamp with time zone,uuid,uuid,uuid,text,text)'
+     ) IS NULL THEN
+    RAISE EXCEPTION 'dashboard_sales is missing — migration 087 did not apply';
+  END IF;
+  IF to_regprocedure(
+       'public.dashboard_attention(timestamp with time zone,timestamp with time zone,uuid,text)'
+     ) IS NULL THEN
+    RAISE EXCEPTION 'dashboard_attention is missing — migration 087 did not apply';
+  END IF;
+
+  IF to_regclass('public.whatsapp_connections') IS NULL THEN
+    RAISE EXCEPTION 'whatsapp_connections is missing — migration 089 did not apply';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'conversations' AND column_name = 'connection_id'
+  ) THEN
+    RAISE EXCEPTION 'conversations.connection_id is missing — migration 089 did not apply';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'message_templates' AND column_name = 'waba_id'
+  ) THEN
+    RAISE EXCEPTION 'message_templates.waba_id is missing — migration 089 did not apply';
+  END IF;
   RAISE NOTICE 'schema verification passed';
 END
 $$;
@@ -196,3 +305,4 @@ $$;
 --    assertion (commit 42c7db0, run 31579334056) surfaced as
 --    `failed to execute query: error: ...` and exited 1. This is not a
 --    decorative green tick.
+

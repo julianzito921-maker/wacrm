@@ -40,7 +40,9 @@ export function cuentaCaracteres(texto: string): number {
 import { getT } from "@/lib/i18n/translate";
 import {
   AUTO_ADVANCING_NODE_TYPES,
+  BUFFER_MAX_SEGUNDOS,
   BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS,
+  ESPERA_MAX_SEGUNDOS,
   MAX_AUTO_ADVANCING_CHAIN,
   META_CAPI_EVENTOS,
   WAIT_MAX_SEGUNDOS,
@@ -889,8 +891,12 @@ function validateNode(
       const cfg = node.config as {
         var_key?: string;
         espera_minutos?: number;
+        espera_segundos?: number;
+        esperar_indefinido?: boolean;
+        buffer_segundos?: number;
         contesto_next?: string;
         no_contesto_next?: string;
+        campo_contacto?: string;
       };
       if (!cfg.var_key?.trim()) {
         issues.push({
@@ -901,29 +907,56 @@ function validateNode(
           message: t("saveReplyNeedsVar"),
         });
       }
-      const espera = Number(cfg.espera_minutos);
-      if (Number.isFinite(espera) && espera > 23 * 60) {
+      const espera =
+        typeof cfg.espera_segundos === "number" && Number.isFinite(cfg.espera_segundos)
+          ? cfg.espera_segundos
+          : Number(cfg.espera_minutos) * 60;
+      if (!cfg.esperar_indefinido) {
+        if (!Number.isFinite(espera) || espera < 1) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "espera_segundos",
+            message: t("saveReplyNeedsWait"),
+          });
+        } else if (espera > ESPERA_MAX_SEGUNDOS) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "espera_segundos",
+            message: t("saveReplyWaitTooLong", { max: 31 }),
+          });
+        } else if (espera > 23 * 3600) {
+          // Se permite, pero fuera de la ventana de 24 h de WhatsApp la
+          // rama de «no contesta» no podrá mandar mensajes libres.
+          issues.push({
+            severity: "warning",
+            scope: "node",
+            node_key: node.node_key,
+            field: "espera_segundos",
+            message: t("saveReplyWaitOutsideWindow"),
+          });
+        }
+      }
+      const buffer = Number(cfg.buffer_segundos) || 0;
+      if (buffer < 0 || buffer > BUFFER_MAX_SEGUNDOS) {
         issues.push({
           severity: "error",
           scope: "node",
           node_key: node.node_key,
-          field: "espera_minutos",
-          message: t("saveReplyWaitTooLong"),
+          field: "buffer_segundos",
+          message: t("saveReplyBufferRange", { max: BUFFER_MAX_SEGUNDOS }),
         });
       }
-      if (!Number.isFinite(espera) || espera < 1) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "espera_minutos",
-          message: t("saveReplyNeedsWait"),
-        });
-      }
-      for (const [campo, valor] of [
-        ["contesto_next", cfg.contesto_next],
-        ["no_contesto_next", cfg.no_contesto_next],
-      ] as const) {
+      const ramas: ReadonlyArray<readonly [string, string | undefined]> = cfg.esperar_indefinido
+        ? ([["contesto_next", cfg.contesto_next]] as const)
+        : ([
+            ["contesto_next", cfg.contesto_next],
+            ["no_contesto_next", cfg.no_contesto_next],
+          ] as const);
+      for (const [campo, valor] of ramas) {
         if (!valor) {
           issues.push({
             severity: "error",

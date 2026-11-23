@@ -1,4 +1,4 @@
-import type { AccountRole } from "@/lib/auth/roles";
+﻿import type { AccountRole } from "@/lib/auth/roles";
 import type { InteractiveMessagePayload } from "@/lib/whatsapp/interactive";
 
 export type {
@@ -191,6 +191,8 @@ export interface Conversation {
   id: string;
   user_id: string;
   contact_id: string;
+  /** Conexión de WhatsApp de origen (migración 089). */
+  connection_id?: string | null;
   status: ConversationStatus;
   assigned_agent_id?: string;
   last_message_text?: string;

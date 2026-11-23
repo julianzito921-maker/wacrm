@@ -50,12 +50,14 @@ import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media"
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
 import { MoveKanbanForm, SendPaymentForm, SendTemplateForm } from "./bloques-forms";
+import { EsperarRespuestaForm } from "./esperar-respuesta-form";
 import { MensajeForm } from "./mensaje-form";
 import { TriggerFields } from "./trigger-fields";
 import {
   META_CAPI_EVENTOS,
   WAIT_INLINE_MAX_SEGUNDOS,
   WAIT_MAX_SEGUNDOS,
+  type SaveReplyNodeConfig,
 } from "@/lib/flows/types";
 
 type FormT = ReturnType<typeof useTranslations>;
@@ -239,59 +241,13 @@ export function NodeConfigForm({
 
     case "save_reply":
       return (
-        <>
-          <TextRow
-            label={t("saveReplyPromptLabel")}
-            value={(cfg as { prompt_text?: string }).prompt_text ?? ""}
-            onChange={(v) => onUpdateConfig({ prompt_text: v })}
-            rows={2}
-          />
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
-              {t("saveReplyVarLabel")}
-            </label>
-            <Input
-              value={(cfg as { var_key?: string }).var_key ?? ""}
-              onChange={(e) =>
-                onUpdateConfig({
-                  var_key: e.target.value.replace(/[^a-zA-Z0-9_]/g, ""),
-                })
-              }
-              placeholder={t("varKeyPlaceholder")}
-              className="bg-muted font-mono text-xs"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
-              {t("saveReplyEsperaLabel")}
-            </label>
-            <Input
-              type="number"
-              min={1}
-              value={(cfg as { espera_minutos?: number }).espera_minutos ?? 30}
-              onChange={(e) =>
-                onUpdateConfig({
-                  espera_minutos: Math.max(Number(e.target.value) || 0, 1),
-                })
-              }
-              className="bg-muted"
-            />
-          </div>
-          <NextNodeRow
-            value={(cfg as { contesto_next?: string }).contesto_next ?? ""}
-            allNodes={allNodes}
-            currentKey={node.node_key}
-            onChange={(v) => onUpdateConfig({ contesto_next: v })}
-            label={t("saveReplyIfYes")}
-          />
-          <NextNodeRow
-            value={(cfg as { no_contesto_next?: string }).no_contesto_next ?? ""}
-            allNodes={allNodes}
-            currentKey={node.node_key}
-            onChange={(v) => onUpdateConfig({ no_contesto_next: v })}
-            label={t("saveReplyIfNo")}
-          />
-        </>
+        <EsperarRespuestaForm
+          cfg={cfg as unknown as SaveReplyNodeConfig}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          t={t}
+        />
       );
 
     case "collect_input":

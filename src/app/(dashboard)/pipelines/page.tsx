@@ -253,6 +253,15 @@ export default function PipelinesPage() {
         }).catch((err) => {
           console.error("[pipelines] deal_stage_changed dispatch failed:", err);
         });
+        // Seguimiento: si la etapa nueva es la de «compra» del píxel
+        // Meta, dispara Purchase. Fire-and-forget, no frena el tablero.
+        void fetch("/api/tracking/stage", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ deal_id: deal.id }),
+        }).catch((err) => {
+          console.error("[pipelines] tracking stage dispatch failed:", err);
+        });
       }
     },
     [supabase, refreshDeals, t, deals],

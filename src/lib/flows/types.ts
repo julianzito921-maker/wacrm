@@ -189,8 +189,56 @@ export interface SaveReplyNodeConfig {
   contesto_next: string;
   /** Nodo al que sigue si no contesta dentro de la espera. */
   no_contesto_next: string;
-  /** Cuánto esperar antes de darla por no contestada, en minutos. */
-  espera_minutos: number;
+  /**
+   * Cuánto esperar antes de darla por no contestada, en minutos.
+   * Formato viejo: se sigue escribiendo junto a `espera_segundos` para
+   * que el código desplegado antes de este cambio pueda leerlo.
+   */
+  espera_minutos?: number;
+  /** Espera máxima, en segundos (tope duro: 31 días). */
+  espera_segundos?: number;
+  /**
+   * «Esperar indefinidamente»: no hay salida por timeout. Se guarda con
+   * `next_run_at` a 31 días como válvula de seguridad, así que el
+   * contacto nunca queda bloqueado para siempre.
+   */
+  esperar_indefinido?: boolean;
+  /**
+   * Buffer de mensajes: si la clienta manda varios mensajes seguidos,
+   * se agrupan durante estos segundos en una sola variable antes de
+   * avanzar. 0 o ausente = apagado.
+   */
+  buffer_segundos?: number;
+  /** Cita el mensaje de la clienta en el siguiente bloque de envío. */
+  citar_respuesta?: boolean;
+  /** Reacciona con 👍 al mensaje de la clienta al capturarlo. */
+  reaccionar?: boolean;
+  /**
+   * Además de `vars.<var_key>`, guarda el texto en el contacto:
+   * `custom:<custom_field_id>` o `name` | `email` | `company`.
+   * Vacío = no tocar el contacto.
+   */
+  campo_contacto?: string;
+}
+
+/** Tope de la espera configurable (31 días) y válvula del «indefinido». */
+export const ESPERA_MAX_SEGUNDOS = 31 * 24 * 3600;
+/** Tope del buffer de mensajes de «Esperar respuesta». */
+export const BUFFER_MAX_SEGUNDOS = 120;
+/** Clave reservada en `flow_runs.vars` con el wamid a citar. */
+export const VAR_REPLY_TO = "__reply_to";
+/** Clave reservada en `flow_runs.vars` con el buffer en curso. */
+export const VAR_BUFFER = "__buffer";
+
+/** Estado del buffer de mensajes mientras la corrida espera. */
+export interface BufferRespuesta {
+  nodo: string;
+  /** ISO del primer mensaje; la ventana no se desliza. */
+  inicio: string;
+  /** Textos en orden de llegada. */
+  textos: string[];
+  /** wamid del primer mensaje (para la cita y la reacción). */
+  reply_to?: string | null;
 }
 
 export interface CollectInputNodeConfig {
@@ -466,7 +514,13 @@ export interface FlowRunRow {
   end_reason: string | null;
   /** Migración 077: cuándo la retoma el cron (null = no está estacionada). */
   next_run_at?: string | null;
-  resume_reason?: "delay" | "reply_timeout" | "payment_timeout" | null;
+  resume_reason?:
+    | "delay"
+    | "reply_timeout"
+    | "payment_timeout"
+    | "reply_buffer"
+    | "awaiting_reply"
+    | null;
 }
 
 // ============================================================
@@ -542,6 +596,8 @@ export interface DispatchInboundInput {
   userId: string;
   contactId: string;
   conversationId: string;
+  /** Conexión de WhatsApp de la conversación (migración 089). */
+  connectionId?: string | null;
   message: ParsedInbound;
 }
 

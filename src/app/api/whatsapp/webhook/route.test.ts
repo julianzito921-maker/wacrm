@@ -83,20 +83,34 @@ vi.mock('@supabase/supabase-js', () => ({
               },
             }),
           }
+        case 'whatsapp_connections': {
+          const chain = {
+            eq: () => chain,
+            order: () => chain,
+            maybeSingle: async () => ({ data: null, error: null }),
+            single: async () => ({ data: null, error: null }),
+            then: (resolve: (value: unknown) => unknown) =>
+              Promise.resolve({ data: [], error: null }).then(resolve),
+          }
+          return { select: () => chain }
+        }
         case 'conversations':
           // findOrCreateConversation: select().eq().eq().order().limit()
           return {
             select: () => ({
               eq: () => ({
-                eq: () => ({
-                  order: () => ({
-                    limit: () =>
-                      Promise.resolve({
-                        data: [h.state.conversation],
-                        error: null,
-                      }),
-                  }),
-                }),
+                eq: () => {
+                  const listo = () =>
+                    Promise.resolve({
+                      data: [h.state.conversation],
+                      error: null,
+                    })
+                  const chain = {
+                    order: () => ({ limit: listo }),
+                    is: () => ({ order: () => ({ limit: listo }) }),
+                  }
+                  return chain
+                },
               }),
             }),
             update: () => ({

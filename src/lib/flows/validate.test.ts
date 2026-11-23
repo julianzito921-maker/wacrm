@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+﻿import { describe, it, expect } from "vitest";
 import {
   validateFlowForActivation,
   reachableFromEntry,
@@ -666,5 +666,68 @@ describe("auto-advancing chain length", () => {
         message: expect.stringContaining(String(MAX_AUTO_ADVANCING_CHAIN + 1)),
       }),
     ]);
+  });
+});
+
+describe("validateFlowForActivation — Esperar respuesta (save_reply)", () => {
+  const flow = {
+    name: "Esperar respuesta",
+    trigger_type: "keyword" as const,
+    trigger_config: { keywords: ["hola"] },
+    entry_node_id: "start",
+  };
+  const nodes = (cfg: Record<string, unknown>) => [
+    { node_key: "start", node_type: "start", config: { next_node_key: "espera" } },
+    {
+      node_key: "espera",
+      node_type: "save_reply",
+      config: { var_key: "resp", contesto_next: "fin", no_contesto_next: "fin", ...cfg },
+    },
+    { node_key: "fin", node_type: "end", config: {} },
+  ];
+
+  it("acepta esperar indefinidamente sin rama de no contesta", () => {
+    const issues = validateFlowForActivation(
+      flow,
+      nodes({ esperar_indefinido: true, espera_segundos: 60 }),
+    );
+    expect(issues.filter((i) => i.severity === "error")).toEqual([]);
+  });
+
+  it("rechaza un buffer de mas de 120 segundos", () => {
+    const issues = validateFlowForActivation(
+      flow,
+      nodes({ espera_segundos: 60, buffer_segundos: 500 }),
+    );
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "error", field: "buffer_segundos" }),
+      ]),
+    );
+  });
+
+  it("rechaza una espera de mas de 31 dias", () => {
+    const issues = validateFlowForActivation(
+      flow,
+      nodes({ espera_segundos: 32 * 24 * 3600 }),
+    );
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "error", field: "espera_segundos" }),
+      ]),
+    );
+  });
+
+  it("avisa (sin bloquear) si la espera pasa de 23 h", () => {
+    const issues = validateFlowForActivation(
+      flow,
+      nodes({ espera_segundos: 25 * 3600 }),
+    );
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "warning", field: "espera_segundos" }),
+      ]),
+    );
+    expect(issues.filter((i) => i.severity === "error")).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-type Row = Record<string, unknown>;
+﻿type Row = Record<string, unknown>;
 type Filter = (row: Row) => boolean;
 
 export type FakeTables = Record<string, Row[]>;
@@ -10,8 +10,9 @@ function readColumn(row: Row, column: string): unknown {
   return json?.[jsonKey] ?? null;
 }
 
+let idCounter = 0;
+
 export function createFakeDb(tables: FakeTables, failingTables: ReadonlySet<string> = new Set()) {
-  let idCounter = 0;
 
   function from(table: string) {
     tables[table] ??= [];
@@ -106,7 +107,38 @@ export function createFakeDb(tables: FakeTables, failingTables: ReadonlySet<stri
         tables[table].push(...inserted);
         return builder;
       },
+      // Upsert mínimo: reemplaza por las columnas de `onConflict` (o
+      // inserta si no hay fila). Lo usa el bloque Esperar respuesta para
+      // `contact_custom_values`.
+      upsert: (values: Row | Row[], opts?: { onConflict?: string }) => {
+        op = "insert";
+        const conflicto = (opts?.onConflict ?? "")
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
+        const list = Array.isArray(values) ? values : [values];
+        inserted = list.map((v) => {
+          const existente =
+            conflicto.length > 0
+              ? tables[table].find((r) => conflicto.every((c) => r[c] === v[c]))
+              : undefined;
+          if (existente) {
+            Object.assign(existente, structuredClone(v));
+            return existente;
+          }
+          idCounter += 1;
+          const fila = { id: `gen-${idCounter}`, ...v };
+          tables[table].push(fila);
+          return fila;
+        });
+        return builder;
+      },
       maybeSingle: async () => {
+        const result = execute();
+        const data = Array.isArray(result.data) ? (result.data[0] ?? null) : null;
+        return { data, error: result.error };
+      },
+      single: async () => {
         const result = execute();
         const data = Array.isArray(result.data) ? (result.data[0] ?? null) : null;
         return { data, error: result.error };

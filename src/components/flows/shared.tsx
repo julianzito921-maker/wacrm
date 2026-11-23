@@ -364,6 +364,23 @@ export function truncate(s: string, max = 80): string {
   return clean.slice(0, max - 1) + '…';
 }
 
+/**
+ * «1 día», «30 minutos», «45 s»: el tiempo de «Esperar respuesta» en la
+ * unidad más grande que lo represente exacto.
+ */
+export function formatearEspera(
+  segundos: number,
+  t?: (key: string, values?: Record<string, string | number>) => string
+): string {
+  const s = Math.max(0, Math.round(segundos));
+  const fmt = (n: number, unidad: 'Days' | 'Hours' | 'Minutes' | 'Seconds') =>
+    t ? t(`wait${unidad}`, { count: n }) : `${n} ${unidad.slice(0, 1).toLowerCase()}`;
+  if (s > 0 && s % 86400 === 0) return fmt(s / 86400, 'Days');
+  if (s > 0 && s % 3600 === 0) return fmt(s / 3600, 'Hours');
+  if (s > 0 && s % 60 === 0) return fmt(s / 60, 'Minutes');
+  return fmt(s, 'Seconds');
+}
+
 export function summarizeNode(
   node: BuilderNode,
   t?: (key: string, values?: Record<string, string | number>) => string
@@ -481,11 +498,29 @@ export function summarizeNode(
     case 'save_reply': {
       const varKey = typeof cfg.var_key === 'string' ? cfg.var_key : '';
       const prompt = typeof cfg.prompt_text === 'string' ? cfg.prompt_text : '';
-      const espera = typeof cfg.espera_minutos === 'number' ? cfg.espera_minutos : 0;
+      const indefinido = cfg.esperar_indefinido === true;
+      const segundos =
+        typeof cfg.espera_segundos === 'number'
+          ? cfg.espera_segundos
+          : typeof cfg.espera_minutos === 'number'
+            ? cfg.espera_minutos * 60
+            : 0;
+      const buffer = typeof cfg.buffer_segundos === 'number' ? cfg.buffer_segundos : 0;
       const partes = [
         prompt ? truncate(prompt, 34) : null,
         varKey ? `→ vars.${varKey}` : null,
-        espera > 0 ? (t ? t('minutes', { count: espera }) : `${espera} min`) : null,
+        indefinido
+          ? t
+            ? t('waitIndefinite')
+            : 'indefinido'
+          : segundos > 0
+            ? formatearEspera(segundos, t)
+            : null,
+        buffer > 0
+          ? t
+            ? t('bufferSeconds', { count: buffer })
+            : `buffer ${buffer} s`
+          : null,
       ].filter(Boolean);
       return partes.length ? partes.join(' · ') : null;
     }

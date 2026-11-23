@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,10 +22,12 @@ import {
   FolderOpen,
   LayoutList,
   LayoutGrid,
+  FileArchive,
 } from "lucide-react";
 
 import { useTranslations } from "next-intl";
 import { useCan } from "@/hooks/use-can";
+import { ImportChatDialog } from "@/components/flows/import-chat-dialog";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
@@ -109,6 +111,7 @@ export default function FlowsPage() {
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importChatOpen, setImportChatOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
@@ -404,6 +407,16 @@ export default function FlowsPage() {
           }}
         />
 
+        <GatedButton
+          canAct={canCreate}
+          gateReason={tGate("reasons.createFlows")}
+          variant="outline"
+          onClick={() => setImportChatOpen(true)}
+        >
+          <FileArchive className="h-4 w-4" />
+          {t("importChat")}
+        </GatedButton>
+
         <div className="ml-auto flex items-center gap-0.5 rounded-lg border border-border bg-muted p-0.5">
           <ToolButton
             active={carpetas}
@@ -614,6 +627,8 @@ export default function FlowsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportChatDialog open={importChatOpen} onOpenChange={setImportChatOpen} />
     </div>
   );
 }

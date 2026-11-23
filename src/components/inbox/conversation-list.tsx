@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -22,6 +22,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+interface InboxConnection {
+  id: string;
+  name: string;
+  badge_color: string;
+}
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -54,6 +60,19 @@ export function ConversationList({
   initialFilter = "all",
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
+  const [conexiones, setConexiones] = useState<InboxConnection[]>([]);
+  const [filtroConexion, setFiltroConexion] = useState("all");
+
+  useEffect(() => {
+    void (async () => {
+      const { data } = await createClient()
+        .from("whatsapp_connections")
+        .select("id, name, badge_color")
+        .order("created_at", { ascending: true });
+      setConexiones((data ?? []) as InboxConnection[]);
+    })();
+  }, []);
+
   
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
@@ -170,6 +189,10 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = applyInboxFilter(conversations, filter, now);
 
+    if (filtroConexion !== "all") {
+      result = result.filter((c) => c.connection_id === filtroConexion);
+    }
+
     // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
       result = result.filter((c) =>
@@ -191,7 +214,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, now, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, now, search, selectedTagIds, selectedCompany, filtroConexion]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -238,6 +261,22 @@ export function ConversationList({
             className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
           />
         </div>
+
+        {conexiones.length > 0 && (
+          <select
+            value={filtroConexion}
+            onChange={(e) => setFiltroConexion(e.target.value)}
+            className="border-border bg-muted text-foreground h-8 w-full rounded-md border px-2 text-xs"
+            aria-label={t("allConnections")}
+          >
+            <option value="all">{t("allConnections")}</option>
+            {conexiones.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         <div className="flex flex-wrap items-center gap-1">
           <DropdownMenu>
@@ -416,6 +455,7 @@ export function ConversationList({
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
+                connection={conexiones.find((c) => c.id === conv.connection_id)}
                 t={t}
               />
             ))}
@@ -428,6 +468,7 @@ export function ConversationList({
 
 interface ConversationItemProps {
   conversation: Conversation;
+  connection?: InboxConnection;
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
@@ -435,6 +476,7 @@ interface ConversationItemProps {
 
 function ConversationItem({
   conversation,
+  connection,
   isActive,
   onSelect,
   t,
@@ -477,9 +519,24 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
-            {displayName}
-          </span>
+          <div className="flex min-w-0 items-center gap-1">
+            <span className="truncate text-sm font-medium text-foreground">
+              {displayName}
+            </span>
+            {connection && (
+              <span
+                className="inline-flex max-w-[84px] shrink-0 items-center gap-1 truncate rounded-full border px-1.5 py-0.5 text-[9px] text-muted-foreground"
+                style={{ borderColor: connection.badge_color }}
+                title={connection.name}
+              >
+                <span
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{ background: connection.badge_color }}
+                />
+                <span className="truncate">{connection.name}</span>
+              </span>
+            )}
+          </div>
           <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">

@@ -139,13 +139,18 @@ import {
   type SendPaymentNodeConfig,
   type SendTemplateNodeConfig,
   type BurbujaMensaje,
+  type BufferRespuesta,
   ANY_MESSAGE_COOLDOWN_MS,
   AUTO_ADVANCING_NODE_TYPES,
+  BUFFER_MAX_SEGUNDOS,
   BURBUJA_ESCRIBIENDO_DEFECTO,
   BURBUJA_ESCRIBIENDO_MAX_SEGUNDOS,
+  ESPERA_MAX_SEGUNDOS,
   MAX_NODES_PER_ADVANCE,
   NODOS_FIN_DE_RAMA,
+  VAR_BUFFER,
   VAR_CURSOR_BURBUJA,
+  VAR_REPLY_TO,
   VENTANA_SERVICIO_MS,
   WAIT_INLINE_MAX_SEGUNDOS,
   WAIT_MAX_SEGUNDOS,
@@ -561,6 +566,7 @@ async function findEntryFlow(
   contactId: string,
   message: ParsedInbound,
   isFirstInbound: boolean,
+  connectionId?: string | null,
 ): Promise<FlowRow | null> {
   // A tap used to be rejected outright here, on the reasoning that
   // interactive replies are responses to existing prompts. That holds
@@ -583,7 +589,12 @@ async function findEntryFlow(
     .order("created_at", { ascending: true });
   if (error || !flows) return null;
 
-  const typed = flows as FlowRow[];
+  const typed = (flows as FlowRow[]).filter(
+    (f) =>
+      !connectionId ||
+      !(f as { connection_id?: string | null }).connection_id ||
+      (f as { connection_id?: string | null }).connection_id === connectionId,
+  );
   // Prioridad (regla de Julián, 22-nov-2026): palabra clave → primer
   // mensaje → cualquier mensaje. Dentro de cada grupo, el más antiguo.
   for (const flow of typed) {
@@ -642,6 +653,7 @@ async function sendButtonsAndSuspend(
   // Meta's 20-char cap; meta-api's validator throws a descriptive error
   // and the caller logs it — we never truncate silently.
   await ritmoHumano(db, run, textoDelNodo);
+  const replyTo = leerReplyTo(run);
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
     accountId: run.account_id,
     userId: run.user_id,
@@ -650,11 +662,13 @@ async function sendButtonsAndSuspend(
     bodyText: interpolateVars(cfg.text, run.vars),
     headerText: interpolateOptionalVars(cfg.header_text, run.vars),
     footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
+    ...(replyTo ? { contextMessageId: replyTo } : {}),
     buttons: cfg.buttons.map((b) => ({
       id: b.reply_id,
       title: interpolateVars(b.title, run.vars),
     })),
   });
+  if (replyTo) await limpiarReplyTo(db, run);
   await logEvent(db, run.id, "message_sent", node.node_key, {
     node_type: "send_buttons",
     whatsapp_message_id,
@@ -685,6 +699,7 @@ async function sendListAndSuspend(
   // See sendButtonsAndSuspend — interpolate every visible string,
   // never the row `reply_id`.
   await ritmoHumano(db, run, textoDelNodo);
+  const replyTo = leerReplyTo(run);
   const { whatsapp_message_id } = await engineSendInteractiveList({
     accountId: run.account_id,
     userId: run.user_id,
@@ -694,6 +709,7 @@ async function sendListAndSuspend(
     buttonLabel: interpolateVars(cfg.button_label, run.vars),
     headerText: interpolateOptionalVars(cfg.header_text, run.vars),
     footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
+    ...(replyTo ? { contextMessageId: replyTo } : {}),
     sections: cfg.sections.map((s) => ({
       title: interpolateOptionalVars(s.title, run.vars),
       rows: s.rows.map((r) => ({
@@ -703,6 +719,7 @@ async function sendListAndSuspend(
       })),
     })),
   });
+  if (replyTo) await limpiarReplyTo(db, run);
   await logEvent(db, run.id, "message_sent", node.node_key, {
     node_type: "send_list",
     whatsapp_message_id,
@@ -857,6 +874,145 @@ async function terminarFinDeRama(
   await endRun(db, run.id, "completed", "fin_de_rama");
 }
 
+/** Espera configurada de «Esperar respuesta», en segundos.
+ *  Nuevo formato `espera_segundos`; los flujos viejos traen minutos. */
+function esperaSegundosDe(cfg: SaveReplyNodeConfig): number {
+  if (typeof cfg.espera_segundos === "number" && Number.isFinite(cfg.espera_segundos)) {
+    return Math.min(Math.max(cfg.espera_segundos, 0), ESPERA_MAX_SEGUNDOS);
+  }
+  const minutos = Number(cfg.espera_minutos);
+  if (!Number.isFinite(minutos)) return 0;
+  return Math.min(Math.max(minutos * 60, 0), ESPERA_MAX_SEGUNDOS);
+}
+
+/** Ventana del buffer de mensajes, en segundos (0 = apagado). */
+function segundosBuffer(cfg: SaveReplyNodeConfig): number {
+  const n = Number(cfg.buffer_segundos);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(n, BUFFER_MAX_SEGUNDOS);
+}
+
+/** Buffer en curso de este nodo, si lo hay. */
+export function leerBuffer(
+  vars: Record<string, unknown> | null | undefined,
+  nodeKey: string,
+): BufferRespuesta | null {
+  const b = (vars ?? {})[VAR_BUFFER] as BufferRespuesta | undefined;
+  if (!b || b.nodo !== nodeKey || !Array.isArray(b.textos)) return null;
+  return b;
+}
+
+/** wamid a citar en el próximo envío (no lo consume). */
+function leerReplyTo(run: FlowRunRow): string | null {
+  const v = (run.vars ?? {})[VAR_REPLY_TO];
+  return typeof v === "string" && v ? v : null;
+}
+
+/** Marca la cita como usada, para que solo aplique al siguiente envío. */
+async function limpiarReplyTo(db: AdminClient, run: FlowRunRow): Promise<void> {
+  if (!run.vars || !(VAR_REPLY_TO in run.vars)) return;
+  delete run.vars[VAR_REPLY_TO];
+  await db
+    .from("flow_runs")
+    .update({ vars: run.vars })
+    .eq("id", run.id)
+    .eq("transition_seq", run.transition_seq ?? 0);
+}
+
+/** Reacción 👍 al mensaje de la clienta. Cosmética: nunca frena el flujo. */
+async function reaccionarAlMensaje(
+  db: AdminClient,
+  run: FlowRunRow,
+  messageId: string | null | undefined,
+): Promise<void> {
+  if (!messageId || !run.contact_id) return;
+  try {
+    await engineSendReaction({
+      accountId: run.account_id,
+      contactId: run.contact_id,
+      targetMessageId: messageId,
+      emoji: "👍",
+    });
+  } catch (err) {
+    console.warn(
+      "[flows] no se pudo reaccionar 👍:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/**
+ * Guarda el texto capturado en el contacto. Los campos personalizados se
+ * codifican `custom:<id>`; los base admitidos son name/email/company
+ * (teléfono no: cambiaría el destino de los envíos).
+ */
+async function guardarEnContacto(
+  db: AdminClient,
+  run: FlowRunRow,
+  campo: string,
+  valor: string,
+): Promise<void> {
+  if (!campo || !run.contact_id) return;
+  try {
+    if (campo.startsWith("custom:")) {
+      const fieldId = campo.slice("custom:".length);
+      if (!fieldId) return;
+      const { data: field } = await db
+        .from("custom_fields")
+        .select("id")
+        .eq("id", fieldId)
+        .eq("account_id", run.account_id)
+        .maybeSingle();
+      if (!field) return;
+      await db.from("contact_custom_values").upsert(
+        { contact_id: run.contact_id, custom_field_id: fieldId, value: valor },
+        { onConflict: "contact_id,custom_field_id" },
+      );
+      return;
+    }
+    if (!["name", "email", "company"].includes(campo)) return;
+    await db
+      .from("contacts")
+      .update({ [campo]: valor })
+      .eq("id", run.contact_id)
+      .eq("account_id", run.account_id);
+  } catch (err) {
+    console.warn(
+      "[flows] no se pudo guardar el campo del contacto:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/**
+ * Cierra una corrida en «Esperar indefinidamente» que llegó a su válvula
+ * de 31 días. No manda nada: fuera de la ventana de 24 h sería rechazo.
+ */
+async function cerrarEsperaIndefinida(
+  db: AdminClient,
+  runId: string,
+  nodeKey: string | null,
+): Promise<boolean> {
+  const { data } = await db
+    .from("flow_runs")
+    .update({
+      status: "completed",
+      ended_at: new Date().toISOString(),
+      end_reason: "espera_indefinida_vencida",
+      next_run_at: null,
+      resume_reason: null,
+    })
+    .eq("id", runId)
+    .eq("status", "active")
+    .eq("resume_reason", "awaiting_reply")
+    .select("id");
+  if (!Array.isArray(data) || data.length !== 1) return false;
+  await logEvent(db, runId, "completed", nodeKey, {
+    reason: "espera_indefinida_vencida",
+  });
+  return true;
+}
+
 function dormir(segundos: number): Promise<void> {
   // En las pruebas no se espera de verdad (mismo criterio que mostrarEscribiendo).
   if (segundos <= 0 || process.env.NODE_ENV === "test") return Promise.resolve();
@@ -905,6 +1061,8 @@ async function ejecutarBurbujas(
   retomada: boolean,
 ): Promise<"ok" | "estacionada" | "fallo"> {
   const items = ((node.config as unknown as SendMessageNodeConfig).items ?? []) as BurbujaMensaje[];
+  // Cita pendiente de «Esperar respuesta»: se gasta en la primera burbuja.
+  let replyTo = leerReplyTo(run);
 
   const estacionar = async (i: number, segundos: number): Promise<"estacionada"> => {
     const vars = { ...(run.vars ?? {}), [VAR_CURSOR_BURBUJA]: { nodo: node.node_key, i } };
@@ -916,6 +1074,8 @@ async function ejecutarBurbujas(
     if (ok) {
       run.vars = vars;
       run.current_node_key = node.node_key;
+      // Retoma puntual del intervalo; el cron de 10 min sigue de respaldo.
+      programarReanudarDelay(db, run.id, segundos);
     } else {
       await logEvent(db, run.id, "error", node.node_key, {
         reason: "lost_race_during_advance",
@@ -986,6 +1146,7 @@ async function ejecutarBurbujas(
             conversationId: run.conversation_id!,
             contactId: run.contact_id!,
             text: interpolateVars(texto, run.vars),
+            ...(replyTo ? { contextMessageId: replyTo } : {}),
           })
         : await engineSendMedia({
             accountId: run.account_id,
@@ -999,7 +1160,13 @@ async function ejecutarBurbujas(
                 ? interpolateVars(b.text, run.vars)
                 : undefined,
             filename: b.tipo === "document" ? b.filename : undefined,
+            ...(replyTo ? { contextMessageId: replyTo } : {}),
           });
+      // La cita aplica al primer mensaje de la secuencia, no a todas.
+      if (replyTo) {
+        await limpiarReplyTo(db, run);
+        replyTo = null;
+      }
       await logEvent(db, run.id, "message_sent", node.node_key, {
         node_type: "send_message",
         burbuja: i,
@@ -1089,13 +1256,16 @@ async function advanceFromNodeKey(
       }
       try {
         await ritmoHumano(db, run, textoDelNodo);
+        const replyTo = leerReplyTo(run);
         const { whatsapp_message_id } = await engineSendText({
           accountId: run.account_id,
     userId: run.user_id,
           conversationId: run.conversation_id!,
           contactId: run.contact_id!,
           text: interpolateVars(cfg.text, run.vars),
+          ...(replyTo ? { contextMessageId: replyTo } : {}),
         });
+        if (replyTo) await limpiarReplyTo(db, run);
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "send_message",
           whatsapp_message_id,
@@ -1115,6 +1285,7 @@ async function advanceFromNodeKey(
       const cfg = node.config as unknown as SendMediaNodeConfig;
       try {
         await ritmoHumano(db, run, textoDelNodo);
+        const replyTo = leerReplyTo(run);
         const { whatsapp_message_id } = await engineSendMedia({
           accountId: run.account_id,
     userId: run.user_id,
@@ -1126,7 +1297,9 @@ async function advanceFromNodeKey(
             ? interpolateVars(cfg.caption, run.vars)
             : undefined,
           filename: cfg.filename,
+          ...(replyTo ? { contextMessageId: replyTo } : {}),
         });
+        if (replyTo) await limpiarReplyTo(db, run);
         await logEvent(db, run.id, "message_sent", node.node_key, {
           node_type: "send_media",
           media_type: cfg.media_type,
@@ -1171,6 +1344,9 @@ async function advanceFromNodeKey(
           await logEvent(db, run.id, "error", node.node_key, {
             reason: "lost_race_during_advance",
           });
+        } else {
+          // Retoma puntual; el cron de 10 min sigue de respaldo.
+          programarReanudarDelay(db, run.id, segundos);
         }
         return { outcome: "advanced" };
       }
@@ -1365,8 +1541,8 @@ async function advanceFromNodeKey(
     }
     if (node.node_type === "save_reply") {
       // Manda el mensaje (si lo hay) y se queda esperando. La respuesta
-      // la captura handleReplyForActiveRun; si no llega, el barrido
-      // (cron) la manda por la salida de «no contesta».
+      // la captura handleReplyForActiveRun; si no llega, el cron la
+      // manda por la salida de «no contesta».
       const cfg = node.config as unknown as SaveReplyNodeConfig;
       if (cfg.prompt_text && cfg.prompt_text.trim()) {
         try {
@@ -1391,17 +1567,19 @@ async function advanceFromNodeKey(
           return { outcome: "completed" };
         }
       }
-      // El cron la retoma por «no contesta» cuando vence (tope 23 h).
-      const esperaMin = Math.min(Number(cfg.espera_minutos) || 0, 23 * 60);
+      // «Indefinido» no tiene salida por timeout: `awaiting_reply` con
+      // una válvula a 31 días que cierra la corrida sin mandar nada.
+      const indefinido = Boolean(cfg.esperar_indefinido);
+      const esperaSeg = indefinido ? ESPERA_MAX_SEGUNDOS : esperaSegundosDe(cfg);
       const avanzado = await advanceCurrentNodeKey(
         db,
         run.id,
         run.current_node_key,
         node.node_key,
-        esperaMin > 0
+        esperaSeg > 0
           ? {
-              next_run_at: new Date(Date.now() + esperaMin * 60_000).toISOString(),
-              resume_reason: "reply_timeout",
+              next_run_at: new Date(Date.now() + esperaSeg * 1000).toISOString(),
+              resume_reason: indefinido ? "awaiting_reply" : "reply_timeout",
             }
           : {},
       );
@@ -1722,10 +1900,12 @@ export async function resumeSaveReplyTimeout(
   if (!nodo || nodo.node_type !== "save_reply") return false;
 
   const cfg = nodo.config as unknown as SaveReplyNodeConfig;
+  // «Indefinido» no tiene salida por timeout: la cierra su válvula.
+  if (cfg.esperar_indefinido) return false;
   // Tope de 23 h: pasado eso la conversación está fuera de la ventana de
   // 24 h de WhatsApp y un mensaje libre sería un rechazo de Meta (y una
   // señal de spam). Mejor no mandar nada.
-  const espera = Math.min(Number(cfg.espera_minutos) || 0, 23 * 60);
+  const espera = Math.min(esperaSegundosDe(cfg) / 60, 23 * 60);
   const minutos =
     (now.getTime() - new Date(run.last_advanced_at).getTime()) / 60_000;
   // 30 s de tolerancia: next_run_at se calcula unos milisegundos antes
@@ -1738,9 +1918,136 @@ export async function resumeSaveReplyTimeout(
   await logEvent(db, run.id, "node_entered", nodo.node_key, {
     saved_key: cfg.var_key,
     sin_respuesta: true,
+    via: "no_contesto",
   });
   await advanceFromNodeKey(db, run, cfg.no_contesto_next, nodes);
   return true;
+}
+
+/**
+ * Cierra el buffer de mensajes de «Esperar respuesta» y avanza con todo
+ * lo que escribió la clienta. Lo llaman el temporizador en proceso (para
+ * que se sienta inmediato) y el barrido de 10 min como respaldo. Es
+ * idempotente: `claimReplyTransition` decide quién gana.
+ */
+export async function resumeReplyBuffer(
+  db: AdminClient,
+  runId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const { data: fila } = await db
+    .from("flow_runs")
+    .select("*")
+    .eq("id", runId)
+    .maybeSingle();
+  const run = fila as FlowRunRow | null;
+  if (
+    !run ||
+    run.status !== "active" ||
+    !run.current_node_key ||
+    run.resume_reason !== "reply_buffer"
+  ) {
+    return false;
+  }
+  const [flow, nodes] = await Promise.all([
+    loadFlow(db, run.flow_id),
+    loadAllNodes(db, run.flow_id),
+  ]);
+  if (!flow || flow.status !== "active") return false;
+  const nodo = nodes.get(run.current_node_key);
+  if (!nodo || nodo.node_type !== "save_reply") return false;
+  const cfg = nodo.config as unknown as SaveReplyNodeConfig;
+  const buffer = leerBuffer(run.vars, nodo.node_key);
+  if (!buffer) return false;
+
+  const textos = buffer.textos.map((t) => String(t).trim()).filter(Boolean);
+  const vars: Record<string, unknown> = { ...run.vars };
+  delete vars[VAR_BUFFER];
+  if (textos.length === 0) {
+    await db
+      .from("flow_runs")
+      .update({ next_run_at: null, resume_reason: null, vars })
+      .eq("id", run.id)
+      .eq("status", "active")
+      .eq("transition_seq", run.transition_seq ?? 0);
+    return false;
+  }
+  if (!cfg.var_key || !cfg.contesto_next) return false;
+
+  const capturado = textos.join("\n");
+  vars[cfg.var_key] = capturado;
+  if (cfg.campo_contacto) {
+    await guardarEnContacto(db, run, cfg.campo_contacto, capturado);
+  }
+  if (await cerrarSiFueraDeVentana(db, run, nodo.node_key, now)) return false;
+  if (!(await claimReplyTransition(db, run, cfg.contesto_next, { vars }))) {
+    return false;
+  }
+  run.vars = vars;
+  await logEvent(db, run.id, "node_entered", nodo.node_key, {
+    saved_key: cfg.var_key,
+    saved_length: capturado.length,
+    buffered: textos.length,
+    via: "contesto",
+  });
+  await advanceFromNodeKey(db, run, cfg.contesto_next, nodes);
+  return true;
+}
+
+/**
+ * Temporizador en proceso para cerrar el buffer a los N segundos. El
+ * cron (cada 10 min) es el respaldo si el proceso se reinicia. No
+ * mantiene vivo el proceso solo por este timer.
+ */
+function programarResumeBuffer(
+  db: AdminClient,
+  runId: string,
+  segundos: number,
+): void {
+  if (segundos <= 0 || process.env.NODE_ENV === "test") return;
+  const timer = setTimeout(() => {
+    void resumeReplyBuffer(db, runId).catch((err) => {
+      console.error(
+        "[flows] buffer de esperar respuesta:",
+        err instanceof Error ? err.message : err,
+      );
+    });
+  }, segundos * 1000) as unknown as { unref?: () => void };
+  timer.unref?.();
+}
+
+/**
+ * Temporizador en proceso para las esperas largas (Smart Delay e
+ * intervalos del Mensaje compuesto). Antes solo las retomaba el cron de
+ * 10 min, así que un delay real de 2 min podía ejecutarse a los 10. El
+ * cron sigue siendo el respaldo si el proceso se reinicia.
+ */
+function programarReanudarDelay(
+  db: AdminClient,
+  runId: string,
+  segundos: number,
+): void {
+  if (segundos <= 0 || process.env.NODE_ENV === "test") return;
+  const timer = setTimeout(() => {
+    void (async () => {
+      const { data } = await db
+        .from("flow_runs")
+        .select("*")
+        .eq("id", runId)
+        .maybeSingle();
+      const run = data as FlowRunRow | null;
+      if (!run || run.status !== "active" || run.resume_reason !== "delay") {
+        return;
+      }
+      await resumeDelay(db, run, new Date());
+    })().catch((err) => {
+      console.error(
+        "[flows] espera larga:",
+        err instanceof Error ? err.message : err,
+      );
+    });
+  }, segundos * 1000) as unknown as { unref?: () => void };
+  timer.unref?.();
 }
 
 /**
@@ -1969,10 +2276,11 @@ async function resumePaymentTimeout(
 }
 
 /**
- * Cron de cada minuto: retoma las corridas estacionadas cuyo
- * `next_run_at` ya venció.
- *   - 'delay'         → sigue después del Smart Delay.
- *   - 'reply_timeout' → «guardar respuesta» sin contestación.
+ * Cron: retoma las corridas estacionadas cuyo `next_run_at` ya venció.
+ *   - 'delay'          → sigue después del Smart Delay.
+ *   - 'reply_timeout'  → «Esperar respuesta» sin contestación.
+ *   - 'reply_buffer'   → cierra el buffer y avanza con todo el texto.
+ *   - 'awaiting_reply' → válvula de la espera indefinida: cierra limpio.
  * Seguro ante dos crons a la vez: cada corrida se reclama con
  * `transition_seq` y solo uno gana. Devuelve cuántas retomó.
  */
@@ -2007,6 +2315,26 @@ export async function resumeDueRuns(
             .eq("id", run.id)
             .eq("status", "active")
             .eq("transition_seq", run.transition_seq ?? 0);
+        }
+        continue;
+      }
+      if (run.resume_reason === "reply_buffer") {
+        if (await resumeReplyBuffer(db, run.id, now)) {
+          retomadas += 1;
+        } else {
+          // El buffer ya no aplica: se suelta para no releerla cada barrido.
+          await db
+            .from("flow_runs")
+            .update({ next_run_at: null, resume_reason: null })
+            .eq("id", run.id)
+            .eq("status", "active")
+            .eq("transition_seq", run.transition_seq ?? 0);
+        }
+        continue;
+      }
+      if (run.resume_reason === "awaiting_reply") {
+        if (await cerrarEsperaIndefinida(db, run.id, run.current_node_key)) {
+          retomadas += 1;
         }
         continue;
       }
@@ -2152,6 +2480,7 @@ export async function dispatchInboundToFlows(
       input.contactId,
       input.message,
       input.isFirstInboundMessage,
+      input.connectionId ?? null,
     );
     if (!flow || !flow.entry_node_id) {
       return { consumed: false, outcome: "no_match" };
@@ -2217,6 +2546,67 @@ async function handleReplyForActiveRun(
     message = { kind: "text", text: message.text, meta_message_id: message.meta_message_id };
   }
 
+  // Buffer de mensajes de «Esperar respuesta»: agrupa los mensajes que la
+  // clienta manda dentro de la ventana en una sola variable antes de
+  // avanzar. La ventana no se desliza: cuenta desde el primer mensaje.
+  if (currentNode.node_type === "save_reply") {
+    const cfgBuffer = currentNode.config as unknown as SaveReplyNodeConfig;
+    const ventana = segundosBuffer(cfgBuffer);
+    const enCurso = leerBuffer(run.vars, currentNode.node_key);
+    if (enCurso || ventana > 0) {
+      if (message.kind !== "text" || !message.text.trim()) {
+        // Con el buffer abierto, lo que no sea texto se ignora.
+        return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+      }
+      const texto = message.text.trim();
+      if (enCurso) {
+        const vars = {
+          ...run.vars,
+          [VAR_BUFFER]: { ...enCurso, textos: [...enCurso.textos, texto] },
+        };
+        await db
+          .from("flow_runs")
+          .update({ vars })
+          .eq("id", run.id)
+          .eq("status", "active")
+          .eq("transition_seq", run.transition_seq);
+        run.vars = vars;
+        return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+      }
+      // Primer mensaje: abre el buffer y programa su cierre.
+      const vars: Record<string, unknown> = {
+        ...run.vars,
+        [VAR_BUFFER]: {
+          nodo: currentNode.node_key,
+          inicio: new Date().toISOString(),
+          textos: [texto],
+          reply_to: message.meta_message_id ?? null,
+        } satisfies BufferRespuesta,
+      };
+      if (cfgBuffer.citar_respuesta && message.meta_message_id) {
+        vars[VAR_REPLY_TO] = message.meta_message_id;
+      }
+      if (cfgBuffer.reaccionar) {
+        await reaccionarAlMensaje(db, run, message.meta_message_id);
+      }
+      const ok = await advanceCurrentNodeKey(
+        db,
+        run.id,
+        run.current_node_key,
+        currentNode.node_key,
+        {
+          next_run_at: new Date(Date.now() + ventana * 1000).toISOString(),
+          resume_reason: "reply_buffer",
+          vars,
+        },
+      );
+      if (!ok) return lostReplyRace(db, run, currentNode.node_key);
+      run.vars = vars;
+      programarResumeBuffer(db, run.id, ventana);
+      return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+    }
+  }
+
   // Two ways a reply can advance:
   //   1. Interactive button/list tap on a send_buttons/send_list node.
   //   2. Text reply on a collect_input node — capture into vars.
@@ -2244,13 +2634,23 @@ async function handleReplyForActiveRun(
     const capturado = message.text.trim();
     if (capturado.length > 0 && cfg.var_key && cfg.contesto_next) {
       const vars = { ...run.vars, [cfg.var_key]: capturado };
+      if (cfg.citar_respuesta && message.meta_message_id) {
+        vars[VAR_REPLY_TO] = message.meta_message_id;
+      }
       if (!(await claimReplyTransition(db, run, cfg.contesto_next, { vars }))) {
         return lostReplyRace(db, run, currentNode.node_key);
       }
       run.vars = vars;
+      if (cfg.reaccionar) {
+        await reaccionarAlMensaje(db, run, message.meta_message_id);
+      }
+      if (cfg.campo_contacto) {
+        await guardarEnContacto(db, run, cfg.campo_contacto, capturado);
+      }
       await logEvent(db, run.id, "node_entered", currentNode.node_key, {
         saved_key: cfg.var_key,
         saved_length: capturado.length,
+        via: "contesto",
       });
       const outcome = await advanceFromNodeKey(db, run, cfg.contesto_next, nodes);
       return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };

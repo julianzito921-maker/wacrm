@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // COLA DE SALIDA — acceso a datos
 //
 // Se separa del worker (`cola.ts`) a propósito: el punto único de envío
@@ -14,6 +14,7 @@ import { supabaseAdmin } from "@/lib/flows/admin-client";
 export interface FilaParaEncolar {
   account_id: string;
   conversation_id: string | null;
+  connection_id?: string | null;
   contact_id: string | null;
   message_type: string;
   payload: Record<string, unknown>;
@@ -33,9 +34,18 @@ export interface FilaParaEncolar {
 export async function insertarEnCola(fila: FilaParaEncolar): Promise<string | null> {
   try {
     const db = supabaseAdmin();
+    let connectionId = fila.connection_id ?? null;
+    if (!connectionId && fila.conversation_id) {
+      const { data: conv } = await db
+        .from("conversations")
+        .select("connection_id")
+        .eq("id", fila.conversation_id)
+        .maybeSingle();
+      connectionId = (conv?.connection_id as string | null) ?? null;
+    }
     const { data } = await db
       .from("outbound_message_queue")
-      .upsert(fila as never, {
+      .upsert({ ...fila, connection_id: connectionId } as never, {
         onConflict: "account_id,idempotency_key",
         ignoreDuplicates: true,
       })

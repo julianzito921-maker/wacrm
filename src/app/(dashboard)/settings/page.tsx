@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { Suspense, useMemo, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -19,6 +19,8 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { InboxSettings } from '@/components/settings/inbox-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { TrackingPanel } from '@/components/settings/tracking-panel';
+import { McpSettings } from '@/components/settings/mcp-settings';
 import {
   resolveSection,
   type SettingsSection,
@@ -83,6 +85,8 @@ function SettingsPageInner() {
     deals: <DealsSettings />,
     members: <MembersTab />,
     api: <ApiKeysSettings />,
+    tracking: <TrackingPanel />,
+    mcp: <McpSettings />,
   };
 
   return (

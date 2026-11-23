@@ -1,0 +1,515 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { toast } from 'sonner';
+import {
+  Check,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
+
+interface Connection {
+  id: string;
+  name: string;
+  phone_number: string | null;
+  phone_number_id: string;
+  waba_id: string | null;
+  status: 'connected' | 'disconnected';
+  quality_rating: string | null;
+  messaging_limit_tier: string | null;
+  badge_color: string;
+  last_synced_at: string | null;
+  created_at: string;
+}
+
+const FORM = {
+  name: '',
+  phone_number_id: '',
+  waba_id: '',
+  access_token: '',
+  verify_token: '',
+  app_secret: '',
+  badge_color: '#6366f1',
+};
+
+const COLORES = ['#6366f1', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4'];
+
+function calidadClase(q: string | null) {
+  if (q === 'GREEN') return 'border-emerald-500/30 text-emerald-300';
+  if (q === 'YELLOW') return 'border-amber-500/30 text-amber-300';
+  if (q === 'RED') return 'border-rose-500/30 text-rose-300';
+  return 'border-slate-500/30 text-slate-300';
+}
+
+function tierTexto(t: string | null) {
+  if (!t) return '—';
+  return t.replace('TIER_', '').replace('_', ',');
+}
+
+export function ConnectionsView() {
+  const t = useTranslations('Connections');
+  const [conexiones, setConexiones] = useState<Connection[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [busqueda, setBusqueda] = useState('');
+  const [filtro, setFiltro] = useState<'all' | 'connected' | 'disconnected'>('all');
+  const [abierto, setAbierto] = useState(false);
+  const [editando, setEditando] = useState<Connection | null>(null);
+  const [form, setForm] = useState({ ...FORM });
+  const [guardando, setGuardando] = useState(false);
+  const [sincronizando, setSincronizando] = useState<string | null>(null);
+  const [borrar, setBorrar] = useState<string | null>(null);
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    try {
+      const res = await fetch('/api/connections');
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? 'load');
+      setConexiones((json.connections ?? []) as Connection[]);
+    } catch {
+      toast.error(t('loadFailed'));
+    } finally {
+      setCargando(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void cargar();
+  }, [cargar]);
+
+  const conectadas = conexiones.filter((c) => c.status === 'connected').length;
+  const desconectadas = conexiones.length - conectadas;
+
+  const lista = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    return conexiones.filter((c) => {
+      if (filtro !== 'all' && c.status !== filtro) return false;
+      if (!q) return true;
+      return [c.name, c.phone_number, c.phone_number_id, c.waba_id]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q));
+    });
+  }, [conexiones, busqueda, filtro]);
+
+  const abrirNueva = () => {
+    setEditando(null);
+    setForm({ ...FORM });
+    setAbierto(true);
+  };
+
+  const abrirEditar = (c: Connection) => {
+    setEditando(c);
+    setForm({
+      name: c.name,
+      phone_number_id: c.phone_number_id,
+      waba_id: c.waba_id ?? '',
+      access_token: '',
+      verify_token: '',
+      app_secret: '',
+      badge_color: c.badge_color,
+    });
+    setAbierto(true);
+  };
+
+  const guardar = async () => {
+    if (!form.name.trim() || !form.phone_number_id.trim()) {
+      toast.error(t('missingFields'));
+      return;
+    }
+    if (!editando && !form.access_token.trim()) {
+      toast.error(t('missingToken'));
+      return;
+    }
+    setGuardando(true);
+    try {
+      const body: Record<string, unknown> = {
+        name: form.name.trim(),
+        waba_id: form.waba_id.trim() || null,
+        badge_color: form.badge_color,
+      };
+      if (form.access_token.trim()) body.access_token = form.access_token.trim();
+      if (form.verify_token.trim()) body.verify_token = form.verify_token.trim();
+      if (form.app_secret.trim()) body.app_secret = form.app_secret.trim();
+      if (!editando) body.phone_number_id = form.phone_number_id.trim();
+
+      const res = await fetch(
+        editando ? `/api/connections/${editando.id}` : '/api/connections',
+        {
+          method: editando ? 'PATCH' : 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (json.error === 'meta_error') {
+          toast.error(t('metaError', { detail: json.detail ?? '' }));
+        } else {
+          toast.error(
+            json.error === 'duplicate_phone' ? t('duplicate') : t('genericError'),
+          );
+        }
+        return;
+      }
+      toast.success(editando ? t('saved') : t('created'));
+      setAbierto(false);
+      await cargar();
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const sincronizar = async (c: Connection) => {
+    setSincronizando(c.id);
+    try {
+      const res = await fetch(`/api/connections/${c.id}/sync`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(
+          json.error === 'meta_error'
+            ? t('metaError', { detail: json.detail ?? '' })
+            : t('genericError'),
+        );
+        return;
+      }
+      toast.success(t('synced'));
+      await cargar();
+    } finally {
+      setSincronizando(null);
+    }
+  };
+
+  const eliminar = async (id: string) => {
+    const res = await fetch(`/api/connections/${id}`, { method: 'DELETE' });
+    setBorrar(null);
+    if (!res.ok) {
+      toast.error(t('genericError'));
+      return;
+    }
+    toast.success(t('deleted'));
+    await cargar();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">{t('title')}</h1>
+          <p className="text-muted-foreground text-sm">{t('description')}</p>
+        </div>
+        <Button onClick={abrirNueva}>
+          <Plus className="size-4" />
+          {t('new')}
+        </Button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+          <div className="flex items-center gap-2 text-emerald-300">
+            <Wifi className="size-4" />
+            <span className="text-xs font-medium">{t('connected')}</span>
+          </div>
+          <p className="mt-1 text-2xl font-semibold text-emerald-300">{conectadas}</p>
+        </div>
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+          <div className="flex items-center gap-2 text-rose-300">
+            <WifiOff className="size-4" />
+            <span className="text-xs font-medium">{t('disconnected')}</span>
+          </div>
+          <p className="mt-1 text-2xl font-semibold text-rose-300">{desconectadas}</p>
+        </div>
+      </div>
+
+      <div className="border-border bg-card flex flex-wrap items-center gap-2 rounded-xl border p-2.5">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+          <Input
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder={t('search')}
+            className="bg-muted h-8 pl-8 text-xs"
+          />
+        </div>
+        <div className="bg-muted flex rounded-lg p-0.5">
+          {(['all', 'connected', 'disconnected'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFiltro(f)}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-[11px] font-medium',
+                filtro === f
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground',
+              )}
+            >
+              {f === 'all' ? t('all') : f === 'connected' ? t('connected') : t('disconnected')}
+            </button>
+          ))}
+        </div>
+        <Button size="icon" variant="ghost" onClick={() => void cargar()} aria-label={t('refresh')}>
+          <RefreshCw className={cn('size-4', cargando && 'animate-spin')} />
+        </Button>
+      </div>
+
+      {cargando ? (
+        <div className="text-muted-foreground flex items-center gap-2 py-10 text-sm">
+          <Loader2 className="size-4 animate-spin" /> {t('loading')}
+        </div>
+      ) : lista.length === 0 ? (
+        <div className="border-border bg-card flex flex-col items-center gap-2 rounded-xl border py-12 text-center">
+          <span className="bg-muted flex size-12 items-center justify-center rounded-full">
+            <Wifi className="text-muted-foreground size-6" />
+          </span>
+          <p className="text-sm font-medium">{t('emptyTitle')}</p>
+          <p className="text-muted-foreground max-w-sm text-xs">{t('emptyDesc')}</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={abrirNueva}>
+            <Plus className="size-4" /> {t('new')}
+          </Button>
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {lista.map((c) => (
+            <div
+              key={c.id}
+              className="overflow-hidden rounded-xl border border-indigo-500/25 bg-[#0b1020] text-slate-100 shadow-[0_18px_45px_-28px_rgba(79,70,229,0.7)]"
+            >
+              <div className="h-1.5 w-full" style={{ background: c.badge_color }} />
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-block size-2.5 rounded-full"
+                        style={{ background: c.badge_color }}
+                      />
+                      <h3 className="truncate text-sm font-semibold">{c.name}</h3>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'text-[10px]',
+                          c.status === 'connected'
+                            ? 'border-emerald-400/40 text-emerald-300'
+                            : 'border-rose-400/40 text-rose-300',
+                        )}
+                      >
+                        {c.status === 'connected' ? t('connected') : t('disconnected')}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {c.phone_number ?? '—'} · <span className="font-mono">{c.phone_number_id}</span>
+                    </p>
+                    {c.waba_id && (
+                      <p className="text-[11px] text-slate-500">WABA {c.waba_id}</p>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-indigo-400/30 bg-indigo-500/10 text-indigo-100 hover:bg-indigo-500/20"
+                    onClick={() => void sincronizar(c)}
+                    disabled={sincronizando === c.id}
+                  >
+                    {sincronizando === c.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3.5" />
+                    )}
+                    {t('sync')}
+                  </Button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-indigo-400/20 bg-black/30 p-2.5">
+                    <p className="text-[9px] tracking-wider text-slate-500 uppercase">
+                      {t('quality')}
+                    </p>
+                    <Badge variant="outline" className={cn('mt-1 text-[10px]', calidadClase(c.quality_rating))}>
+                      {c.quality_rating ?? '—'}
+                    </Badge>
+                  </div>
+                  <div className="rounded-lg border border-indigo-400/20 bg-black/30 p-2.5">
+                    <p className="text-[9px] tracking-wider text-slate-500 uppercase">
+                      {t('limit')}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-indigo-200">
+                      {tierTexto(c.messaging_limit_tier)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <p className="text-[10px] text-slate-500">
+                    {t('lastSync')}:{' '}
+                    {c.last_synced_at
+                      ? new Intl.DateTimeFormat(undefined, {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                        }).format(new Date(c.last_synced_at))
+                      : t('never')}
+                  </p>
+                  {borrar === c.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400">{t('confirmDelete')}</span>
+                      <Button size="sm" variant="destructive" onClick={() => void eliminar(c.id)}>
+                        {t('yes')}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setBorrar(null)}>
+                        {t('no')}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-slate-300 hover:text-white"
+                        onClick={() => abrirEditar(c)}
+                        aria-label={t('edit')}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-rose-300 hover:text-rose-200"
+                        onClick={() => setBorrar(c.id)}
+                        aria-label={t('delete')}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={abierto} onOpenChange={setAbierto}>
+        <DialogContent className="border-border bg-popover sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editando ? t('editTitle') : t('newTitle')}</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              {t('formHint')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-1">
+            <div>
+              <Label className="text-muted-foreground mb-1 block text-xs">{t('name')}</Label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                className="bg-muted"
+                placeholder="WhatsApp Ventas"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-muted-foreground mb-1 block text-xs">{t('phoneNumberId')}</Label>
+                <Input
+                  value={form.phone_number_id}
+                  onChange={(e) => setForm((f) => ({ ...f, phone_number_id: e.target.value }))}
+                  className="bg-muted font-mono text-xs"
+                  disabled={Boolean(editando)}
+                />
+              </div>
+              <div>
+                <Label className="text-muted-foreground mb-1 block text-xs">{t('wabaId')}</Label>
+                <Input
+                  value={form.waba_id}
+                  onChange={(e) => setForm((f) => ({ ...f, waba_id: e.target.value }))}
+                  className="bg-muted font-mono text-xs"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-muted-foreground mb-1 block text-xs">{t('accessToken')}</Label>
+              <Input
+                type="password"
+                value={form.access_token}
+                onChange={(e) => setForm((f) => ({ ...f, access_token: e.target.value }))}
+                className="bg-muted font-mono text-xs"
+                placeholder={editando ? t('keepToken') : 'EAAG…'}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-muted-foreground mb-1 block text-xs">{t('appSecret')}</Label>
+                <Input
+                  type="password"
+                  value={form.app_secret}
+                  onChange={(e) => setForm((f) => ({ ...f, app_secret: e.target.value }))}
+                  className="bg-muted font-mono text-xs"
+                  placeholder={editando ? t('keepOptional') : t('optional')}
+                />
+              </div>
+              <div>
+                <Label className="text-muted-foreground mb-1 block text-xs">{t('verifyToken')}</Label>
+                <Input
+                  type="password"
+                  value={form.verify_token}
+                  onChange={(e) => setForm((f) => ({ ...f, verify_token: e.target.value }))}
+                  className="bg-muted font-mono text-xs"
+                  placeholder={editando ? t('keepOptional') : t('optional')}
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-muted-foreground mb-1 block text-xs">{t('badgeColor')}</Label>
+              <div className="flex flex-wrap gap-2">
+                {COLORES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, badge_color: c }))}
+                    className={cn(
+                      'flex size-8 items-center justify-center rounded-full border-2',
+                      form.badge_color === c ? 'border-foreground' : 'border-transparent',
+                    )}
+                    style={{ background: c }}
+                    aria-label={c}
+                  >
+                    {form.badge_color === c && <Check className="size-4 text-white" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-muted-foreground text-[10px]">{t('appSecretHint')}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAbierto(false)}>
+              {t('cancel')}
+            </Button>
+            <Button onClick={() => void guardar()} disabled={guardando}>
+              {guardando && <Loader2 className="size-4 animate-spin" />}
+              {editando ? t('save') : t('create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

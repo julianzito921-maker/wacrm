@@ -1,10 +1,10 @@
-import { enviarPlantilla, enviarTexto } from '@/lib/messaging/send'
+﻿import { enviarPlantilla, enviarTexto } from '@/lib/messaging/send'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
 } from '@/lib/flows/meta-send'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { credencialesDeConversacion } from '@/lib/whatsapp/connections'
 import {
   phoneVariants,
   isRecipientNotAllowedError,
@@ -60,6 +60,9 @@ interface SendTemplateArgs extends AuditoriaAutomatizacion {
   templateName: string
   language?: string
   params?: string[]
+  /** Meta message_id to quote (reply preview) when a flow uses
+   *  «citar respuesta» and the next block is a template. */
+  contextMessageId?: string
 }
 
 export async function engineSendText(args: SendTextArgs): Promise<{ whatsapp_message_id: string }> {
@@ -154,16 +157,16 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   }
   const sanitized = sendTarget.target
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
+  const creds = await credencialesDeConversacion(
+    db,
+    input.conversationId,
+    input.accountId,
+  )
+  if (!creds) {
     throw new Error(t('send.notConfigured'))
   }
 
-  const accessToken = decrypt(config.access_token)
+  const accessToken = creds.accessToken
 
   // Local template row. A missing row is fine: the send still goes
   // out, we just can't reconstruct the text the customer saw.
@@ -192,19 +195,20 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     if (input.kind === 'template') {
       const r = await enviarPlantilla({
         ctx,
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: creds.phoneNumberId,
         accessToken,
         to: phone,
         templateName: input.templateName,
         language: input.language,
         template: templateRow ?? undefined,
         params: input.params,
+        ...(input.contextMessageId ? { contextMessageId: input.contextMessageId } : {}),
       })
       return r.messageId
     }
     const r = await enviarTexto({
       ctx,
-      phoneNumberId: config.phone_number_id,
+      phoneNumberId: creds.phoneNumberId,
       accessToken,
       to: phone,
       text: input.text,
