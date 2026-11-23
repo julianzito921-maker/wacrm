@@ -1595,7 +1595,45 @@
         "saveReplyEsperaLabel": "Esperar (minutos) antes de considerar sem resposta",
         "saveReplyIfYes": "Se responde, continua em",
         "saveReplyIfNo": "Se não responde, continua em",
-        "optionN": "Opção {n}"
+        "optionN": "Opção {n}",
+        "paymentAmount": "Valor (MXN)",
+        "paymentWait": "Esperar comprovante (minutos)",
+        "paymentClabe": "CLABE (18 dígitos)",
+        "paymentClabeHelp": "Se ficar vazia, usa os «Dados de pagamento» da conta.",
+        "paymentHolder": "Beneficiário",
+        "paymentBank": "Banco",
+        "paymentReference": "Conceito / referência (opcional)",
+        "paymentMessage": "Mensagem antes dos dados (opcional)",
+        "paymentButton": "Enviar com botão «Já paguei»",
+        "paymentButtonHelp": "Desligado = dados SPEI limpos em texto (venda sem botões).",
+        "paymentTag": "Etiqueta ao aprovar",
+        "paymentTagHelp": "«pagado» dispara a compra na Meta CAPI e as entregas.",
+        "paymentIfApproved": "Se o comprovante for válido (Aprovado), segue em",
+        "paymentIfRejected": "Se não bater ou o tempo acabar (Rejeitado / Timeout), segue em",
+        "templateLabel": "Template aprovado",
+        "templateHelp": "Só aparecem templates APPROVED pela Meta.",
+        "templatePick": "Escolha um template",
+        "templateSync": "Sincronizar com a Meta",
+        "templateSynced": "Templates sincronizados com a Meta.",
+        "templateSyncFailed": "Não foi possível sincronizar com a Meta.",
+        "templateLoadFailed": "Não foi possível carregar os templates.",
+        "templateNoneApproved": "Não há templates aprovados. Sincronize com a Meta ou crie um em Configurações → Templates.",
+        "templateVariable": "Variável '{{'{n}'}}'",
+        "tokenName": "Nome do contato",
+        "tokenPhone": "Telefone",
+        "tokenEmail": "E-mail",
+        "tokenCompany": "Empresa",
+        "tokenCustomText": "Texto fixo / outra ficha",
+        "tokenCustomPlaceholder": "Texto ou '{{'custom.campo'}}'",
+        "loading": "Carregando…",
+        "kanbanPipeline": "Funil",
+        "kanbanPickPipeline": "Escolha um funil",
+        "kanbanStage": "Mover para a etapa",
+        "kanbanPickStage": "Escolha uma etapa",
+        "kanbanCreate": "Criar o negócio se não tiver",
+        "kanbanCreateHelp": "Quando o contato não tem negócio aberto nesse funil.",
+        "kanbanTitle": "Título do negócio novo",
+        "kanbanTitleHelp": "Aceita fichas como '{{'contact.name'}}'."
       },
       "categories": {
         "messaging": "Mensagens",
@@ -1654,6 +1692,18 @@
         "end": {
           "label": "Fim → Agente de IA",
           "blurb": "Encerra o fluxo e libera o chat para o Agente DeepSeek"
+        },
+        "send_payment": {
+          "label": "Botão Pagamento / SPEI",
+          "blurb": "Envia os dados SPEI e espera o comprovante"
+        },
+        "send_template": {
+          "label": "Template WhatsApp",
+          "blurb": "Template aprovado pela Meta com variáveis"
+        },
+        "move_kanban": {
+          "label": "Kanban",
+          "blurb": "Move o negócio do contato para uma etapa"
         }
       },
       "canvasEmptyHint": "Arraste um bloco do painel ou clique em um para começar."
@@ -1731,15 +1781,15 @@
       },
       "template": {
         "label": "Template WhatsApp",
-        "blurb": "Modelo aprovado pela Meta"
+        "blurb": "Template aprovado com variáveis"
       },
       "etiquetas": {
         "label": "Etiquetas",
         "blurb": "Adiciona ou remove uma etiqueta"
       },
       "pago": {
-        "label": "Botão Pagamento/OXXO",
-        "blurb": "Cobrança com botão ou referência OXXO"
+        "label": "Botão Pagamento / SPEI",
+        "blurb": "Dados SPEI e espera do comprovante"
       },
       "menu": {
         "label": "Menu",
@@ -1799,7 +1849,7 @@
       },
       "kanban": {
         "label": "Kanban",
-        "blurb": "Move o contato no pipeline"
+        "blurb": "Move o contato no quadro"
       },
       "manipulador": {
         "label": "Manipulador",
@@ -2858,7 +2908,17 @@
       "metaCapiNeedsEvent": "O nó Meta CAPI precisa de um evento válido.",
       "metaCapiPurchaseNeedsValue": "O evento Compra precisa de um valor maior que 0.",
       "metaCapiNeedsNext": "O nó Meta CAPI deve apontar para um próximo nó.",
-      "metaCapiMissingNext": "O nó Meta CAPI aponta para «{key}», que não existe."
+      "metaCapiMissingNext": "O nó Meta CAPI aponta para «{key}», que não existe.",
+      "paymentNeedsAmount": "O Botão Pagamento / SPEI precisa de um valor maior que 0.",
+      "paymentClabeFormat": "A CLABE precisa ter 18 dígitos.",
+      "paymentClabeFromAccount": "Sem CLABE no nó: será usada a dos «Dados de pagamento» da conta (se não houver, o fluxo falha aqui).",
+      "paymentWaitRange": "A espera do comprovante deve ficar entre 1 minuto e 23 horas.",
+      "paymentNeedsBothBranches": "O Botão Pagamento / SPEI precisa das duas saídas: Aprovado e Rejeitado / Timeout.",
+      "paymentMissingBranch": "O Botão Pagamento / SPEI aponta para «{key}», que não existe.",
+      "templateNeedsName": "O Template WhatsApp precisa de um template aprovado.",
+      "kanbanNeedsStage": "O bloco Kanban precisa de um funil e uma etapa.",
+      "blockNeedsNext": "Este bloco deve apontar para um próximo nó.",
+      "blockMissingNext": "Este bloco aponta para «{key}», que não existe."
     },
     "automations": {
       "needsStep": "automações ativas precisam de pelo menos uma etapa",

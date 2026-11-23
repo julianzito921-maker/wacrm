@@ -49,6 +49,7 @@ import { cn } from "@/lib/utils";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
 import { slugify, type BuilderNode } from "../shared";
 import { NextNodeRow, NodeKeySelect, TextRow } from "./fields";
+import { MoveKanbanForm, SendPaymentForm, SendTemplateForm } from "./bloques-forms";
 import {
   META_CAPI_EVENTOS,
   WAIT_INLINE_MAX_SEGUNDOS,
@@ -113,7 +114,13 @@ function SmartDelayField({
           }}
         >
           <SelectTrigger className="bg-muted">
-            <SelectValue />
+            <SelectValue>
+              {unidad === "h"
+                ? t("waitUnitHours")
+                : unidad === "min"
+                  ? t("waitUnitMinutes")
+                  : t("waitUnitSeconds")}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="s">{t("waitUnitSeconds")}</SelectItem>
@@ -352,6 +359,15 @@ export function NodeConfigForm({
         />
       );
 
+    case "send_payment":
+      return <SendPaymentForm node={node} allNodes={allNodes} onUpdateConfig={onUpdateConfig} t={t} />;
+
+    case "send_template":
+      return <SendTemplateForm node={node} allNodes={allNodes} onUpdateConfig={onUpdateConfig} t={t} />;
+
+    case "move_kanban":
+      return <MoveKanbanForm node={node} allNodes={allNodes} onUpdateConfig={onUpdateConfig} t={t} />;
+
     case "meta_capi": {
       const c = cfg as { event_name?: string; value?: number; currency?: string; next_node_key?: string };
       return (
@@ -365,7 +381,7 @@ export function NodeConfigForm({
               onValueChange={(v) => onUpdateConfig({ event_name: v })}
             >
               <SelectTrigger className="bg-muted">
-                <SelectValue />
+                <SelectValue>{t(`metaCapiEvents.${c.event_name ?? "Purchase"}`)}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {META_CAPI_EVENTOS.map((ev) => (

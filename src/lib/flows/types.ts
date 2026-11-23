@@ -236,6 +236,57 @@ export interface MetaCapiNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Botón Pago / SPEI (migración 079). Manda los datos SPEI y se queda
+ * esperando el comprobante (imagen o PDF). La IA lo lee y lo valida
+ * contra el monto y la CLABE de ESTE nodo:
+ *   - válido            → `aprobado_next` (y pone `etiqueta_al_aprobar`)
+ *   - no coincide / vence → `rechazado_next`
+ *   - no es comprobante → le pide la captura y sigue esperando.
+ * Campos vacíos se completan con `payment_details` de la cuenta.
+ */
+export interface SendPaymentNodeConfig {
+  clabe?: string;
+  beneficiario?: string;
+  banco?: string;
+  /** Monto esperado en MXN. */
+  monto: number;
+  referencia?: string;
+  /** Texto opcional antes de los datos (por defecto, uno corto). */
+  mensaje?: string;
+  /** Regla de Julián: venta sin botones. Apagado salvo que se encienda. */
+  con_boton: boolean;
+  /** Cuánto esperar el comprobante (tope 23 h). */
+  espera_minutos: number;
+  /** Etiqueta al aprobar; por defecto «pagado» (dispara CAPI y entregas). */
+  etiqueta_al_aprobar?: string;
+  aprobado_next: string;
+  rechazado_next: string;
+}
+
+/** Template WhatsApp (079): plantilla APPROVED de Meta con variables. */
+export interface SendTemplateNodeConfig {
+  template_name: string;
+  language: string;
+  /**
+   * Valor de cada {{n}} del cuerpo: texto fijo o fichas como
+   * {{contact.name}}, {{custom.campo}} o {{vars.clave}}.
+   */
+  variables: Record<string, string>;
+  next_node_key: string;
+}
+
+/** Kanban (079): mueve el trato del contacto a una etapa del tablero. */
+export interface MoveKanbanNodeConfig {
+  pipeline_id: string;
+  stage_id: string;
+  /** Si el contacto no tiene trato abierto en ese embudo, se crea. */
+  crear_si_no_existe: boolean;
+  /** Título del trato nuevo (admite fichas); por defecto, el nombre. */
+  titulo?: string;
+  next_node_key: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -260,6 +311,9 @@ export type FlowNodeConfig =
   | { node_type: "set_tag"; config: SetTagNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
   | { node_type: "meta_capi"; config: MetaCapiNodeConfig }
+  | { node_type: "send_payment"; config: SendPaymentNodeConfig }
+  | { node_type: "send_template"; config: SendTemplateNodeConfig }
+  | { node_type: "move_kanban"; config: MoveKanbanNodeConfig }
   | { node_type: "end"; config: EndNodeConfig };
 
 export type FlowNodeType = FlowNodeConfig["node_type"];
@@ -349,7 +403,7 @@ export interface FlowRunRow {
   end_reason: string | null;
   /** Migración 077: cuándo la retoma el cron (null = no está estacionada). */
   next_run_at?: string | null;
-  resume_reason?: "delay" | "reply_timeout" | null;
+  resume_reason?: "delay" | "reply_timeout" | "payment_timeout" | null;
 }
 
 // ============================================================
@@ -399,6 +453,20 @@ export type ParsedInbound =
       reply_id: string;
       /** The visible title of the tapped option (for logging). */
       reply_title: string;
+      meta_message_id: string;
+    }
+  | {
+      /**
+       * Imagen o documento (migración 079). Lo usa el nodo Botón Pago /
+       * SPEI para leer el comprobante. Para cualquier otro nodo se trata
+       * igual que antes: como texto con su pie de foto (`text`).
+       */
+      kind: "media";
+      media_type: "image" | "document";
+      media_id: string;
+      mime_type: string;
+      /** Pie de foto o nombre del archivo, como lo guardaba el webhook. */
+      text: string;
       meta_message_id: string;
     };
 
@@ -459,6 +527,8 @@ export const AUTO_ADVANCING_NODE_TYPES: ReadonlySet<string> = new Set([
   "set_tag",
   "wait",
   "meta_capi",
+  "send_template",
+  "move_kanban",
 ]);
 
 /** Smart Delay: hasta aquí se espera en el mismo avance (15 s, para el «escribiendo…»). Más que eso nunca ocupa el webhook: lo retoma el cron. */

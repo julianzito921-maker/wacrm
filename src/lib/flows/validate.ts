@@ -754,6 +754,63 @@ function validateNode(
       break;
     }
 
+    case "send_payment": {
+      const cfg = node.config as {
+        clabe?: string;
+        monto?: number;
+        espera_minutos?: number;
+        aprobado_next?: string;
+        rechazado_next?: string;
+      };
+      if (!(Number(cfg.monto) > 0)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "monto", message: t("paymentNeedsAmount") });
+      }
+      const clabe = (cfg.clabe ?? "").replace(/\s+/g, "");
+      if (clabe && !/^\d{18}$/.test(clabe)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "clabe", message: t("paymentClabeFormat") });
+      } else if (!clabe) {
+        // Puede salir de «Datos de pago» de la cuenta: solo se avisa.
+        issues.push({ severity: "warning", scope: "node", node_key: node.node_key, field: "clabe", message: t("paymentClabeFromAccount") });
+      }
+      const espera = Number(cfg.espera_minutos);
+      if (!Number.isFinite(espera) || espera < 1 || espera > 23 * 60) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "espera_minutos", message: t("paymentWaitRange") });
+      }
+      for (const [campo, valor] of [
+        ["aprobado_next", cfg.aprobado_next],
+        ["rechazado_next", cfg.rechazado_next],
+      ] as const) {
+        if (!valor) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: campo, message: t("paymentNeedsBothBranches") });
+        } else if (!knownKeys.has(valor)) {
+          issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: campo, message: t("paymentMissingBranch", { key: valor }) });
+        }
+      }
+      break;
+    }
+
+    case "send_template":
+    case "move_kanban": {
+      const cfg = node.config as {
+        template_name?: string;
+        pipeline_id?: string;
+        stage_id?: string;
+        next_node_key?: string;
+      };
+      if (node.node_type === "send_template" && !cfg.template_name?.trim()) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "template_name", message: t("templateNeedsName") });
+      }
+      if (node.node_type === "move_kanban" && (!cfg.pipeline_id || !cfg.stage_id)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "stage_id", message: t("kanbanNeedsStage") });
+      }
+      if (!cfg.next_node_key) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockNeedsNext") });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: t("blockMissingNext", { key: cfg.next_node_key }) });
+      }
+      break;
+    }
+
     case "meta_capi": {
       const cfg = node.config as {
         event_name?: string;
@@ -1036,9 +1093,15 @@ function outgoingEdges(node: NodeInput): string[] {
     case "collect_input":
     case "wait":
     case "meta_capi":
+    case "send_template":
+    case "move_kanban":
     case "set_tag": {
       const cfg = node.config as { next_node_key?: string };
       return cfg.next_node_key ? [cfg.next_node_key] : [];
+    }
+    case "send_payment": {
+      const cfg = node.config as { aprobado_next?: string; rechazado_next?: string };
+      return [cfg.aprobado_next, cfg.rechazado_next].filter((k): k is string => !!k);
     }
     case "save_reply": {
       const cfg = node.config as {

@@ -22,6 +22,7 @@ import { readCappedBody } from '@/lib/whatsapp/webhook-body'
 import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { flujoEsDuenoDelMensaje } from '@/lib/flows/convivencia'
+import { mensajeParaFlujo } from '@/lib/flows/entrante'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { loadAiConfig } from '@/lib/ai/config'
 import { leerImagen, orquestadorActivo } from '@/lib/ai/comprension/vision'
@@ -941,19 +942,7 @@ async function processMessage(
     userId: configOwnerUserId,
     contactId: contactRecord.id,
     conversationId: conversation.id,
-    message:
-      interactiveReplyId
-        ? {
-            kind: 'interactive_reply',
-            reply_id: interactiveReplyId,
-            reply_title: contentText ?? '',
-            meta_message_id: message.id,
-          }
-        : {
-            kind: 'text',
-            text: contentText ?? message.text?.body ?? '',
-            meta_message_id: message.id,
-          },
+    message: mensajeParaFlujo(message, interactiveReplyId, contentText),
     isFirstInboundMessage,
   })
   if (flujoEsDuenoDelMensaje(flowResult)) {

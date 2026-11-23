@@ -63,7 +63,18 @@ export function evaluarComprobante(
   return { ok: motivos.length === 0, motivos }
 }
 
-async function leerConIa(accountId: string, imagen: Buffer, mime: string): Promise<LecturaComprobante | null> {
+// PDF: no hay imagen que mirar, así que se le pasa a la IA el texto que
+// trae el archivo (los bancos en México lo descargan así).
+const PROMPT_PDF =
+  'Este es el TEXTO extraído de un PDF. ' + PROMPT.replace('Analiza la imagen. ', '')
+
+/** Tope de texto de un PDF que se manda a la IA (un comprobante cabe de sobra). */
+const MAX_TEXTO_PDF = 12_000
+
+async function preguntarIa(
+  accountId: string,
+  contenido: string | { type: string; text?: string; image_url?: { url: string } }[],
+): Promise<LecturaComprobante | null> {
   const db = supabaseAdmin()
   const cfg = await loadAiConfig(db, accountId)
   if (!cfg || cfg.provider === 'anthropic') return null
@@ -76,10 +87,7 @@ async function leerConIa(accountId: string, imagen: Buffer, mime: string): Promi
       model: cfg.model,
       max_tokens: 1500,
       response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: [
-        { type: 'text', text: PROMPT },
-        { type: 'image_url', image_url: { url: `data:${mime};base64,${imagen.toString('base64')}` } },
-      ] }],
+      messages: [{ role: 'user', content: contenido }],
     }),
     signal: AbortSignal.timeout(45_000),
   })
@@ -90,7 +98,68 @@ async function leerConIa(accountId: string, imagen: Buffer, mime: string): Promi
   return json ? (JSON.parse(json) as LecturaComprobante) : null
 }
 
-async function etiquetar(accountId: string, userId: string, contactId: string, nombre: string) {
+async function leerConIa(accountId: string, imagen: Buffer, mime: string): Promise<LecturaComprobante | null> {
+  return preguntarIa(accountId, [
+    { type: 'text', text: PROMPT },
+    { type: 'image_url', image_url: { url: `data:${mime};base64,${imagen.toString('base64')}` } },
+  ])
+}
+
+/** Texto de un PDF (todas las páginas juntas). Exportado para pruebas. */
+export async function textoDePdf(pdf: Buffer | Uint8Array): Promise<string> {
+  const { extractText } = await import('unpdf')
+  const { text } = await extractText(new Uint8Array(pdf), { mergePages: true })
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+async function leerPdfConIa(accountId: string, pdf: Buffer): Promise<LecturaComprobante | null> {
+  const texto = (await textoDePdf(pdf)).slice(0, MAX_TEXTO_PDF)
+  // PDF escaneado (sin texto): no hay nada que leer, se revisa a mano.
+  if (texto.length < 20) return null
+  return preguntarIa(accountId, `${PROMPT_PDF}\n\nTEXTO DEL PDF:\n${texto}`)
+}
+
+/** ¿Este archivo es algo que el lector sabe leer? */
+export function esComprobanteLegible(mime: string): boolean {
+  const m = mime.split(';')[0].trim().toLowerCase()
+  return m.startsWith('image/') || m === 'application/pdf'
+}
+
+/**
+ * Lee un comprobante (imagen o PDF) recibido por WhatsApp. Lo usan el
+ * lector de siempre (`procesarComprobante`) y el nodo Botón Pago / SPEI
+ * del Flow Builder. Devuelve null si no se pudo leer (archivo muy pesado,
+ * PDF escaneado sin texto o la IA no contestó). Nunca lanza.
+ */
+export async function leerComprobanteDeMedio(args: {
+  accountId: string
+  mediaId: string
+  mime: string
+  accessToken: string
+}): Promise<LecturaComprobante | null> {
+  try {
+    if (!esComprobanteLegible(args.mime)) return null
+    const { url, fileSize } = await getMediaUrl({ mediaId: args.mediaId, accessToken: args.accessToken })
+    if (fileSize != null && fileSize > MAX_BYTES) return null
+    const { buffer, contentType } = await downloadMedia({ downloadUrl: url, accessToken: args.accessToken })
+    const tipo = (contentType.split(';')[0] || args.mime).toLowerCase()
+    if (tipo === 'application/pdf' || args.mime.toLowerCase().startsWith('application/pdf')) {
+      return await leerPdfConIa(args.accountId, buffer)
+    }
+    return await leerConIa(args.accountId, buffer, tipo || args.mime)
+  } catch (e) {
+    console.warn('[comprobante] lectura falló:', e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
+/** Últimos 4 dígitos de una CLABE, tarjeta o cuenta. */
+export function ultimos4(cuenta: string | null | undefined): string {
+  return (cuenta ?? '').replace(/\D/g, '').slice(-4)
+}
+
+/** Pone una etiqueta por nombre (la crea si no existe) y dispara sus automatizaciones. */
+export async function etiquetar(accountId: string, userId: string, contactId: string, nombre: string) {
   const db = supabaseAdmin()
   let { data: tag } = await db.from('tags').select('id').eq('account_id', accountId).eq('name', nombre).maybeSingle()
   if (!tag) {
@@ -137,17 +206,13 @@ export async function procesarComprobante(args: {
     const enviar = (text: string) =>
       engineSendText({ accountId: args.accountId, userId: args.userId, conversationId: args.conversationId, contactId: args.contactId, text })
 
-    let lectura: LecturaComprobante | null = null
-    if (media.mime_type.startsWith('image/')) {
-      const { url, fileSize } = await getMediaUrl({ mediaId: media.id, accessToken: args.accessToken })
-      if (fileSize == null || fileSize <= MAX_BYTES) {
-        const { buffer, contentType } = await downloadMedia({ downloadUrl: url, accessToken: args.accessToken })
-        lectura = await leerConIa(args.accountId, buffer, contentType.split(';')[0] || media.mime_type).catch((e) => {
-          console.warn('[comprobante] lectura falló:', e instanceof Error ? e.message : e)
-          return null
-        })
-      }
-    }
+    // Imagen o PDF (desde el 22-nov-2026 también se leen los PDF).
+    const lectura = await leerComprobanteDeMedio({
+      accountId: args.accountId,
+      mediaId: media.id,
+      mime: media.mime_type,
+      accessToken: args.accessToken,
+    })
 
     // Imagen que claramente no es un comprobante: se le pide la correcta.
     if (lectura && !lectura.es_comprobante) {

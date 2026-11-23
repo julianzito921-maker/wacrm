@@ -50,6 +50,8 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
       case "send_media":
       case "collect_input":
       case "meta_capi":
+      case "send_template":
+      case "move_kanban":
       case "set_tag": {
         const next = (cfg as { next_node_key?: string }).next_node_key;
         if (next && knownKeys.has(next)) {
@@ -58,6 +60,30 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
             source: node.node_key,
             target: next,
             sourceHandle: "next",
+          });
+        }
+        break;
+      }
+
+      case "send_payment": {
+        const aprobado = (cfg as { aprobado_next?: string }).aprobado_next;
+        const rechazado = (cfg as { rechazado_next?: string }).rechazado_next;
+        if (aprobado && knownKeys.has(aprobado)) {
+          edges.push({
+            id: `${node.node_key}--aprobado--${aprobado}`,
+            source: node.node_key,
+            target: aprobado,
+            sourceHandle: "aprobado",
+            label: "aprobado",
+          });
+        }
+        if (rechazado && knownKeys.has(rechazado)) {
+          edges.push({
+            id: `${node.node_key}--rechazado--${rechazado}`,
+            source: node.node_key,
+            target: rechazado,
+            sourceHandle: "rechazado",
+            label: "rechazado / timeout",
           });
         }
         break;
@@ -207,8 +233,16 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
     case "collect_input":
     case "wait":
     case "meta_capi":
+    case "send_template":
+    case "move_kanban":
     case "set_tag":
       return [{ id: "next", label: "Next" }];
+
+    case "send_payment":
+      return [
+        { id: "aprobado", label: "Aprobado" },
+        { id: "rechazado", label: "Rechazado / Timeout" },
+      ];
 
     case "save_reply":
       return [
@@ -289,8 +323,15 @@ export function applyEdgeConnection(
     case "collect_input":
     case "wait":
     case "meta_capi":
+    case "send_template":
+    case "move_kanban":
     case "set_tag":
       if (sourceHandle === "next") return { next_node_key: targetKey };
+      return null;
+
+    case "send_payment":
+      if (sourceHandle === "aprobado") return { aprobado_next: targetKey };
+      if (sourceHandle === "rechazado") return { rechazado_next: targetKey };
       return null;
 
     case "save_reply":
@@ -384,6 +425,14 @@ function patchedConfigWithoutKey(
 ): Record<string, unknown> | null {
   const cfg = node.config;
   switch (node.node_type) {
+    case "send_payment": {
+      const c = cfg as { aprobado_next?: string; rechazado_next?: string };
+      const patch: Record<string, unknown> = {};
+      if (c.aprobado_next === deletedKey) patch.aprobado_next = "";
+      if (c.rechazado_next === deletedKey) patch.rechazado_next = "";
+      return Object.keys(patch).length ? patch : null;
+    }
+
     case "save_reply": {
       const c = cfg as { contesto_next?: string; no_contesto_next?: string };
       const patch: Record<string, unknown> = {};
@@ -398,6 +447,8 @@ function patchedConfigWithoutKey(
     case "collect_input":
     case "wait":
     case "meta_capi":
+    case "send_template":
+    case "move_kanban":
     case "set_tag": {
       const next = (cfg as { next_node_key?: string }).next_node_key;
       if (next !== deletedKey) return null;

@@ -94,7 +94,24 @@ async function ritmoHumano(
   }
 }
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
-import { enviarEventoMeta } from "@/lib/ventas/conversiones";
+import { enviarEventoMeta, guardarValor } from "@/lib/ventas/conversiones";
+import { etiquetar, leerComprobanteDeMedio } from "@/lib/ventas/comprobante";
+import { engineSendTemplate } from "@/lib/automations/meta-send";
+import { runAutomationsForTrigger } from "@/lib/automations/engine";
+import { loadAccountMetaCredentials } from "./meta-send";
+import {
+  BOTONES_PAGO,
+  TEXTO_NO_ES_COMPROBANTE,
+  TEXTO_PIDE_COMPROBANTE,
+  cargarDatosFichas,
+  combinarDatosPago,
+  moverContactoEnKanban,
+  parametrosDePlantilla,
+  sustituirFichas,
+  textoPagoSpei,
+  veredictoPago,
+  type DatosPago,
+} from "./bloques";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import { checkRunTimeout, markRunTimedOut, type RunTimeoutCheck } from "./timeout";
@@ -117,6 +134,9 @@ import {
   type StartNodeConfig,
   type KeywordTriggerConfig,
   type MetaCapiNodeConfig,
+  type MoveKanbanNodeConfig,
+  type SendPaymentNodeConfig,
+  type SendTemplateNodeConfig,
   AUTO_ADVANCING_NODE_TYPES,
   MAX_NODES_PER_ADVANCE,
   VENTANA_SERVICIO_MS,
@@ -302,7 +322,8 @@ export function matchesKeywordTrigger(
  * silently breaks the author who keyed on it.
  */
 export function entryTriggerTexts(message: ParsedInbound): string[] {
-  if (message.kind === "text") return [message.text];
+  // Imagen o documento: la palabra clave solo puede venir en su pie de foto.
+  if (message.kind === "text" || message.kind === "media") return [message.text];
   return [...new Set([message.reply_title, message.reply_id])].filter(
     (v): v is string => Boolean(v && v.trim()),
   );
@@ -974,6 +995,160 @@ async function advanceFromNodeKey(
       currentKey = cfg.next_node_key;
       continue;
     }
+    if (node.node_type === "send_template") {
+      // Plantilla aprobada por Meta, con {{n}} rellenadas desde el
+      // contacto / el flujo. Pasa por la capa de seguridad de siempre
+      // (incluido el tope diario de plantillas).
+      const cfg = node.config as unknown as SendTemplateNodeConfig;
+      try {
+        const datos = await cargarDatosFichas(db, {
+          accountId: run.account_id,
+          contactId: run.contact_id!,
+          vars: run.vars,
+          textos: Object.values(cfg.variables ?? {}),
+        });
+        const params = parametrosDePlantilla(cfg.variables, datos);
+        await ritmoHumano(db, run);
+        const { whatsapp_message_id } = await engineSendTemplate({
+          accountId: run.account_id,
+          userId: run.user_id,
+          conversationId: run.conversation_id!,
+          contactId: run.contact_id!,
+          templateName: cfg.template_name,
+          language: cfg.language,
+          params,
+          reason: "flow_send_template",
+        });
+        await logEvent(db, run.id, "message_sent", node.node_key, {
+          node_type: "send_template",
+          template: cfg.template_name,
+          whatsapp_message_id,
+        });
+      } catch (err) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "send_template_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await endRun(db, run.id, "failed", "send_template_failed");
+        return { outcome: "completed" };
+      }
+      currentKey = cfg.next_node_key;
+      continue;
+    }
+    if (node.node_type === "move_kanban") {
+      // Mueve (o crea) el trato del contacto en el tablero. Si falla, se
+      // anota y el flujo sigue: el Kanban no debe dejar a nadie sin respuesta.
+      const cfg = node.config as unknown as MoveKanbanNodeConfig;
+      try {
+        const datos = await cargarDatosFichas(db, {
+          accountId: run.account_id,
+          contactId: run.contact_id!,
+          vars: run.vars,
+          textos: [cfg.titulo || "{{contact.name}}"],
+        });
+        const r = await moverContactoEnKanban(db, {
+          accountId: run.account_id,
+          userId: run.user_id,
+          contactId: run.contact_id!,
+          conversationId: run.conversation_id,
+          pipelineId: cfg.pipeline_id,
+          stageId: cfg.stage_id,
+          crear: cfg.crear_si_no_existe !== false,
+          titulo: sustituirFichas(cfg.titulo || "{{contact.name}}", datos).trim(),
+        });
+        await logEvent(db, run.id, "node_entered", node.node_key, {
+          node_type: "move_kanban",
+          accion: r.accion,
+          deal_id: r.dealId,
+        });
+        // Mismo disparador que mover la tarjeta a mano en el tablero.
+        if (r.dealId && (r.accion === "movido" || r.accion === "creado")) {
+          await runAutomationsForTrigger({
+            accountId: run.account_id,
+            triggerType: "deal_stage_changed",
+            contactId: run.contact_id,
+            context: {
+              conversation_id: run.conversation_id ?? undefined,
+              deal_id: r.dealId,
+              pipeline_id: cfg.pipeline_id,
+              stage_id: cfg.stage_id,
+              from_stage_id: r.desdeEtapa ?? undefined,
+            },
+          }).catch((err) => {
+            console.error("[flows] deal_stage_changed falló:", err);
+            return 0;
+          });
+        }
+      } catch (err) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "move_kanban_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+      currentKey = cfg.next_node_key;
+      continue;
+    }
+    if (node.node_type === "send_payment") {
+      // Manda los datos SPEI y se queda esperando el comprobante.
+      const cfg = node.config as unknown as SendPaymentNodeConfig;
+      const datos = await datosPagoDelNodo(db, run.account_id, cfg);
+      if (!datos.clabe || !(datos.monto > 0)) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "pago_sin_clabe_o_monto",
+        });
+        await endRun(db, run.id, "failed", "pago_sin_clabe_o_monto");
+        return { outcome: "completed" };
+      }
+      const texto = textoPagoSpei(datos, cfg.mensaje);
+      try {
+        await ritmoHumano(db, run, texto);
+        const { whatsapp_message_id } = cfg.con_boton
+          ? await engineSendInteractiveButtons({
+              accountId: run.account_id,
+              userId: run.user_id,
+              conversationId: run.conversation_id!,
+              contactId: run.contact_id!,
+              bodyText: texto,
+              buttons: BOTONES_PAGO.map((b) => ({ id: b.reply_id, title: b.title })),
+            })
+          : await engineSendText({
+              accountId: run.account_id,
+              userId: run.user_id,
+              conversationId: run.conversation_id!,
+              contactId: run.contact_id!,
+              text: texto,
+            });
+        await logEvent(db, run.id, "message_sent", node.node_key, {
+          node_type: "send_payment",
+          con_boton: Boolean(cfg.con_boton),
+          whatsapp_message_id,
+        });
+      } catch (err) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "send_payment_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        await endRun(db, run.id, "failed", "send_payment_failed");
+        return { outcome: "completed" };
+      }
+      const esperaMin = Math.min(Math.max(Number(cfg.espera_minutos) || 0, 1), 23 * 60);
+      const avanzado = await advanceCurrentNodeKey(
+        db,
+        run.id,
+        run.current_node_key,
+        node.node_key,
+        {
+          next_run_at: new Date(Date.now() + esperaMin * 60_000).toISOString(),
+          resume_reason: "payment_timeout",
+        },
+      );
+      if (!avanzado) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "lost_race_during_advance",
+        });
+      }
+      return { outcome: "advanced" };
+    }
     if (node.node_type === "save_reply") {
       // Manda el mensaje (si lo hay) y se queda esperando. La respuesta
       // la captura handleReplyForActiveRun; si no llega, el barrido
@@ -1386,6 +1561,199 @@ async function cerrarSiFueraDeVentana(
   return true;
 }
 
+/** Datos SPEI del nodo, completando lo vacío con `payment_details`. */
+async function datosPagoDelNodo(
+  db: AdminClient,
+  accountId: string,
+  cfg: SendPaymentNodeConfig,
+): Promise<DatosPago> {
+  const faltaAlgo = !cfg.clabe || !cfg.beneficiario || !cfg.banco;
+  let cuenta: { clabe?: string | null; holder?: string | null; bank?: string | null } | null = null;
+  if (faltaAlgo) {
+    const { data } = await db
+      .from("payment_details")
+      .select("clabe, holder, bank, activo")
+      .eq("account_id", accountId)
+      .maybeSingle();
+    const fila = data as { clabe: string | null; holder: string | null; bank: string | null; activo: boolean } | null;
+    cuenta = fila?.activo ? fila : null;
+  }
+  return combinarDatosPago(cfg, cuenta);
+}
+
+/**
+ * Botón Pago / SPEI esperando el comprobante: qué hacer con lo que
+ * mande la clienta.
+ *   - imagen / PDF → la IA lo lee y se valida contra ESTE nodo.
+ *   - «Ya pagué» / «Tengo una duda» → se le pide el comprobante.
+ *   - texto libre → el flujo sigue esperando (sigue siendo dueño).
+ */
+async function handlePaymentReply(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+  message: ParsedInbound,
+  nodes: Map<string, FlowNodeRow>,
+): Promise<DispatchInboundResult> {
+  const cfg = node.config as unknown as SendPaymentNodeConfig;
+  const enviar = (text: string) =>
+    engineSendText({
+      accountId: run.account_id,
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      text,
+    });
+
+  if (message.kind === "interactive_reply") {
+    if (BOTONES_PAGO.some((b) => b.reply_id === message.reply_id)) {
+      await enviar(TEXTO_PIDE_COMPROBANTE).catch(() => undefined);
+    }
+    return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+  }
+  if (message.kind !== "media") {
+    return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+  }
+
+  const datos = await datosPagoDelNodo(db, run.account_id, cfg);
+  let lectura = null;
+  try {
+    const { accessToken } = await loadAccountMetaCredentials(db, run.account_id);
+    lectura = await leerComprobanteDeMedio({
+      accountId: run.account_id,
+      mediaId: message.media_id,
+      mime: message.mime_type,
+      accessToken,
+    });
+  } catch (err) {
+    console.warn("[flows] no se pudo leer el comprobante:", err instanceof Error ? err.message : err);
+  }
+
+  // Antifraude: ¿esta referencia ya se aprobó antes en la cuenta?
+  const ref = (lectura?.referencia ?? "").trim();
+  let repetida = false;
+  if (ref.length >= 5) {
+    const { count } = await db
+      .from("payment_receipts")
+      .select("id", { count: "exact", head: true })
+      .eq("account_id", run.account_id)
+      .eq("referencia", ref)
+      .eq("resultado", "aprobado");
+    repetida = (count ?? 0) > 0;
+  }
+
+  let veredicto = veredictoPago(lectura, datos, repetida);
+  if (veredicto.resultado === "reintentar") {
+    await enviar(TEXTO_NO_ES_COMPROBANTE).catch(() => undefined);
+    await logEvent(db, run.id, "fallback_fired", node.node_key, { reason: "no_es_comprobante" });
+    return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+  }
+
+  // Registro del comprobante. El índice único de la 079 es la última
+  // barrera: si otra clienta aprobó la misma referencia al mismo tiempo,
+  // este insert falla y el pago se rechaza.
+  const fila = {
+    account_id: run.account_id,
+    contact_id: run.contact_id,
+    flow_run_id: run.id,
+    node_key: node.node_key,
+    whatsapp_media_id: message.media_id,
+    monto: lectura?.monto ?? null,
+    ultimos_digitos: lectura?.ultimos_digitos_destino ?? null,
+    banco_destino: lectura?.banco_destino ?? null,
+    referencia: ref || null,
+    estado: lectura?.estado ?? null,
+    resultado: lectura ? veredicto.resultado : "revisar",
+    motivos: veredicto.motivos,
+  };
+  const { error: insErr } = await db.from("payment_receipts").insert(fila);
+  if (insErr && veredicto.resultado === "aprobado") {
+    veredicto = { resultado: "rechazado", motivos: [`no se pudo registrar (posible referencia repetida): ${insErr.message}`] };
+    await db.from("payment_receipts").insert({ ...fila, resultado: "rechazado", motivos: veredicto.motivos });
+  }
+
+  const aprobado = veredicto.resultado === "aprobado";
+  const siguiente = aprobado ? cfg.aprobado_next : cfg.rechazado_next;
+  const vars = {
+    ...run.vars,
+    pago_resultado: aprobado ? "aprobado" : "rechazado",
+    ...(lectura?.monto != null ? { pago_monto: lectura.monto } : {}),
+    ...(ref ? { pago_referencia: ref } : {}),
+  };
+  if (!(await claimReplyTransition(db, run, siguiente, { vars }))) {
+    return lostReplyRace(db, run, node.node_key);
+  }
+  run.vars = vars;
+
+  const nota = lectura
+    ? `🧾 Comprobante del flujo (Botón Pago / SPEI) — ${aprobado ? "✅ APROBADO" : "⚠️ RECHAZADO: " + veredicto.motivos.join("; ")}\n` +
+      `Esperado: $${datos.monto} a …${datos.clabe.slice(-4)} · Leído: $${lectura.monto ?? "?"} a …${lectura.ultimos_digitos_destino ?? "?"} · ` +
+      `Estado: ${lectura.estado ?? "?"} · Referencia: ${lectura.referencia ?? "?"}`
+    : `🧾 Llegó un comprobante que la IA no pudo leer (${veredicto.motivos.join("; ")}). Revísalo a mano.`;
+  await db.from("contact_notes").insert({
+    contact_id: run.contact_id,
+    user_id: run.user_id,
+    account_id: run.account_id,
+    note_text: nota,
+  });
+  await logEvent(db, run.id, "node_entered", node.node_key, {
+    node_type: "send_payment",
+    resultado: veredicto.resultado,
+    motivos: veredicto.motivos,
+  });
+
+  if (aprobado) {
+    // El monto leído alimenta la compra que se manda a Meta CAPI al
+    // ponerse la etiqueta (mismo camino que el lector de siempre).
+    if (lectura?.monto) {
+      await guardarValor(run.account_id, run.user_id, run.contact_id!, "monto_pagado", String(lectura.monto)).catch(() => undefined);
+    }
+    const etiqueta = (cfg.etiqueta_al_aprobar ?? "pagado").trim();
+    if (etiqueta) {
+      await etiquetar(run.account_id, run.user_id, run.contact_id!, etiqueta).catch((err) =>
+        console.error("[flows] no se pudo etiquetar el pago:", err),
+      );
+    }
+  }
+
+  if (!siguiente) {
+    await endRun(db, run.id, "failed", "missing_next_node");
+    return { consumed: true, flow_run_id: run.id, outcome: "completed" };
+  }
+  const outcome = await advanceFromNodeKey(db, run, siguiente, nodes);
+  return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+}
+
+/** El comprobante no llegó a tiempo: el flujo sale por Rechazado / Timeout. */
+async function resumePaymentTimeout(
+  db: AdminClient,
+  run: FlowRunRow,
+  now: Date,
+): Promise<boolean> {
+  if (!run.current_node_key) return false;
+  const [flow, nodes] = await Promise.all([
+    loadFlow(db, run.flow_id),
+    loadAllNodes(db, run.flow_id),
+  ]);
+  const nodo = nodes.get(run.current_node_key);
+  if (!flow || flow.status !== "active" || !nodo || nodo.node_type !== "send_payment") {
+    await endRun(db, run.id, "cancelled", "pago_sin_flujo_activo");
+    return false;
+  }
+  const cfg = nodo.config as unknown as SendPaymentNodeConfig;
+  const vars = { ...run.vars, pago_resultado: "timeout" };
+  if (!(await claimReplyTransition(db, run, cfg.rechazado_next, { vars }))) return false;
+  run.vars = vars;
+  if (await cerrarSiFueraDeVentana(db, run, nodo.node_key, now)) return true;
+  await logEvent(db, run.id, "timeout", nodo.node_key, { node_type: "send_payment" });
+  if (!cfg.rechazado_next) {
+    await endRun(db, run.id, "failed", "missing_next_node");
+    return true;
+  }
+  await advanceFromNodeKey(db, run, cfg.rechazado_next, nodes);
+  return true;
+}
+
 /**
  * Cron de cada minuto: retoma las corridas estacionadas cuyo
  * `next_run_at` ya venció.
@@ -1426,6 +1794,10 @@ export async function resumeDueRuns(
             .eq("status", "active")
             .eq("transition_seq", run.transition_seq ?? 0);
         }
+        continue;
+      }
+      if (run.resume_reason === "payment_timeout") {
+        if (await resumePaymentTimeout(db, run, now)) retomadas += 1;
         continue;
       }
       if (await resumeDelay(db, run, now)) retomadas += 1;
@@ -1596,6 +1968,17 @@ async function handleReplyForActiveRun(
   // venza su espera.
   if (currentNode.node_type === "wait") {
     return { consumed: true, flow_run_id: run.id, outcome: "waiting" };
+  }
+
+  // Botón Pago / SPEI esperando el comprobante.
+  if (currentNode.node_type === "send_payment") {
+    return handlePaymentReply(db, run, currentNode, message, nodes);
+  }
+
+  // Para cualquier otro nodo, una imagen o documento cuenta como texto
+  // con su pie de foto: exactamente lo que el flujo recibía antes de la 079.
+  if (message.kind === "media") {
+    message = { kind: "text", text: message.text, meta_message_id: message.meta_message_id };
   }
 
   // Two ways a reply can advance:

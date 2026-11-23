@@ -1595,7 +1595,45 @@
         "saveReplyEsperaLabel": "Wait (minutes) before treating it as no reply",
         "saveReplyIfYes": "If they reply, continue at",
         "saveReplyIfNo": "If they do not reply, continue at",
-        "optionN": "Option {n}"
+        "optionN": "Option {n}",
+        "paymentAmount": "Amount (MXN)",
+        "paymentWait": "Wait for receipt (minutes)",
+        "paymentClabe": "CLABE (18 digits)",
+        "paymentClabeHelp": "Leave empty to use the account's «Payment details».",
+        "paymentHolder": "Beneficiary",
+        "paymentBank": "Bank",
+        "paymentReference": "Concept / reference (optional)",
+        "paymentMessage": "Message before the details (optional)",
+        "paymentButton": "Send with «I paid» button",
+        "paymentButtonHelp": "Off = clean SPEI details as text (no-buttons selling).",
+        "paymentTag": "Tag on approval",
+        "paymentTagHelp": "«pagado» fires the Meta CAPI purchase and deliveries.",
+        "paymentIfApproved": "If the receipt is valid (Approved), go to",
+        "paymentIfRejected": "If it does not match or time runs out (Rejected / Timeout), go to",
+        "templateLabel": "Approved template",
+        "templateHelp": "Only templates APPROVED by Meta are listed.",
+        "templatePick": "Pick a template",
+        "templateSync": "Sync with Meta",
+        "templateSynced": "Templates synced with Meta.",
+        "templateSyncFailed": "Could not sync with Meta.",
+        "templateLoadFailed": "Could not load templates.",
+        "templateNoneApproved": "No approved templates. Sync with Meta or create one in Settings → Templates.",
+        "templateVariable": "Variable '{{'{n}'}}'",
+        "tokenName": "Contact name",
+        "tokenPhone": "Phone",
+        "tokenEmail": "Email",
+        "tokenCompany": "Company",
+        "tokenCustomText": "Fixed text / other token",
+        "tokenCustomPlaceholder": "Text or '{{'custom.field'}}'",
+        "loading": "Loading…",
+        "kanbanPipeline": "Pipeline",
+        "kanbanPickPipeline": "Pick a pipeline",
+        "kanbanStage": "Move to stage",
+        "kanbanPickStage": "Pick a stage",
+        "kanbanCreate": "Create the deal if missing",
+        "kanbanCreateHelp": "When the contact has no open deal in that pipeline.",
+        "kanbanTitle": "New deal title",
+        "kanbanTitleHelp": "Supports tokens like '{{'contact.name'}}'."
       },
       "categories": {
         "messaging": "Messaging",
@@ -1654,6 +1692,18 @@
         "end": {
           "label": "End → AI agent",
           "blurb": "Ends the flow and frees the chat for the DeepSeek agent"
+        },
+        "send_payment": {
+          "label": "Payment / SPEI button",
+          "blurb": "Sends SPEI details and waits for the receipt"
+        },
+        "send_template": {
+          "label": "WhatsApp template",
+          "blurb": "Meta-approved template with variables"
+        },
+        "move_kanban": {
+          "label": "Kanban",
+          "blurb": "Moves the contact's deal to a stage"
         }
       },
       "canvasEmptyHint": "Drag a block from the panel or click one to start."
@@ -1731,15 +1781,15 @@
       },
       "template": {
         "label": "WhatsApp template",
-        "blurb": "Meta-approved template"
+        "blurb": "Approved template with variables"
       },
       "etiquetas": {
         "label": "Tags",
         "blurb": "Add or remove a tag"
       },
       "pago": {
-        "label": "Payment/OXXO button",
-        "blurb": "Charge with a button or OXXO reference"
+        "label": "Payment / SPEI button",
+        "blurb": "SPEI details and wait for receipt"
       },
       "menu": {
         "label": "Menu",
@@ -1799,7 +1849,7 @@
       },
       "kanban": {
         "label": "Kanban",
-        "blurb": "Move the contact in the pipeline"
+        "blurb": "Move the contact on the board"
       },
       "manipulador": {
         "label": "Manipulator",
@@ -2858,7 +2908,17 @@
       "metaCapiNeedsEvent": "The Meta CAPI node needs a valid event.",
       "metaCapiPurchaseNeedsValue": "The Purchase event needs a value greater than 0.",
       "metaCapiNeedsNext": "The Meta CAPI node must point to a next node.",
-      "metaCapiMissingNext": "The Meta CAPI node points to “{key}”, which does not exist."
+      "metaCapiMissingNext": "The Meta CAPI node points to “{key}”, which does not exist.",
+      "paymentNeedsAmount": "The Payment / SPEI button needs an amount greater than 0.",
+      "paymentClabeFormat": "The CLABE must have 18 digits.",
+      "paymentClabeFromAccount": "No CLABE on the node: the account's «Payment details» will be used (if none, the flow fails here).",
+      "paymentWaitRange": "The receipt wait must be between 1 minute and 23 hours.",
+      "paymentNeedsBothBranches": "The Payment / SPEI button needs both exits: Approved and Rejected / Timeout.",
+      "paymentMissingBranch": "The Payment / SPEI button points to “{key}”, which does not exist.",
+      "templateNeedsName": "The WhatsApp template block needs an approved template.",
+      "kanbanNeedsStage": "The Kanban block needs a pipeline and a stage.",
+      "blockNeedsNext": "This block must point to a next node.",
+      "blockMissingNext": "This block points to “{key}”, which does not exist."
     },
     "automations": {
       "needsStep": "active automations need at least one step",

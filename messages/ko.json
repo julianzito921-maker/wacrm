@@ -1595,7 +1595,45 @@
         "saveReplyEsperaLabel": "무응답으로 볼 때까지 대기(분)",
         "saveReplyIfYes": "응답하면 이동",
         "saveReplyIfNo": "응답하지 않으면 이동",
-        "optionN": "옵션 {n}"
+        "optionN": "옵션 {n}",
+        "paymentAmount": "금액 (MXN)",
+        "paymentWait": "영수증 대기 (분)",
+        "paymentClabe": "CLABE (18자리)",
+        "paymentClabeHelp": "비워 두면 계정의 «결제 정보»를 사용합니다.",
+        "paymentHolder": "수취인",
+        "paymentBank": "은행",
+        "paymentReference": "메모 / 참조 (선택)",
+        "paymentMessage": "정보 앞 메시지 (선택)",
+        "paymentButton": "«결제했어요» 버튼과 함께 보내기",
+        "paymentButtonHelp": "끄면 SPEI 정보를 텍스트로만 보냅니다 (버튼 없는 판매).",
+        "paymentTag": "승인 시 태그",
+        "paymentTagHelp": "«pagado»는 Meta CAPI 구매와 전달을 실행합니다.",
+        "paymentIfApproved": "영수증이 유효하면 (승인) 이동",
+        "paymentIfRejected": "일치하지 않거나 시간이 지나면 (거절 / 시간 초과) 이동",
+        "templateLabel": "승인된 템플릿",
+        "templateHelp": "Meta가 APPROVED한 템플릿만 표시됩니다.",
+        "templatePick": "템플릿 선택",
+        "templateSync": "Meta와 동기화",
+        "templateSynced": "Meta와 템플릿을 동기화했습니다.",
+        "templateSyncFailed": "Meta와 동기화하지 못했습니다.",
+        "templateLoadFailed": "템플릿을 불러오지 못했습니다.",
+        "templateNoneApproved": "승인된 템플릿이 없습니다. Meta와 동기화하거나 설정 → 템플릿에서 만드세요.",
+        "templateVariable": "변수 '{{'{n}'}}'",
+        "tokenName": "연락처 이름",
+        "tokenPhone": "전화",
+        "tokenEmail": "이메일",
+        "tokenCompany": "회사",
+        "tokenCustomText": "고정 텍스트 / 다른 토큰",
+        "tokenCustomPlaceholder": "텍스트 또는 '{{'custom.field'}}'",
+        "loading": "불러오는 중…",
+        "kanbanPipeline": "파이프라인",
+        "kanbanPickPipeline": "파이프라인 선택",
+        "kanbanStage": "이동할 단계",
+        "kanbanPickStage": "단계 선택",
+        "kanbanCreate": "없으면 거래 만들기",
+        "kanbanCreateHelp": "연락처에 해당 파이프라인의 열린 거래가 없을 때.",
+        "kanbanTitle": "새 거래 제목",
+        "kanbanTitleHelp": "'{{'contact.name'}}' 같은 토큰을 쓸 수 있습니다."
       },
       "categories": {
         "messaging": "메시징",
@@ -1654,6 +1692,18 @@
         "end": {
           "label": "종료 → AI 에이전트",
           "blurb": "플로우를 끝내고 채팅을 DeepSeek 에이전트에 넘깁니다"
+        },
+        "send_payment": {
+          "label": "결제 / SPEI 버튼",
+          "blurb": "SPEI 정보를 보내고 영수증을 기다립니다"
+        },
+        "send_template": {
+          "label": "WhatsApp 템플릿",
+          "blurb": "변수가 있는 Meta 승인 템플릿"
+        },
+        "move_kanban": {
+          "label": "칸반",
+          "blurb": "연락처의 거래를 단계로 이동"
         }
       },
       "canvasEmptyHint": "패널에서 블록을 끌어오거나 클릭해 시작하세요."
@@ -1731,15 +1781,15 @@
       },
       "template": {
         "label": "WhatsApp 템플릿",
-        "blurb": "Meta 승인 템플릿"
+        "blurb": "변수가 있는 승인 템플릿"
       },
       "etiquetas": {
         "label": "태그",
         "blurb": "태그 추가 또는 제거"
       },
       "pago": {
-        "label": "결제/OXXO 버튼",
-        "blurb": "버튼 또는 OXXO 참조로 결제"
+        "label": "결제 / SPEI 버튼",
+        "blurb": "SPEI 정보와 영수증 대기"
       },
       "menu": {
         "label": "메뉴",
@@ -1799,7 +1849,7 @@
       },
       "kanban": {
         "label": "칸반",
-        "blurb": "파이프라인에서 연락처 이동"
+        "blurb": "보드에서 연락처 이동"
       },
       "manipulador": {
         "label": "조작기",
@@ -2858,7 +2908,17 @@
       "metaCapiNeedsEvent": "Meta CAPI 노드에는 유효한 이벤트가 필요합니다.",
       "metaCapiPurchaseNeedsValue": "구매 이벤트에는 0보다 큰 값이 필요합니다.",
       "metaCapiNeedsNext": "Meta CAPI 노드는 다음 노드를 가리켜야 합니다.",
-      "metaCapiMissingNext": "Meta CAPI 노드가 존재하지 않는 «{key}»를 가리킵니다."
+      "metaCapiMissingNext": "Meta CAPI 노드가 존재하지 않는 «{key}»를 가리킵니다.",
+      "paymentNeedsAmount": "결제 / SPEI 버튼에는 0보다 큰 금액이 필요합니다.",
+      "paymentClabeFormat": "CLABE는 18자리여야 합니다.",
+      "paymentClabeFromAccount": "노드에 CLABE가 없으면 계정의 «결제 정보»를 사용합니다 (없으면 여기서 플로우가 실패합니다).",
+      "paymentWaitRange": "영수증 대기는 1분에서 23시간 사이여야 합니다.",
+      "paymentNeedsBothBranches": "결제 / SPEI 버튼에는 승인과 거절 / 시간 초과 두 출구가 필요합니다.",
+      "paymentMissingBranch": "결제 / SPEI 버튼이 존재하지 않는 «{key}»를 가리킵니다.",
+      "templateNeedsName": "WhatsApp 템플릿 블록에는 승인된 템플릿이 필요합니다.",
+      "kanbanNeedsStage": "칸반 블록에는 파이프라인과 단계가 필요합니다.",
+      "blockNeedsNext": "이 블록은 다음 노드를 가리켜야 합니다.",
+      "blockMissingNext": "이 블록이 존재하지 않는 «{key}»를 가리킵니다."
     },
     "automations": {
       "needsStep": "활성 자동화에는 단계가 하나 이상 필요합니다",

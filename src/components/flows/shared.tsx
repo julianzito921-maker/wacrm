@@ -69,6 +69,9 @@ export type NodeType =
   | 'set_tag'
   | 'handoff'
   | 'meta_capi'
+  | 'send_payment'
+  | 'send_template'
+  | 'move_kanban'
   | 'end';
 
 export interface BuilderNode {
@@ -176,6 +179,24 @@ export const NODE_META: Record<
     color: 'text-pink-400',
     category: 'logic',
   },
+  send_payment: {
+    slugSeed: 'Pago SPEI',
+    icon: CreditCard,
+    color: 'text-violet-400',
+    category: 'messaging',
+  },
+  send_template: {
+    slugSeed: 'Template',
+    icon: FileBadge,
+    color: 'text-violet-400',
+    category: 'messaging',
+  },
+  move_kanban: {
+    slugSeed: 'Kanban',
+    icon: KanbanSquare,
+    color: 'text-sky-400',
+    category: 'logic',
+  },
   meta_capi: {
     slugSeed: 'Meta CAPI',
     icon: Target,
@@ -240,6 +261,9 @@ const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
   collect_input: { l: 0.74, c: 0.15, h: 60 }, // ámbar
   condition: { l: 0.74, c: 0.16, h: 55 }, // ámbar anaranjado — condicional
   meta_capi: { l: 0.72, c: 0.13, h: 180 }, // turquesa — conversiones
+  send_payment: { l: 0.7, c: 0.15, h: 165 }, // verde turquesa — cobro (conversión)
+  send_template: { l: 0.58, c: 0.22, h: 280 }, // morado — mensaje
+  move_kanban: { l: 0.66, c: 0.15, h: 240 }, // azul — CRM
   handoff: { l: 0.66, c: 0.15, h: 230 }, // azul cielo — controlador de chat
   end: { l: 0.62, c: 0.18, h: 258 }, // azul — pasa al Agente de IA
 };
@@ -427,6 +451,25 @@ export function summarizeNode(
       }
       return t ? t('seconds', { count: segundos }) : `${segundos} s`;
     }
+    case 'send_payment': {
+      const monto = typeof cfg.monto === 'number' && cfg.monto > 0 ? cfg.monto : 0;
+      const clabe = typeof cfg.clabe === 'string' ? cfg.clabe.replace(/\s+/g, '') : '';
+      const partes = [
+        monto ? `$${monto} MXN` : null,
+        clabe ? `CLABE …${clabe.slice(-4)}` : null,
+        cfg.con_boton ? 'con botón' : 'solo texto',
+      ].filter(Boolean);
+      return partes.join(' · ');
+    }
+    case 'send_template': {
+      const nombre = typeof cfg.template_name === 'string' ? cfg.template_name : '';
+      const idioma = typeof cfg.language === 'string' ? cfg.language : '';
+      return nombre ? `${nombre}${idioma ? ` (${idioma})` : ''}` : null;
+    }
+    case 'move_kanban': {
+      const etapa = typeof cfg.stage_name === 'string' ? cfg.stage_name : '';
+      return etapa ? `→ ${etapa}` : null;
+    }
     case 'meta_capi': {
       const ev = typeof cfg.event_name === 'string' ? cfg.event_name : '';
       const valor = typeof cfg.value === 'number' && cfg.value > 0 ? cfg.value : 0;
@@ -534,9 +577,9 @@ export interface Bloque {
 
 export const CATALOGO_BLOQUES: Bloque[] = [
   { id: 'mensaje', icon: MessageCircle, tipo: 'send_message', tono: 'violeta' },
-  { id: 'template', icon: FileBadge, tono: 'violeta' },
+  { id: 'template', icon: FileBadge, tipo: 'send_template', tono: 'violeta' },
   { id: 'etiquetas', icon: Tag, tipo: 'set_tag', tono: 'violeta' },
-  { id: 'pago', icon: CreditCard, tono: 'violeta' },
+  { id: 'pago', icon: CreditCard, tipo: 'send_payment', tono: 'violeta' },
   { id: 'menu', icon: ListPlus, tipo: 'send_buttons', tono: 'violeta' },
   { id: 'menu_lista', icon: ListChecks, tipo: 'send_list', tono: 'violeta' },
   { id: 'esperar_respuesta', icon: MessageSquareReply, tipo: 'save_reply', tono: 'violeta' },
@@ -551,7 +594,7 @@ export const CATALOGO_BLOQUES: Bloque[] = [
   { id: 'integracion', icon: Plug, tono: 'azul' },
   { id: 'bloque_ia', icon: Sparkles, tono: 'azul' },
   { id: 'agente_ia', icon: Bot, tipo: 'end', tono: 'azul' },
-  { id: 'kanban', icon: KanbanSquare, tono: 'azul' },
+  { id: 'kanban', icon: KanbanSquare, tipo: 'move_kanban', tono: 'azul' },
   { id: 'manipulador', icon: SlidersHorizontal, tono: 'violeta' },
 ];
 
@@ -586,6 +629,10 @@ export function colorDeSalida(tipoOrigen: NodeType, salida: string | null | unde
   if (tipoOrigen === 'condition') {
     if (salida === 'true') return COLOR_EXITO;
     if (salida === 'false') return COLOR_NEGATIVO;
+  }
+  if (tipoOrigen === 'send_payment') {
+    if (salida === 'aprobado') return COLOR_EXITO;
+    if (salida === 'rechazado') return COLOR_NEGATIVO;
   }
   if (tipoOrigen === 'save_reply') {
     if (salida === 'contesto') return COLOR_EXITO;

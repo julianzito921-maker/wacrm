@@ -311,6 +311,32 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return { segundos: 15, next_node_key: "" };
     case "meta_capi":
       return { event_name: "Purchase", value: 99, currency: "MXN", next_node_key: "" };
+    case "send_payment":
+      // Sin botón por defecto: regla de venta conversacional de Julián.
+      return {
+        clabe: "",
+        beneficiario: "",
+        banco: "",
+        monto: 99,
+        referencia: "",
+        mensaje: "",
+        con_boton: false,
+        espera_minutos: 120,
+        etiqueta_al_aprobar: "pagado",
+        aprobado_next: "",
+        rechazado_next: "",
+      };
+    case "send_template":
+      return { template_name: "", language: "es_MX", variables: {}, next_node_key: "" };
+    case "move_kanban":
+      return {
+        pipeline_id: "",
+        stage_id: "",
+        stage_name: "",
+        crear_si_no_existe: true,
+        titulo: "{{contact.name}}",
+        next_node_key: "",
+      };
     case "save_reply":
       return {
         prompt_text: "",
