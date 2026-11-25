@@ -14,7 +14,8 @@
  *   │ barra de validación                                        │
  *   └──────────────────────────────────────────────────────────┘
  *
- * Tres vistas sobre los mismos datos: Lienzo, Lista y Vista previa. El
+ * Tres vistas sobre los mismos datos: Lienzo, Lista y Vista previa (el
+ * celular de prueba: se escribe como la clienta y se ve el embudo). El
  * panel flotante solo va sobre el lienzo; la Lista trae su propio
  * «Agregar nodo». En pantallas chicas el lienzo no se usa (los puntos de
  * conexión son muy pequeños para el dedo) y se abre la Lista.
@@ -29,7 +30,7 @@ import { useTranslations } from "next-intl";
 import { FlowBuilder } from "./flow-builder";
 import { FlowCanvas } from "./flow-canvas";
 import { FlowPalette } from "./flow-palette";
-import { FlowPreview } from "./flow-preview";
+import { FlowSimulator } from "./flow-simulator";
 import { FlowEditorProvider, useFlowEditor } from "./flow-editor-state";
 import { EditorHeader } from "./header";
 import { ValidationPanel } from "./validation-panel";
@@ -184,7 +185,7 @@ function ShellBody() {
               </button>
             </>
           ) : effectiveView === "preview" ? (
-            <FlowPreview onEdit={editarDesdePreview} />
+            <FlowSimulator onEdit={editarDesdePreview} />
           ) : (
             <div className="absolute inset-0 overflow-y-auto bg-background">
               <FlowBuilder />

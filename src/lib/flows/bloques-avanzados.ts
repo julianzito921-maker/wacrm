@@ -105,3 +105,39 @@ export function aplicarConexionAiBlock(
   if (sourceHandle === 'fallback') return { fallback_next: targetKey };
   return null;
 }
+
+// ------------------------------------------------------------
+// Bloque de IA: prompt y ruteo. Compartidos por el motor y por el
+// simulador del editor, para que la prueba use el MISMO prompt.
+// ------------------------------------------------------------
+
+interface CfgBloqueIa {
+  prompt?: string;
+  conditions?: Array<{ id: string; label: string; next_node_key: string }>;
+  receipt_next?: string;
+  fallback_next: string;
+}
+
+/** Instrucción de sistema del bloque de IA. */
+export function promptSistemaBloqueIa(cfg: CfgBloqueIa): string {
+  const condiciones = cfg.conditions ?? [];
+  return `${cfg.prompt ?? 'Clasifica la respuesta del cliente.'}
+Devuelve SOLO JSON con la forma {"respuesta":"texto para el cliente","salida":"id"}.
+Salidas válidas: ${condiciones.map((c) => c.id).join(', ') || 'ninguna'}.
+Si no encaja, usa "salida":"default".`;
+}
+
+/** Nodo al que sigue el bloque de IA según la salida que eligió el modelo. */
+export function destinoBloqueIa(
+  cfg: CfgBloqueIa,
+  salida: string | null,
+  comprobanteValido = false,
+): string {
+  if (comprobanteValido && cfg.receipt_next) return cfg.receipt_next;
+  const match = (cfg.conditions ?? []).find(
+    (c) =>
+      c.id === salida ||
+      c.label.toLowerCase() === String(salida ?? '').toLowerCase(),
+  );
+  return match?.next_node_key || cfg.fallback_next;
+}

@@ -4,7 +4,8 @@ import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt, agenteSiempreActivo, RESPALDO_SIEMPRE_ACTIVO } from './defaults'
-import { detectarIntencion, guiaDeRespuesta, temasEn } from '@/lib/messaging/intencion'
+import { detectarIntencion, guiaDeRespuesta, temasEn, type Memoria } from '@/lib/messaging/intencion'
+import type { AiConfig, ChatMessage } from './types'
 import { memoriaDe } from '@/lib/messaging/memoria'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
@@ -181,41 +182,13 @@ async function responder(args: DispatchArgs): Promise<void> {
       await showTypingIndicator(db, accountId, inboundMessageId)
     }
 
-    // Ground the reply in the account's knowledge base (best-effort).
-    const knowledge = await retrieveKnowledge(
+    const memoria = await memoriaDe(conversationId)
+    const { systemPrompt, productos } = await promptAutoRespuesta({
       db,
       accountId,
       config,
-      latestUserMessage(messages),
-    )
-
-    // Catálogo estructurado (Etapa 1): precios exactos inyectados literales
-    // para que el agente no tenga que adivinarlos desde el texto libre de la
-    // base de conocimiento. Best-effort: sin catálogo se responde como antes.
-    const productos = await cargarCatalogo(db, accountId)
-    const catalogo = catalogoParaPrompt(productos, { estricto: config.catalogStrict })
-    if (productos.length > 0 && catalogo) {
-      console.log(`[orquestador] catálogo inyectado: ${productos.length} productos`)
-    }
-
-    // Fase 5: qué preguntó (determinista, sin gastar modelo) y qué se le
-    // ha comunicado ya. Con eso la respuesta contesta sólo lo preguntado,
-    // no repite lo ya dicho y termina esperando a la clienta.
-    const ultimo = latestUserMessage(messages) ?? ''
-    const intencion = detectarIntencion(ultimo)
-    const memoria = await memoriaDe(conversationId)
-    const guia = guiaDeRespuesta({
-      intencion,
+      messages,
       memoria,
-      temasPreguntados: temasEn(ultimo),
-    })
-    console.log(`[orquestador] intención: ${intencion} · ya comunicado: ${Object.keys(memoria).join(', ') || 'nada'}`)
-
-    const systemPrompt = buildSystemPrompt({
-      userPrompt:
-        [config.systemPrompt, catalogo, guia].filter(Boolean).join('\n\n') || null,
-      mode: 'auto_reply',
-      knowledge,
     })
 
     // Si el modelo devuelve una respuesta vacía, se reintenta una vez; con el agente
@@ -432,6 +405,59 @@ async function cargarArchivos(db: ReturnType<typeof supabaseAdmin>, accountId: s
     return {}
   }
   return mapaDeArchivos((data as { archivos?: unknown } | null)?.archivos)
+}
+
+/**
+ * Prompt de sistema de la respuesta automática: base de conocimiento,
+ * catálogo y guía de esta respuesta (intención + lo ya comunicado).
+ * Lo comparten la respuesta real y el simulador del editor de flujos,
+ * para que la prueba conteste con el MISMO prompt que producción.
+ */
+export async function promptAutoRespuesta(args: {
+  db: ReturnType<typeof supabaseAdmin>
+  accountId: string
+  config: AiConfig
+  messages: ChatMessage[]
+  memoria: Memoria
+}): Promise<{ systemPrompt: string; productos: Awaited<ReturnType<typeof cargarCatalogo>> }> {
+  const { db, accountId, config, messages, memoria } = args
+
+  // Ground the reply in the account's knowledge base (best-effort).
+  const knowledge = await retrieveKnowledge(
+    db,
+    accountId,
+    config,
+    latestUserMessage(messages),
+  )
+
+  // Catálogo estructurado (Etapa 1): precios exactos inyectados literales
+  // para que el agente no tenga que adivinarlos desde el texto libre de la
+  // base de conocimiento. Best-effort: sin catálogo se responde como antes.
+  const productos = await cargarCatalogo(db, accountId)
+  const catalogo = catalogoParaPrompt(productos, { estricto: config.catalogStrict })
+  if (productos.length > 0 && catalogo) {
+    console.log(`[orquestador] catálogo inyectado: ${productos.length} productos`)
+  }
+
+  // Fase 5: qué preguntó (determinista, sin gastar modelo) y qué se le
+  // ha comunicado ya. Con eso la respuesta contesta sólo lo preguntado,
+  // no repite lo ya dicho y termina esperando a la clienta.
+  const ultimo = latestUserMessage(messages) ?? ''
+  const intencion = detectarIntencion(ultimo)
+  const guia = guiaDeRespuesta({
+    intencion,
+    memoria,
+    temasPreguntados: temasEn(ultimo),
+  })
+  console.log(`[orquestador] intención: ${intencion} · ya comunicado: ${Object.keys(memoria).join(', ') || 'nada'}`)
+
+  const systemPrompt = buildSystemPrompt({
+    userPrompt:
+      [config.systemPrompt, catalogo, guia].filter(Boolean).join('\n\n') || null,
+    mode: 'auto_reply',
+    knowledge,
+  })
+  return { systemPrompt, productos }
 }
 
 /** Cuánto «tarda en escribir» un mensaje: ~30 letras por segundo, entre 1.5 y 7 segundos. */
