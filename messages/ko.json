@@ -2149,12 +2149,14 @@
           "label": "Official call",
           "blurb": "Official WhatsApp call permission"
         }
-      }
+      },
+      "doneEditing": "완료"
     },
     "validation": {
       "noIssues": "문제가 없습니다. 활성화할 준비가 되었습니다.",
       "summary": "오류 {errorCount}건, 경고 {warningCount}건",
-      "jumpToNode": "{key} 노드로 이동"
+      "jumpToNode": "{key} 노드로 이동",
+      "button": "경고"
     },
     "editorState": {
       "saved": "저장되었습니다.",

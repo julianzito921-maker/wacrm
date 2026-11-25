@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Validation panel — surfaces every error and warning from
- * `validateFlowForActivation`. Lives once at the bottom of the
- * editor shell so it's visible in both views (canvas + list).
+ * Avisos de validación (`validateFlowForActivation`). Antes era una
+ * franja fija abajo del editor; ahora es un botón con contador en la
+ * barra superior + globos en cada nodo del lienzo.
  *
  * Node-scoped issues are clickable: tapping one calls
  * `requestFlash(node_key)` on the editor context. List view's
@@ -17,50 +17,81 @@
  * concept). User can switch to List to address them.
  */
 
+import { useState } from "react";
 import { CircleAlert, CircleCheck } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import type { ValidationIssue } from "@/lib/flows/validate";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useFlowEditor } from "./flow-editor-state";
 
-export function ValidationPanel() {
+/**
+ * Botón compacto de la barra superior: un círculo con el número de
+ * avisos. Al tocarlo abre la lista; cada aviso lleva a su nodo. Los
+ * avisos también se marcan en cada nodo del lienzo (globo ámbar/rojo),
+ * así que ya no hace falta la franja fija de abajo.
+ */
+export function ValidationButton({ onJump }: { onJump?: (key: string) => void }) {
   const { issues, requestFlash } = useFlowEditor();
   const t = useTranslations("Flows.validation");
-
-  if (issues.length === 0) {
-    // Slate-950 base + emerald accents so the panel stays readable when
-    // sticky-positioned over scrolled-behind node cards (a translucent
-    // bg-emerald-500/10 would bleed through ugly).
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-background p-3 text-sm font-medium text-emerald-300">
-        <CircleCheck className="h-4 w-4 shrink-0" />
-        {t("noIssues")}
-      </div>
-    );
-  }
+  const [abierto, setAbierto] = useState(false);
   const errors = issues.filter((i) => i.severity === "error");
   const warnings = issues.filter((i) => i.severity === "warning");
+  const ir = (key: string) => {
+    setAbierto(false);
+    (onJump ?? requestFlash)(key);
+  };
+
+  const tono =
+    errors.length > 0
+      ? "border-red-500/40 bg-red-500/10 text-red-300"
+      : warnings.length > 0
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
+
   return (
-    <div
-      className={cn(
-        "rounded-lg border bg-background p-3",
-        errors.length > 0 ? "border-red-500/40" : "border-amber-500/40",
-      )}
-    >
-      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-        {errors.length > 0 ? (
-          <CircleAlert className="h-4 w-4 text-red-400" />
-        ) : (
-          <CircleAlert className="h-4 w-4 text-amber-400" />
+    <Popover open={abierto} onOpenChange={setAbierto}>
+      <PopoverTrigger
+        title={
+          issues.length === 0
+            ? t("noIssues")
+            : t("summary", { errorCount: errors.length, warningCount: warnings.length })
+        }
+        className={cn(
+          "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12px] font-semibold transition-colors hover:brightness-125",
+          tono,
         )}
-        {t("summary", { errorCount: errors.length, warningCount: warnings.length })}
-      </div>
-      <div className="flex flex-col gap-1">
-        {issues.map((i, ix) => (
-          <IssueLine key={ix} issue={i} onJump={requestFlash} t={t} />
-        ))}
-      </div>
-    </div>
+      >
+        {issues.length === 0 ? (
+          <CircleCheck className="h-3.5 w-3.5" />
+        ) : (
+          <CircleAlert className="h-3.5 w-3.5" />
+        )}
+        {errors.length > 0 && <span>{errors.length}</span>}
+        {errors.length > 0 && warnings.length > 0 && <span className="opacity-50">·</span>}
+        {warnings.length > 0 && <span className={cn(errors.length > 0 && "text-amber-300")}>{warnings.length}</span>}
+        <span className="hidden xl:inline">{t("button")}</span>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[420px] max-w-[calc(100vw-2rem)] p-0">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
+          {issues.length === 0 ? (
+            <CircleCheck className="h-4 w-4 text-emerald-400" />
+          ) : (
+            <CircleAlert className={cn("h-4 w-4", errors.length > 0 ? "text-red-400" : "text-amber-400")} />
+          )}
+          {issues.length === 0
+            ? t("noIssues")
+            : t("summary", { errorCount: errors.length, warningCount: warnings.length })}
+        </div>
+        {issues.length > 0 && (
+          <div className="flex max-h-[60vh] flex-col gap-0.5 overflow-y-auto p-1.5">
+            {[...errors, ...warnings].map((i, ix) => (
+              <IssueLine key={ix} issue={i} onJump={ir} t={t} />
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 

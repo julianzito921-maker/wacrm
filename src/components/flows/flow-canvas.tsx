@@ -13,8 +13,10 @@
  *   - Renders edges between nodes, labeled per slot (button title,
  *     "true" / "false", list row title) so a branching flow reads
  *     as a real decision tree.
- *   - Click a node → side-sheet opens with the same per-node form
- *     the list view uses, plus "Set as entry" / "Delete".
+ *   - Click a node → a centered editor window (estilo Leona) opens
+ *     with the same per-node form the list view uses, plus "Set as
+ *     entry" / "Delete". Validation issues show as a badge on each
+ *     card instead of a fixed bar under the canvas.
  *   - Drag from a source handle on one node to a target handle on
  *     another → wires that slot's `next_node_key`. Per-slot handles
  *     for multi-outgoing types (condition, send_buttons, send_list)
@@ -57,20 +59,18 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Copy, GitFork, Pencil, Save, Trash2 } from 'lucide-react';
+import { CircleAlert, Copy, GitFork, Pencil, Save, Trash2 } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   applyEdgeConnection,
   deriveCanvasEdges,
@@ -97,6 +97,8 @@ import {
 import { FlowEdge } from './flow-edge';
 import { NodeConfigForm } from './forms/node-config-form';
 import type { CargaArrastre } from './flow-palette';
+import { IssueLine } from './validation-panel';
+import type { ValidationIssue } from '@/lib/flows/validate';
 
 // React-Flow node `data` payload — the bits our custom renderer needs.
 interface NodeData extends Record<string, unknown> {
@@ -107,7 +109,7 @@ interface NodeData extends Record<string, unknown> {
   isFlashed: boolean;
   /** ENTRADAS / AVANCES del nodo (últimos 30 días). */
   stats?: { entradas: number; avances: number };
-  /** Abre el panel lateral desde los botones de la tarjeta. */
+  /** Abre la ventana de edición desde los botones de la tarjeta. */
   onEdit?: (key: string) => void;
 }
 
@@ -126,7 +128,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
   const t = useTranslations('Flows.builder');
   // El contexto está disponible aquí porque las tarjetas las pinta
   // React-Flow dentro del proveedor: así el botón de borrar actúa
-  // directo sobre el nodo, sin abrir el panel lateral.
+  // directo sobre el nodo, sin abrir la ventana de edición.
   const { removeNode, duplicateNode, state } = useFlowEditor();
   const { node, isEntry, isFlashed } = data as NodeData;
   const meta = NODE_META[node.node_type];
@@ -323,7 +325,7 @@ function FlowNodeCard({ data, selected }: NodeProps) {
 /**
  * Tarjeta de «Esperar respuesta» al estilo Leona: encabezado naranja
  * sólido, métricas del nodo y las dos salidas visibles (respuesta y
- * timeout), con el panel lateral a un clic.
+ * timeout), con la ventana de edición a un clic.
  */
 function ConditionCard({
   data,
@@ -593,7 +595,52 @@ function resumenDisparador(
   return t('triggerManualTitle');
 }
 
-const NODE_TYPES = { flow: FlowNodeCard };
+/**
+ * Envoltura de cada tarjeta: le pone el globo de avisos de validación
+ * (rojo = error, ámbar = advertencia) en la esquina. Los avisos del
+ * disparador y del flujo entero van en el Inicio, que es donde se ve el disparador.
+ */
+function TarjetaConAvisos(props: NodeProps) {
+  const { issues } = useFlowEditor();
+  const { node } = props.data as NodeData;
+  const propios = issues.filter(
+    (i) =>
+      i.node_key === node.node_key ||
+      (!i.node_key && node.node_type === 'start')
+  );
+  return (
+    <div className="relative">
+      <FlowNodeCard {...props} />
+      {propios.length > 0 && <GloboAvisos issues={propios} />}
+    </div>
+  );
+}
+
+function GloboAvisos({ issues }: { issues: ValidationIssue[] }) {
+  const hayError = issues.some((i) => i.severity === 'error');
+  return (
+    <div className="group/aviso absolute -top-2.5 -right-2.5 z-20">
+      <span
+        aria-label={issues.map((i) => i.message).join(' · ')}
+        className={cn(
+          'flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-bold text-white shadow-[0_0_0_2px_var(--canvas)]',
+          hayError ? 'bg-red-500' : 'bg-amber-500'
+        )}
+      >
+        <CircleAlert className="h-3 w-3" />
+        {issues.length > 1 && issues.length}
+      </span>
+      {/* Al pasar el ratón: los avisos completos, sin salir del lienzo. */}
+      <div className="pointer-events-none absolute right-0 bottom-full z-30 mb-1.5 hidden w-72 rounded-lg border border-border bg-popover p-1.5 shadow-xl group-hover/aviso:block">
+        {issues.map((i, ix) => (
+          <IssueLine key={ix} issue={i} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const NODE_TYPES = { flow: TarjetaConAvisos };
 
 // Un solo tipo de arista, con los iconos de quitar/insertar en la línea.
 // Constante de módulo a propósito: React-Flow avisa si el objeto cambia
@@ -1014,7 +1061,7 @@ function FlowCanvasInner() {
         </ReactFlow>
       </div>
 
-      <NodeEditSheet
+      <NodeEditDialog
         node={selectedNode}
         isEntry={selectedNode?.node_key === entryNodeId}
         allNodes={builderNodes}
@@ -1029,12 +1076,13 @@ function FlowCanvasInner() {
 }
 
 // ============================================================
-// Side panel — opens when a canvas node is clicked. Mounts the
-// shared NodeConfigForm dispatcher so edits made here behave
-// identically to the list view's per-card editor.
+// Ventana de edición — se abre al centro (estilo Leona) al tocar un
+// nodo del lienzo. Monta el mismo NodeConfigForm que la vista Lista,
+// así lo que se edita aquí se comporta igual. Los cambios se aplican
+// al momento (como antes); «Listo» solo cierra.
 // ============================================================
 
-function NodeEditSheet({
+function NodeEditDialog({
   node,
   isEntry,
   allNodes,
@@ -1053,73 +1101,88 @@ function NodeEditSheet({
   onSetEntry: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
-  // Sheet is controlled — opens when a node is selected, closes via
-  // Esc / overlay / close button (all delegated to onClose).
+  const { issues } = useFlowEditor();
   const open = node !== null;
-  if (!node) {
-    return (
-      <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-        <SheetContent side="right" className="w-full sm:max-w-md" />
-      </Sheet>
-    );
-  }
-  const c = nodeColors(node.node_type);
+  const propios = node
+    ? issues.filter(
+        (i) =>
+          i.node_key === node.node_key ||
+          (!i.node_key && node.node_type === 'start')
+      )
+    : [];
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent
-        side="right"
-        className="border-border bg-popover flex w-full flex-col gap-0 border-l p-0 sm:max-w-md"
-      >
-        <SheetHeader className="border-border flex-row items-center gap-3 space-y-0 border-b px-5 py-4">
-          <NodeIconChip type={node.node_type} size={36} iconSize={18} />
-          <div className="min-w-0 flex-1">
-            <SheetTitle className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
-              <span style={{ color: c.text }}>{t(`nodes.${node.node_type}.label`)}</span>
-              {isEntry && (
-                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-emerald-300 uppercase">
-                  {t('badgeEntry')}
-                </span>
-              )}
-            </SheetTitle>
-            <SheetDescription className="text-muted-foreground mt-0.5 text-xs">
-              {t(`nodes.${node.node_type}.blurb`)}
-            </SheetDescription>
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      {node && (
+        <DialogContent
+          overlayClassName="bg-black/55 supports-backdrop-filter:backdrop-blur-sm"
+          className="border-border bg-popover flex max-h-[min(88vh,860px)] flex-col gap-0 overflow-hidden border p-0 sm:max-w-2xl"
+        >
+          <div className="border-border flex items-center gap-3 border-b px-5 py-4 pr-12">
+            <NodeIconChip type={node.node_type} size={38} iconSize={18} />
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="flex items-center gap-2 text-[15px] font-semibold">
+                {t(`nodes.${node.node_type}.label`)}
+                {isEntry && (
+                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-emerald-300 uppercase">
+                    {t('badgeEntry')}
+                  </span>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-muted-foreground mt-0.5 truncate text-xs">
+                {t(`nodes.${node.node_type}.blurb`)}
+              </DialogDescription>
+            </div>
+            <code className="bg-muted text-muted-foreground hidden shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] sm:block">
+              {node.node_key}
+            </code>
           </div>
-          <code className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
-            {node.node_key}
-          </code>
-        </SheetHeader>
 
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-          <NodeConfigForm
-            node={node}
-            allNodes={allNodes}
-            showAdvanced={false}
-            onUpdateConfig={onUpdateConfig}
-          />
-        </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
+            {propios.length > 0 && (
+              <div
+                className={cn(
+                  'rounded-lg border p-1.5',
+                  propios.some((i) => i.severity === 'error')
+                    ? 'border-red-500/40 bg-red-500/5'
+                    : 'border-amber-500/40 bg-amber-500/5'
+                )}
+              >
+                {propios.map((i, ix) => (
+                  <IssueLine key={ix} issue={i} />
+                ))}
+              </div>
+            )}
+            <NodeConfigForm
+              node={node}
+              allNodes={allNodes}
+              showAdvanced={false}
+              onUpdateConfig={onUpdateConfig}
+            />
+          </div>
 
-        <SheetFooter className="border-border border-t px-5 py-3 sm:flex-row sm:justify-between">
-          {!isEntry && !allNodes.some((n) => n.node_type === 'start') ? (
-            <Button variant="ghost" size="sm" onClick={onSetEntry}>
-              {t('setAsEntry')}
+          <div className="border-border bg-muted/30 flex items-center gap-2 border-t px-5 py-3">
+            {node.node_type !== 'start' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onDelete}
+                className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t('deleteNode')}
+              </Button>
+            )}
+            {!isEntry && !allNodes.some((n) => n.node_type === 'start') && (
+              <Button variant="ghost" size="sm" onClick={onSetEntry}>
+                {t('setAsEntry')}
+              </Button>
+            )}
+            <Button size="sm" className="ml-auto min-w-24" onClick={onClose}>
+              {t('doneEditing')}
             </Button>
-          ) : (
-            <span />
-          )}
-          {node.node_type !== 'start' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t('deleteNode')}
-            </Button>
-          )}
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+          </div>
+        </DialogContent>
+      )}
+    </Dialog>
   );
 }

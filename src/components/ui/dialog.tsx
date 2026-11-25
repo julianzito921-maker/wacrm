@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { usePortalContainer } from "./portal-container"
 
 /** Localised "Close" text for the built-in close buttons. */
 function CloseLabel() {
@@ -23,7 +24,10 @@ function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
 }
 
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+  // En pantalla completa los portales se montan dentro del contenedor
+  // (fuera de él el navegador no los pinta), igual que Sheet y Popover.
+  const container = usePortalContainer()
+  return <DialogPrimitive.Portal data-slot="dialog-portal" container={container} {...props} />
 }
 
 function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
@@ -50,13 +54,15 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  overlayClassName,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  overlayClassName?: string
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(

@@ -10,9 +10,10 @@
  *   │ │ Herramientas / │        lienzo (React Flow)              │
  *   │ │ Simular        │                                         │
  *   │ └────────────────┘ zoom ↙                      MiniMap ↘   │
- *   ├──────────────────────────────────────────────────────────┤
- *   │ barra de validación                                        │
  *   └──────────────────────────────────────────────────────────┘
+ *
+ * Los avisos de validación ya no ocupan una franja abajo: van en un
+ * botón con contador en la barra y como globo en cada nodo del lienzo.
  *
  * Tres vistas sobre los mismos datos: Lienzo, Lista y Vista previa (el
  * celular de prueba: se escribe como la clienta y se ve el embudo). El
@@ -33,7 +34,7 @@ import { FlowPalette } from "./flow-palette";
 import { FlowSimulator } from "./flow-simulator";
 import { FlowEditorProvider, useFlowEditor } from "./flow-editor-state";
 import { EditorHeader } from "./header";
-import { ValidationPanel } from "./validation-panel";
+import { ValidationButton } from "./validation-panel";
 import { PortalContainerProvider } from "@/components/ui/portal-container";
 import { cn } from "@/lib/utils";
 import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
@@ -115,6 +116,13 @@ function ShellBody() {
     requestFlash(key);
   };
 
+  // Desde la lista de avisos: en la vista previa no hay nodos que
+  // señalar, así que se pasa al lienzo (o a la Lista en el celular).
+  const irAlNodo = (key: string) => {
+    if (effectiveView === "preview") choose(isMobile ? "list" : "canvas");
+    requestFlash(key);
+  };
+
   const cambioDeVista = (
     <div
       role="group"
@@ -150,7 +158,10 @@ function ShellBody() {
         ref={setContenedor}
         className="flex min-h-0 flex-1 flex-col bg-canvas"
       >
-        <EditorHeader viewSwitch={cambioDeVista} />
+        <EditorHeader
+          viewSwitch={cambioDeVista}
+          issues={<ValidationButton onJump={irAlNodo} />}
+        />
 
         {/* En móvil el cambio de vista no cabe en la barra: va aquí. */}
         <div className="flex justify-center border-b border-sidebar-border bg-sidebar px-3 py-2 md:hidden">
@@ -191,15 +202,6 @@ function ShellBody() {
               <FlowBuilder />
             </div>
           )}
-        </div>
-
-        {/* ---- barra de validación / listo para activar ---- */}
-        <div
-          className={cn(
-            "shrink-0 border-t border-sidebar-border bg-sidebar px-3 py-2 sm:px-4",
-          )}
-        >
-          <ValidationPanel />
         </div>
       </div>
     </PortalContainerProvider>

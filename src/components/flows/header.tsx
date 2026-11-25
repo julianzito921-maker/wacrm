@@ -31,7 +31,14 @@ import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { useFlowEditor, type BuilderState } from "./flow-editor-state";
 
-export function EditorHeader({ viewSwitch }: { viewSwitch?: ReactNode }) {
+export function EditorHeader({
+  viewSwitch,
+  issues,
+}: {
+  viewSwitch?: ReactNode;
+  /** Botón de avisos de validación (con contador). */
+  issues?: ReactNode;
+}) {
   const router = useRouter();
   const t = useTranslations("Flows.header");
   const {
@@ -140,6 +147,7 @@ export function EditorHeader({ viewSwitch }: { viewSwitch?: ReactNode }) {
 
       {/* ---- derecha ---- */}
       <div className="ml-auto flex shrink-0 items-center gap-1 md:ml-0">
+        {issues}
         <button
           type="button"
           onClick={() => router.push(`/flows/${flow.id}/runs`)}

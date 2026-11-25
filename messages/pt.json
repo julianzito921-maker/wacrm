@@ -2149,12 +2149,14 @@
           "label": "Official call",
           "blurb": "Official WhatsApp call permission"
         }
-      }
+      },
+      "doneEditing": "Pronto"
     },
     "validation": {
       "noIssues": "Nenhum problema. Pronto para ativar.",
       "summary": "{errorCount} {errorCount, plural, =1 {erro} other {erros}}, {warningCount} {warningCount, plural, =1 {aviso} other {avisos}}",
-      "jumpToNode": "Ir para o nó {key}"
+      "jumpToNode": "Ir para o nó {key}",
+      "button": "Avisos"
     },
     "editorState": {
       "saved": "Salvo.",
