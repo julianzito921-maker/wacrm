@@ -476,144 +476,241 @@ async function handleCallsWebhook(value: unknown) {
   }
 }
 
+/**
+ * Lanza un webhook saliente sin frenar el procesamiento en serie del lote.
+ * La promesa queda en `avisos` y processWebhook la espera al final (dentro
+ * del `after()`, que solo mantiene viva la función para lo que ve).
+ * `dispatchWebhookEvent` nunca lanza; el `.catch` es el cinturón de
+ * seguridad para que un aviso tampoco pueda romper el `allSettled`.
+ */
+function lanzarAviso(
+  avisos: Promise<unknown>[],
+  tarea: () => Promise<void>,
+): Promise<void> {
+  const promesa = Promise.resolve()
+    .then(tarea)
+    .catch((err) => {
+      console.error(
+        '[webhook] aviso saliente falló:',
+        err instanceof Error ? err.message : err,
+      )
+    })
+  avisos.push(promesa)
+  return promesa
+}
+
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
   if (!body.entry) return
 
-  for (const entry of body.entry) {
-    for (const change of entry.changes) {
-      // Template-lifecycle events (status / quality / components
-      // updates from Meta) come in on a different change.field and
-      // have a different value shape — route them through the
-      // dedicated handler. Skip the messaging branches below so we
-      // don't try to read message-shaped fields off a template event.
-      // `entry.id` is the WABA id for template events — the handler
-      // needs it to resolve the owning account when the template has
-      // no local row yet (#534).
-      if (isHealthWebhookField(change.field)) {
-        await handleHealthWebhookChange({
+  // Webhooks salientes (estados, conversation.created, message.received)
+  // lanzados durante el lote. Se esperan al final, pase lo que pase.
+  const avisos: Promise<unknown>[] = []
+  try {
+    for (const entry of body.entry) {
+      for (const change of entry.changes ?? []) {
+        // Un change que falla (decrypt, error de BD, payload raro) no debe
+        // cortar el resto del lote: Meta ya recibió el 200 y no reintenta.
+        try {
+          await processChange(entry, change, avisos)
+        } catch (err) {
+          console.error(
+            `[webhook] falló un change (${change?.field ?? 'sin field'}); se sigue con el resto del lote:`,
+            err instanceof Error ? err.message : err,
+          )
+        }
+      }
+    }
+  } finally {
+    await Promise.allSettled(avisos)
+  }
+}
+
+async function processChange(
+  entry: WhatsAppWebhookEntry,
+  change: WhatsAppWebhookEntry['changes'][number],
+  avisos: Promise<unknown>[],
+) {
+  // Template-lifecycle events (status / quality / components
+  // updates from Meta) come in on a different change.field and
+  // have a different value shape — route them through the
+  // dedicated handler. Skip the messaging branches below so we
+  // don't try to read message-shaped fields off a template event.
+  // `entry.id` is the WABA id for template events — the handler
+  // needs it to resolve the owning account when the template has
+  // no local row yet (#534).
+  //
+  // message_template_quality_update es de los DOS manejadores: el de
+  // plantillas escribe quality_score (lee new_quality_score y crea la fila
+  // si falta) y el de salud pausa broadcasts si quedó en RED. Antes ganaba
+  // solo el de salud, que leía el campo equivocado y guardaba todo GREEN.
+  // Va primero el de plantillas para que la fila exista al pausar.
+  const esPlantilla = isTemplateWebhookField(change.field)
+  const esSalud = isHealthWebhookField(change.field)
+  if (esPlantilla) {
+    try {
+      await handleTemplateWebhookChange(
+        {
           field: change.field,
           value: change.value as unknown,
           wabaId: entry.id,
-        })
-        continue
-      }
+        },
+        supabaseAdmin(),
+      )
+    } catch (err) {
+      console.error(
+        `[webhook] falló el manejador de plantillas (${change.field}):`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+  if (esSalud) {
+    await handleHealthWebhookChange({
+      field: change.field as Parameters<typeof handleHealthWebhookChange>[0]['field'],
+      value: change.value as unknown,
+      wabaId: entry.id,
+    })
+  }
+  if (esPlantilla || esSalud) return
 
-      if (isTemplateWebhookField(change.field)) {
-        await handleTemplateWebhookChange(
-          {
-            field: change.field,
-            value: change.value as unknown,
-            wabaId: entry.id,
-          },
-          supabaseAdmin(),
-        )
-        continue
-      }
+  // Eventos de la WhatsApp Business Calling API (llamada conectada,
+  // terminada, etc.). Se guardan en `flow_call_sessions`; el nodo
+  // official_call ya se reanuda con la respuesta de permiso.
+  if (change.field === 'calls') {
+    await handleCallsWebhook(change.value as unknown)
+    return
+  }
 
-      // Eventos de la WhatsApp Business Calling API (llamada conectada,
-      // terminada, etc.). Se guardan en `flow_call_sessions`; el nodo
-      // official_call ya se reanuda con la respuesta de permiso.
-      if (change.field === 'calls') {
-        await handleCallsWebhook(change.value as unknown)
-        continue
-      }
+  const value = change.value
 
-      const value = change.value
-
-      // Handle status updates
-      if (value.statuses) {
-        const statusAccountId = await resolveAccountForPhoneNumber(
-          value.metadata?.phone_number_id
-        )
-        for (const status of value.statuses) {
-          await handleStatusUpdate(status, statusAccountId)
-        }
-      }
-
-      // Handle incoming messages
-      if (!value.messages || !value.contacts) continue
-
-      const phoneNumberId = value.metadata.phone_number_id
-
-      // Resolver la conexión por phone_number_id. Las conexiones nuevas
-      // viven en whatsapp_connections; whatsapp_config queda como
-      // respaldo de una release para no cortar números ya existentes.
-      const { data: conexion } = await supabaseAdmin()
-        .from('whatsapp_connections')
-        .select('id, account_id, access_token, status')
-        .eq('phone_number_id', phoneNumberId)
-        .maybeSingle()
-
-      let accountId: string | null = null
-      let senderUserId: string | null = null
-      let decryptedAccessToken: string | null = null
-      let connectionId: string | null = null
-      let mirrorMedia = true
-
-      if (conexion?.account_id && conexion.access_token) {
-        const { data: cuenta } = await supabaseAdmin()
-          .from('accounts')
-          .select('owner_user_id')
-          .eq('id', conexion.account_id)
-          .maybeSingle()
-        if (cuenta?.owner_user_id) {
-          accountId = conexion.account_id as string
-          senderUserId = cuenta.owner_user_id as string
-          decryptedAccessToken = decrypt(conexion.access_token as string)
-          connectionId = conexion.id as string
-        }
-      }
-
-      if (!accountId || !senderUserId || !decryptedAccessToken) {
-        const { data: configRows, error: configError } = await supabaseAdmin()
-          .from('whatsapp_config')
-          .select('*')
-          .eq('phone_number_id', phoneNumberId)
-
-        if (configError) {
-          console.error(
-            'Error fetching whatsapp_config for phone_number_id:',
-            phoneNumberId,
-            configError
-          )
-          continue
-        }
-        if (!configRows || configRows.length === 0) {
-          console.error('No config found for phone_number_id:', phoneNumberId)
-          continue
-        }
-        if (configRows.length > 1) {
-          console.error(
-            `Multiple configs (${configRows.length}) found for phone_number_id:`,
-            phoneNumberId,
-            '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
-            'Account owners:',
-            configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
-          )
-          continue
-        }
-        const config = configRows[0]
-        accountId = config.account_id as string
-        senderUserId = config.user_id as string
-        decryptedAccessToken = decrypt(config.access_token as string)
-        connectionId = null
-        mirrorMedia = config.mirror_inbound_media !== false
-      }
-
-      for (let i = 0; i < value.messages.length; i++) {
-        const message = value.messages[i]
-        const contact = value.contacts[i] || value.contacts[0]
-
-        await processMessage(
-          message,
-          contact,
-          accountId,
-          senderUserId,
-          decryptedAccessToken,
-          mirrorMedia,
-          connectionId
+  // Handle status updates
+  if (value.statuses) {
+    const statusAccountId = await resolveAccountForPhoneNumber(
+      value.metadata?.phone_number_id
+    )
+    for (const status of value.statuses) {
+      try {
+        await handleStatusUpdate(status, statusAccountId, avisos)
+      } catch (err) {
+        console.error(
+          `[webhook] falló el estado ${status?.id ?? '?'}; se sigue con el resto:`,
+          err instanceof Error ? err.message : err,
         )
       }
+    }
+  }
+
+  // Handle incoming messages
+  if (!value.messages || !value.contacts) return
+
+  const phoneNumberId = value.metadata.phone_number_id
+
+  // Resolver la conexión por phone_number_id. Las conexiones nuevas
+  // viven en whatsapp_connections; whatsapp_config queda como
+  // respaldo de una release para no cortar números ya existentes.
+  const { data: conexion } = await supabaseAdmin()
+    .from('whatsapp_connections')
+    .select('id, account_id, access_token, status')
+    .eq('phone_number_id', phoneNumberId)
+    .maybeSingle()
+
+  let accountId: string | null = null
+  let senderUserId: string | null = null
+  let decryptedAccessToken: string | null = null
+  let connectionId: string | null = null
+  let mirrorMedia = true
+
+  if (conexion?.account_id && conexion.access_token) {
+    const { data: cuenta } = await supabaseAdmin()
+      .from('accounts')
+      .select('owner_user_id')
+      .eq('id', conexion.account_id)
+      .maybeSingle()
+    if (cuenta?.owner_user_id) {
+      try {
+        decryptedAccessToken = decrypt(conexion.access_token as string)
+      } catch (err) {
+        // Token ilegible (ENCRYPTION_KEY distinta): se registra y se corta
+        // solo este change; no se cae a whatsapp_config para no abrir un
+        // hilo duplicado sin connection_id.
+        console.error(
+          '[webhook] token de la conexión ilegible; mensajes de este change descartados:',
+          phoneNumberId,
+          err instanceof Error ? err.message : err,
+        )
+        return
+      }
+      accountId = conexion.account_id as string
+      senderUserId = cuenta.owner_user_id as string
+      connectionId = conexion.id as string
+    }
+  }
+
+  if (!accountId || !senderUserId || !decryptedAccessToken) {
+    const { data: configRows, error: configError } = await supabaseAdmin()
+      .from('whatsapp_config')
+      .select('*')
+      .eq('phone_number_id', phoneNumberId)
+
+    if (configError) {
+      console.error(
+        'Error fetching whatsapp_config for phone_number_id:',
+        phoneNumberId,
+        configError
+      )
+      return
+    }
+    if (!configRows || configRows.length === 0) {
+      console.error('No config found for phone_number_id:', phoneNumberId)
+      return
+    }
+    if (configRows.length > 1) {
+      console.error(
+        `Multiple configs (${configRows.length}) found for phone_number_id:`,
+        phoneNumberId,
+        '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
+        'Account owners:',
+        configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
+      )
+      return
+    }
+    const config = configRows[0]
+    accountId = config.account_id as string
+    senderUserId = config.user_id as string
+    try {
+      decryptedAccessToken = decrypt(config.access_token as string)
+    } catch (err) {
+      console.error(
+        '[webhook] token de whatsapp_config ilegible; mensajes de este change descartados:',
+        phoneNumberId,
+        err instanceof Error ? err.message : err,
+      )
+      return
+    }
+    connectionId = null
+    mirrorMedia = config.mirror_inbound_media !== false
+  }
+
+  for (let i = 0; i < value.messages.length; i++) {
+    const message = value.messages[i]
+    const contact = value.contacts[i] || value.contacts[0]
+
+    // Un mensaje que falla no debe dejar mudos a los siguientes del lote.
+    try {
+      await processMessage(
+        message,
+        contact,
+        accountId,
+        senderUserId,
+        decryptedAccessToken,
+        mirrorMedia,
+        connectionId,
+        avisos
+      )
+    } catch (err) {
+      console.error(
+        `[webhook] falló el mensaje ${message?.id ?? '?'}; se sigue con el resto:`,
+        err instanceof Error ? err.message : err,
+      )
     }
   }
 }
@@ -626,7 +723,9 @@ async function handleStatusUpdate(
     recipient_id: string
     errors?: MetaStatusError[]
   },
-  accountId: string | null
+  accountId: string | null,
+  /** Webhooks salientes pendientes del lote (ver lanzarAviso). */
+  avisos: Promise<unknown>[]
 ) {
   // Meta's reason for a failed send (#535). Only read on `failed`; a
   // later non-failed status for the same wamid leaves the error
@@ -672,18 +771,22 @@ async function handleStatusUpdate(
   })
 
   // 3) Webhook fan-out for messages we store (inbox / API sends).
-  //    Runs last so a slow subscriber can't delay the mirrors above.
+  //    Runs last so a slow subscriber can't delay the mirrors above, y
+  //    sin await: se lanza y processWebhook lo espera al final del lote,
+  //    así un suscriptor lento no frena los estados ni mensajes siguientes.
   if (!accountId) return
   for (const advanced of advancedMessages) {
-    await dispatchWebhookEvent(
-      supabaseAdmin(),
-      accountId,
-      'message.status_updated',
-      {
-        whatsapp_message_id: status.id,
-        conversation_id: advanced.conversation_id,
-        status: status.status,
-      }
+    lanzarAviso(avisos, () =>
+      dispatchWebhookEvent(
+        supabaseAdmin(),
+        accountId,
+        'message.status_updated',
+        {
+          whatsapp_message_id: status.id,
+          conversation_id: advanced.conversation_id,
+          status: status.status,
+        }
+      )
     )
   }
 }
@@ -800,7 +903,9 @@ async function processMessage(
   // See parseMessageContent for what it turns off.
   mirrorMedia: boolean,
   /** Conexión de whatsapp_connections (null en filas legacy). */
-  connectionId: string | null
+  connectionId: string | null,
+  /** Webhooks salientes pendientes del lote (ver lanzarAviso). */
+  avisos: Promise<unknown>[]
 ) {
   // Phone number OR business-scoped user ID — Meta sends only the
   // latter for a sender who has adopted a WhatsApp username (#519).
@@ -849,12 +954,17 @@ async function processMessage(
   // the reaction short-circuit below — so a conversation first opened by
   // a reaction still fires the event, and a subscriber always sees the
   // thread open before its first message.received.
-  if (convResult.created) {
-    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'conversation.created', {
-      conversation_id: conversation.id,
-      contact_id: contactRecord.id,
-    })
-  }
+  //
+  // Se lanza sin await bloqueante (ver lanzarAviso); message.received se
+  // encadena a esta promesa para conservar el orden.
+  const avisoConversacion = convResult.created
+    ? lanzarAviso(avisos, () =>
+        dispatchWebhookEvent(supabaseAdmin(), accountId, 'conversation.created', {
+          conversation_id: conversation.id,
+          contact_id: contactRecord.id,
+        })
+      )
+    : null
 
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
@@ -994,6 +1104,24 @@ async function processMessage(
     )
     return
   }
+  const internalMessageId = insertedRows[0].id as string
+
+  // message.received (API pública): UNA vez por mensaje entrante nuevo,
+  // justo después de la frontera de idempotencia, para que salga también
+  // cuando contesta el agente autónomo o un flujo (antes esos caminos
+  // retornaban antes de llegar al aviso del final). Sin await bloqueante:
+  // processWebhook lo espera al final del lote. Va encadenado tras
+  // conversation.created para que el suscriptor vea el hilo antes.
+  lanzarAviso(avisos, async () => {
+    if (avisoConversacion) await avisoConversacion
+    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
+      conversation_id: conversation.id,
+      contact_id: contactRecord.id,
+      whatsapp_message_id: message.id,
+      content_type: contentType,
+      text: contentText,
+    })
+  })
 
   // Fase 3: estado de la conversación. Detecta «no me escribas» y «quiero
   // hablar con una persona», y deja la conversación esperando respuesta.
@@ -1116,13 +1244,7 @@ async function processMessage(
     console.info(
       `[webhook] el flujo atendió este mensaje (${flowResult.outcome ?? 'consumido'}); la IA no contesta`,
     )
-    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
-      conversation_id: conversation.id,
-      contact_id: contactRecord.id,
-      whatsapp_message_id: message.id,
-      content_type: contentType,
-      text: contentText,
-    })
+    // message.received ya se lanzó tras insertar el mensaje.
     return
   }
 
@@ -1251,7 +1373,9 @@ async function processMessage(
     })
     if (lectura?.resumen) {
       textoParaIa = `${inboundText.trim() ? `${inboundText.trim()} ` : ''}[imagen: ${lectura.resumen}]`
-      await supabaseAdmin().from('messages').update({ content_text: textoParaIa }).eq('id', message.id)
+      // Por el id interno (uuid): message.id es el wamid de Meta y nunca
+      // coincidía, así que el resumen de la foto no se guardaba.
+      await supabaseAdmin().from('messages').update({ content_text: textoParaIa }).eq('id', internalMessageId)
       console.log(
         `[orquestador] imagen entendida (${lectura.clase}${lectura.cacheada ? ', de caché' : ''}) en ${lectura.latencyMs} ms`,
       )
@@ -1314,20 +1438,8 @@ async function processMessage(
     })
   }
 
-  // message.received webhook (public API). Awaited — not fire-and-forget
-  // — because we're inside the route's `after()` block, which only keeps
-  // the function alive for promises it can see; a detached promise could
-  // be frozen before it delivers. `dispatchWebhookEvent` early-exits
-  // when the account has no matching endpoint and never throws.
-  // (conversation.created is emitted earlier, right after the thread is
-  // opened.)
-  await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
-    conversation_id: conversation.id,
-    contact_id: contactRecord.id,
-    whatsapp_message_id: message.id,
-    content_type: contentType,
-    text: contentText,
-  })
+  // message.received (API pública) ya se lanzó justo tras insertar el
+  // mensaje; conversation.created, antes, al abrir el hilo.
 }
 
 async function parseMessageContent(

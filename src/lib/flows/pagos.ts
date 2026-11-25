@@ -269,3 +269,41 @@ export function correoNormalizado(valor: unknown): string | null {
 export function sesionCerrada(status: string): boolean {
   return status === "approved" || status === "rejected" || status === "expired" || status === "cancelled";
 }
+
+function esHostLocal(host: string): boolean {
+  const nombre = host.replace(/:\d+$/, "").replace(/^\[|\]$/g, "").toLowerCase();
+  return nombre === "localhost" || nombre === "127.0.0.1" || nombre === "::1" || nombre.endsWith(".localhost");
+}
+
+/**
+ * Base pública del URL que se registra en cada pasarela.
+ *
+ * Orden: `NEXT_PUBLIC_SITE_URL`; si falta, `X-Forwarded-Host` (+
+ * `X-Forwarded-Proto`) que pone el proxy de Railway, como en
+ * account/invitations; luego `Host`; y al final el origin del request
+ * (que detrás del proxy es el interno). Fuera de localhost se fuerza
+ * https: las pasarelas no aceptan (o no deben recibir) webhooks en http.
+ */
+export function urlBaseWebhook(request: Request): string {
+  const explicito = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  let base: string;
+  if (explicito) {
+    base = explicito.replace(/\/+$/, "");
+  } else {
+    const primero = (v: string | null) => v?.split(",")[0]?.trim() || null;
+    const fwdHost = primero(request.headers.get("x-forwarded-host"));
+    const fwdProto = primero(request.headers.get("x-forwarded-proto"));
+    const host = request.headers.get("host")?.trim() || null;
+    const url = new URL(request.url);
+    if (fwdHost) base = `${fwdProto || "https"}://${fwdHost}`;
+    else if (host) base = `${url.protocol.replace(":", "")}://${host}`;
+    else base = url.origin;
+  }
+  try {
+    const u = new URL(base);
+    if (u.protocol === "http:" && !esHostLocal(u.host)) u.protocol = "https:";
+    return u.toString().replace(/\/+$/, "");
+  } catch {
+    return base;
+  }
+}

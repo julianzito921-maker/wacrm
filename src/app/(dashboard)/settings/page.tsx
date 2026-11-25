@@ -21,6 +21,7 @@ import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { TrackingPanel } from '@/components/settings/tracking-panel';
 import { McpSettings } from '@/components/settings/mcp-settings';
+import { WebhooksSettings } from '@/components/settings/webhooks-settings';
 import { DepartmentsSettings } from '@/components/settings/departments-settings';
 import { BusinessHoursSettings } from '@/components/settings/business-hours-settings';
 import { PaymentsSettings } from '@/components/settings/payments-settings';
@@ -99,6 +100,7 @@ function SettingsPageInner() {
     calling: <CallingSettings />,
     'http-credentials': <FlowCredentialsSettings />,
     mcp: <McpSettings />,
+    webhooks: <WebhooksSettings />,
   };
 
   return (

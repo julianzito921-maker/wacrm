@@ -78,15 +78,60 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))
 
-const serviceRole = vi.hoisted(() => ({ lookups: 0 }))
+const serviceRole = vi.hoisted(() => ({
+  lookups: 0,
+  /** Filas de whatsapp_connections que ve el cliente service-role. */
+  connections: [] as Array<Record<string, unknown>>,
+  connectionInserts: [] as Record<string, unknown>[],
+  connectionUpdates: [] as { patch: Record<string, unknown>; filters: Record<string, unknown> }[],
+}))
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
-    from: vi.fn(() => {
+    from: vi.fn((table: string) => {
       serviceRole.lookups += 1
+      const filters: Record<string, unknown> = {}
+      const neq: Record<string, unknown> = {}
+      let patch: Record<string, unknown> | null = null
+      const filas = () =>
+        table === 'whatsapp_connections'
+          ? serviceRole.connections.filter(
+              (r) =>
+                Object.entries(filters).every(([k, v]) => r[k] === v) &&
+                Object.entries(neq).every(([k, v]) => r[k] !== v),
+            )
+          : []
       const b: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'neq']) b[m] = vi.fn(() => b)
-      b.maybeSingle = vi.fn(async () => ({ data: null, error: null }))
+      b.select = vi.fn(() => b)
+      b.eq = vi.fn((k: string, v: unknown) => {
+        filters[k] = v
+        return b
+      })
+      b.neq = vi.fn((k: string, v: unknown) => {
+        neq[k] = v
+        return b
+      })
+      b.is = vi.fn(() => b)
+      b.limit = vi.fn(() => b)
+      b.update = vi.fn((p: Record<string, unknown>) => {
+        patch = p
+        return b
+      })
+      b.insert = vi.fn((row: Record<string, unknown>) => {
+        if (table === 'whatsapp_connections') serviceRole.connectionInserts.push(row)
+        return {
+          select: () => ({
+            maybeSingle: async () => ({ data: { id: 'conn-new' }, error: null }),
+          }),
+        }
+      })
+      b.maybeSingle = vi.fn(async () => ({ data: filas()[0] ?? null, error: null }))
+      b.then = (resolve: (v: unknown) => unknown) => {
+        if (patch && table === 'whatsapp_connections') {
+          serviceRole.connectionUpdates.push({ patch, filters: { ...filters } })
+        }
+        return resolve({ data: patch ? null : filas(), error: null })
+      }
       return b
     }),
   })),
@@ -144,6 +189,9 @@ beforeEach(() => {
   configUpdates.length = 0
   configDeletes = 0
   serviceRole.lookups = 0
+  serviceRole.connections = []
+  serviceRole.connectionInserts = []
+  serviceRole.connectionUpdates = []
   supabaseMock = makeSupabaseMock()
   for (const fn of Object.values(meta)) fn.mockClear()
 })
@@ -227,6 +275,70 @@ describe('POST /api/whatsapp/config registration state', () => {
     expect(body).toMatchObject({ success: true, registered: true, registration_skipped: false })
     expect(meta.registerPhoneNumber).not.toHaveBeenCalled()
     expect(configUpdates[0]).toMatchObject({ registered_at: REGISTERED_AT })
+  })
+})
+
+describe('POST /api/whatsapp/config sincroniza whatsapp_connections', () => {
+  it('actualiza la conexión del mismo número con el token nuevo, sin duplicarla', async () => {
+    serviceRole.connections = [
+      { id: 'conn-1', account_id: 'acct-1', phone_number_id: '111222333', is_default: true },
+    ]
+
+    const res = await saveConfig({ verify_token: 'nuevo-verify' })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.connection_sync_error).toBeUndefined()
+    expect(serviceRole.connectionInserts).toHaveLength(0)
+    expect(serviceRole.connectionUpdates).toHaveLength(1)
+    expect(serviceRole.connectionUpdates[0].filters).toMatchObject({
+      id: 'conn-1',
+      account_id: 'acct-1',
+    })
+    expect(serviceRole.connectionUpdates[0].patch).toMatchObject({
+      access_token: 'enc-token',
+      verify_token: 'enc-token',
+      waba_id: '444555666',
+      status: 'connected',
+      display_phone_number: '+1 555 0100',
+    })
+  })
+
+  it('nunca borra el verify_token de la conexión cuando no hay uno', async () => {
+    serviceRole.connections = [
+      { id: 'conn-1', account_id: 'acct-1', phone_number_id: '111222333', is_default: true },
+    ]
+
+    await saveConfig()
+
+    expect(serviceRole.connectionUpdates[0].patch).not.toHaveProperty('verify_token')
+  })
+
+  it('crea la conexión (como default) cuando la cuenta no tiene ninguna', async () => {
+    const res = await saveConfig()
+
+    expect(res.status).toBe(200)
+    expect(serviceRole.connectionInserts).toHaveLength(1)
+    expect(serviceRole.connectionInserts[0]).toMatchObject({
+      account_id: 'acct-1',
+      phone_number_id: '111222333',
+      access_token: 'enc-token',
+      is_default: true,
+      active: true,
+    })
+  })
+
+  it('responde 409 si el número ya es una conexión de otra cuenta, sin llamar a Meta', async () => {
+    serviceRole.connections = [
+      { id: 'conn-x', account_id: 'otra-cuenta', phone_number_id: '111222333' },
+    ]
+
+    const res = await saveConfig()
+
+    expect(res.status).toBe(409)
+    expect(metaCallCount()).toBe(0)
+    expect(configInserts).toHaveLength(0)
+    expect(serviceRole.connectionInserts).toHaveLength(0)
   })
 })
 

@@ -33,7 +33,7 @@ export const DELIVERY_TIMEOUT_MS = 5000;
 /** Auto-disable an endpoint after this many consecutive failures. */
 export const MAX_CONSECUTIVE_FAILURES = 15;
 
-interface EndpointRow {
+export interface EndpointRow {
   id: string;
   url: string;
   secret: string;
@@ -126,6 +126,8 @@ async function deliverOne(
       redirect: 'manual',
       signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
     });
+    // No se lee el cuerpo: se cancela para liberar el socket.
+    await res.body?.cancel().catch(() => {});
     if (!res.ok) throw new Error(`endpoint responded ${res.status}`);
 
     // Success: clear the failure streak.
@@ -154,5 +156,86 @@ async function recordFailure(db: SupabaseClient, row: EndpointRow): Promise<void
   });
   if (error) {
     console.error('[webhooks] record_webhook_failure failed for', row.id, error);
+  }
+}
+
+// ============================================================
+// Envío de prueba (botón «Enviar prueba» de la pantalla Webhooks).
+//
+// Manda un evento `webhook.test` firmado igual que uno real, SOLO al
+// endpoint elegido, y devuelve qué respondió. No toca `failure_count`
+// ni `last_delivery_at`: una prueba fallida no debe acercar el
+// endpoint a la auto-desactivación, ni una exitosa ocultar fallos
+// reales. Mismas defensas que una entrega real (SSRF, sin redirecciones,
+// tiempo límite).
+// ============================================================
+
+export const TEST_EVENT = 'webhook.test' as const;
+
+export type TestDeliveryResult =
+  | { ok: true; status: number; ms: number }
+  | {
+      ok: false;
+      reason: 'blocked_url' | 'secret' | 'http' | 'network';
+      status?: number;
+      ms: number;
+    };
+
+export async function sendTestDelivery(
+  row: EndpointRow,
+  accountId: string,
+  now: Date = new Date()
+): Promise<TestDeliveryResult> {
+  const started = Date.now();
+  const ms = () => Date.now() - started;
+
+  if (!(await isDeliverableUrl(row.url))) {
+    return { ok: false, reason: 'blocked_url', ms: ms() };
+  }
+
+  let secret: string;
+  try {
+    secret = decrypt(row.secret);
+  } catch {
+    return { ok: false, reason: 'secret', ms: ms() };
+  }
+
+  const payload = JSON.stringify({
+    id: randomUUID(),
+    event: TEST_EVENT,
+    occurred_at: now.toISOString(),
+    account_id: accountId,
+    data: {
+      message: 'Prueba de webhook enviada desde el CRM',
+      webhook_id: row.id,
+    },
+  });
+  const tsSeconds = Math.floor(now.getTime() / 1000);
+
+  try {
+    const res = await fetch(row.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Wacrm-Event': TEST_EVENT,
+        'X-Wacrm-Webhook-Id': row.id,
+        'X-Wacrm-Signature': buildSignatureHeader(payload, secret, tsSeconds),
+      },
+      body: payload,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+    });
+    await res.body?.cancel().catch(() => {});
+    if (!res.ok) {
+      return { ok: false, reason: 'http', status: res.status, ms: ms() };
+    }
+    return { ok: true, status: res.status, ms: ms() };
+  } catch (err) {
+    // El detalle queda en el log; al navegador solo va el motivo.
+    console.warn(
+      `[webhooks] test delivery to ${row.id} failed:`,
+      err instanceof Error ? err.message : err
+    );
+    return { ok: false, reason: 'network', ms: ms() };
   }
 }

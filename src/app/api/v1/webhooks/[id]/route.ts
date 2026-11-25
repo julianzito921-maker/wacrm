@@ -11,6 +11,7 @@ import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { isUuid } from '@/lib/api/v1/pagination';
 import { normalizeEvents } from '@/lib/webhooks/events';
+import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 import {
   WEBHOOK_PUBLIC_COLUMNS,
   serializeWebhookEndpoint,
@@ -69,7 +70,16 @@ export async function PATCH(
       if (!urlCheck.ok) {
         return fail('bad_request', urlCheck.message, 400);
       }
+      if (!(await isDeliverableUrl(urlCheck.url))) {
+        return fail(
+          'bad_request',
+          "'url' must resolve to a public address",
+          400
+        );
+      }
       updates.url = urlCheck.url;
+      // A new target starts with a clean failure streak.
+      updates.failure_count = 0;
     }
 
     if ('events' in body) {

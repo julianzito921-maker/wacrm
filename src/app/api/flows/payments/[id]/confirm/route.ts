@@ -37,14 +37,23 @@ export async function POST(
       return NextResponse.json({ error: "already_closed" }, { status: 409 });
     }
 
-    await db
+    // Atómico: solo cierra la sesión si sigue en `pending`. Si un webhook
+    // o el timeout ganaron entre la lectura y el update, no se toca nada.
+    const { data: cerradas, error: updErr } = await db
       .from("flow_payment_sessions")
       .update({
         status,
         approved_at: status === "approved" ? new Date().toISOString() : null,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("account_id", accountId)
+      .eq("status", "pending")
+      .select("id");
+    if (updErr) throw new Error(updErr.message);
+    if (!cerradas || cerradas.length === 0) {
+      return NextResponse.json({ error: "already_closed" }, { status: 409 });
+    }
 
     const { data: run } = await db
       .from("flow_runs")

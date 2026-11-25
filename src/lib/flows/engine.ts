@@ -4297,18 +4297,35 @@ async function resumePaymentGatewayTimeout(
   db: AdminClient,
   run: FlowRunRow,
 ): Promise<boolean> {
-  const { data: session } = await db.from("flow_payment_sessions").select("id")
-    .eq("flow_run_id", run.id).eq("status", "pending").maybeSingle();
-  if (session) {
-    await db.from("flow_payment_sessions").update({
+  // El webhook y la confirmación manual ponen `next_run_at = ahora` como
+  // respaldo, así que el cron puede llegar aquí con la sesión YA cerrada.
+  // La decisión sale de la sesión: si ya está aprobada o rechazada no se
+  // manda la corrida por el timeout (un cliente que pagó no debe recibir
+  // el mensaje de «no llegó tu pago»).
+  const { data: session } = await db.from("flow_payment_sessions").select("id, status")
+    .eq("flow_run_id", run.id).eq("node_key", run.current_node_key ?? "")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const fila = session as { id: string; status: string } | null;
+  const decisionDe = (status: string | undefined): "approved" | "rejected" | "expired" =>
+    status === "approved" ? "approved" : status === "rejected" ? "rejected" : "expired";
+  let decision = decisionDe(fila?.status);
+  if (fila?.status === "pending") {
+    // Atómico: si un webhook la cerró entre la lectura y el update, no se
+    // pisa su estado (antes quedaba `expired` y la venta tardía se perdía).
+    const { data: expiradas } = await db.from("flow_payment_sessions").update({
       status: "expired",
       updated_at: new Date().toISOString(),
-    }).eq("id", (session as { id: string }).id);
+    }).eq("id", fila.id).eq("status", "pending").select("id");
+    if (!expiradas || (expiradas as unknown[]).length === 0) {
+      const { data: releida } = await db.from("flow_payment_sessions").select("status")
+        .eq("id", fila.id).maybeSingle();
+      decision = decisionDe((releida as { status?: string } | null)?.status);
+    }
   }
   return resumePaymentGateway(db, {
     runId: run.id,
-    decision: "expired",
-    sessionId: (session as { id?: string } | null)?.id ?? null,
+    decision,
+    sessionId: fila?.id ?? null,
   });
 }
 

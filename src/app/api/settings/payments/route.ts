@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireRole, toErrorResponse } from "@/lib/auth/account";
 import { encrypt } from "@/lib/whatsapp/encryption";
+import { urlBaseWebhook } from "@/lib/flows/pagos";
 import { PAYMENT_PROVIDERS, type PaymentProvider } from "@/lib/flows/types";
 
 export const runtime = "nodejs";
@@ -38,9 +39,7 @@ export async function GET(request: Request) {
       .select("provider, webhook_secret, api_key, config, active")
       .eq("account_id", accountId);
     if (error) throw new Error(error.message);
-    const origin =
-      process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-      new URL(request.url).origin;
+    const origin = urlBaseWebhook(request);
     const porProveedor = new Map(
       ((data ?? []) as FilaConfig[]).map((f) => [f.provider, f]),
     );

@@ -28,6 +28,7 @@ import {
 } from '@/lib/whatsapp/waba-pairing'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { resolveVerifyTokenForSave } from '@/lib/whatsapp/verify-token'
+import { sincronizarConexionDesdeConfig } from '@/lib/whatsapp/conexion-meta'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getT } from '@/lib/i18n/translate'
 
@@ -329,7 +330,17 @@ export async function POST(request: Request) {
       )
     }
 
-    if (claimed) {
+    // El webhook entrante resuelve primero por whatsapp_connections: si el
+    // número ya es una isla de OTRA cuenta, guardarlo aquí no lo movería
+    // (los mensajes seguirían yendo a esa cuenta). Mismo 409.
+    const { data: claimedConnection } = await supabaseAdmin()
+      .from('whatsapp_connections')
+      .select('account_id')
+      .eq('phone_number_id', phone_number_id)
+      .neq('account_id', accountId)
+      .maybeSingle()
+
+    if (claimed || claimedConnection) {
       return NextResponse.json(
         {
           error:
@@ -544,6 +555,27 @@ export async function POST(request: Request) {
       }
     }
 
+    // Espejo en whatsapp_connections (tabla canónica desde 089/098). El
+    // webhook entrante y los envíos leen primero de ahí; sin esto, rotar el
+    // token desde esta pantalla dejaba la isla con el token viejo. Si falla
+    // no se deshace el guardado: se avisa en la respuesta y en el log.
+    const sync = await sincronizarConexionDesdeConfig(supabaseAdmin(), {
+      accountId,
+      phoneNumberId: phone_number_id,
+      phoneNumberIdAnterior: existing?.phone_number_id ?? null,
+      wabaId: waba_id || null,
+      accessTokenCifrado: encryptedAccessToken,
+      verifyTokenCifrado: encryptedVerifyToken,
+      status: baseRow.status as 'connected' | 'disconnected',
+      displayPhoneNumber: phoneInfo?.display_phone_number ?? null,
+    })
+    const connectionSync = sync.ok
+      ? {}
+      : { connection_sync_error: sync.error }
+    if (!sync.ok) {
+      console.error('[whatsapp/config] no se pudo sincronizar whatsapp_connections:', sync.error)
+    }
+
     if (registrationError) {
       // Save succeeded but the number isn't actually live. Return
       // 200 with a structured error so the UI can show the specific
@@ -556,6 +588,7 @@ export async function POST(request: Request) {
         error: registrationError,
         meta: registrationMeta,
         phone_info: phoneInfo,
+        ...connectionSync,
       })
     }
 
@@ -569,6 +602,7 @@ export async function POST(request: Request) {
       // rather than claiming the number is fully live.
       registration_skipped: registrationSkipped,
       phone_info: phoneInfo,
+      ...connectionSync,
     })
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {

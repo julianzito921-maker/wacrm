@@ -367,11 +367,27 @@ request body** and compare in constant time; reject if `t` is more than
 a few minutes old (replay protection).
 
 ```js
-const [, t, v1] = header.match(/t=(\d+),v1=([0-9a-f]+)/);
+const m = /t=(\d+),\s*v1=([0-9a-f]+)/i.exec(header || '');
+if (!m) return false;
+const [, t, v1] = m;
+// Replay protection: reject anything older than 5 minutes.
+if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false;
 const expected = crypto.createHmac('sha256', secret)
   .update(`${t}.${rawBody}`).digest('hex');
-const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
+const a = Buffer.from(expected);
+const b = Buffer.from(v1.toLowerCase());
+// timingSafeEqual throws on length mismatch — check first.
+const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
 ```
+
+### Managing webhooks from the dashboard
+
+Admins can also manage endpoints in **Settings → Webhooks**
+(`/settings?tab=webhooks`, or the *Webhooks* item in the sidebar):
+create (the secret is shown once), edit URL/events, turn on/off,
+**Send test** (posts a signed `webhook.test` event to that endpoint
+only; it does not affect `failure_count`), **New secret** (rotates the
+signing secret — the old one stops working immediately) and delete.
 
 ### Delivery semantics
 

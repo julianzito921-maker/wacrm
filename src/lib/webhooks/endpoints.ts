@@ -8,8 +8,13 @@
 
 import { randomBytes } from 'node:crypto';
 
+import type { SupabaseClient } from '@supabase/supabase-js';
+
 /** Secret prefix — self-identifying, like `wacrm_live_` for keys. */
 export const WEBHOOK_SECRET_PREFIX = 'whsec_';
+
+/** Tope de webhooks por cuenta: cada evento se reparte a todos. */
+export const MAX_WEBHOOKS_PER_ACCOUNT = 10;
 
 /**
  * Columns safe to return over the API — everything except the
@@ -78,4 +83,23 @@ export function checkWebhookUrl(input: unknown): WebhookUrlCheck {
     };
   }
   return { ok: true, url: u.toString() };
+}
+
+/**
+ * ¿La cuenta ya llegó al tope de webhooks? Devuelve null si no se pudo
+ * contar (el llamador responde 500). Lo usan el panel y la API v1.
+ */
+export async function webhookLimitReached(
+  db: SupabaseClient,
+  accountId: string
+): Promise<boolean | null> {
+  const { count, error } = await db
+    .from('webhook_endpoints')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId);
+  if (error) {
+    console.error('[webhooks] count error:', error);
+    return null;
+  }
+  return (count ?? 0) >= MAX_WEBHOOKS_PER_ACCOUNT;
 }

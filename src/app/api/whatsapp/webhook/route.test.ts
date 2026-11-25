@@ -13,7 +13,11 @@ const h = vi.hoisted(() => ({
   agendarRecordatorioPago: vi.fn(),
   procesarComprobante: vi.fn(),
   tienePagoPendiente: vi.fn(),
+  decrypt: vi.fn(),
+  handleHealthWebhookChange: vi.fn(),
   state: {
+    /** Fila de whatsapp_connections por phone_number_id (null = legacy). */
+    conexiones: {} as Record<string, Record<string, unknown>>,
     // Result the message upsert's .select() resolves to. A genuine insert
     // returns the row; a replayed delivery conflicts and returns [].
     messageUpsertResult: [{ id: 'msg-1' }] as { id: string }[],
@@ -84,16 +88,34 @@ vi.mock('@supabase/supabase-js', () => ({
             }),
           }
         case 'whatsapp_connections': {
+          let phoneId: unknown = null
           const chain = {
-            eq: () => chain,
+            eq: (column: string, value: unknown) => {
+              if (column === 'phone_number_id') phoneId = value
+              return chain
+            },
             order: () => chain,
-            maybeSingle: async () => ({ data: null, error: null }),
+            maybeSingle: async () => ({
+              data: h.state.conexiones[String(phoneId)] ?? null,
+              error: null,
+            }),
             single: async () => ({ data: null, error: null }),
             then: (resolve: (value: unknown) => unknown) =>
               Promise.resolve({ data: [], error: null }).then(resolve),
           }
           return { select: () => chain }
         }
+        case 'accounts':
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { owner_user_id: 'owner-1' },
+                  error: null,
+                }),
+              }),
+            }),
+          }
         case 'conversations':
           // findOrCreateConversation: select().eq().eq().order().limit()
           return {
@@ -254,7 +276,7 @@ vi.mock('@supabase/supabase-js', () => ({
 }))
 
 vi.mock('@/lib/whatsapp/encryption', () => ({
-  decrypt: () => 'plain-token',
+  decrypt: h.decrypt,
   encrypt: (v: string) => v,
   isLegacyFormat: () => false,
 }))
@@ -273,6 +295,10 @@ vi.mock('@/lib/contacts/dedupe', () => ({
 
 vi.mock('@/lib/whatsapp/webhook-signature', () => ({
   verifyMetaWebhookSignature: () => true,
+}))
+vi.mock('@/lib/whatsapp/health-webhook', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/whatsapp/health-webhook')>()),
+  handleHealthWebhookChange: h.handleHealthWebhookChange,
 }))
 vi.mock('@/lib/whatsapp/template-webhook', () => ({
   isTemplateWebhookField: (field: string) =>
@@ -397,6 +423,9 @@ async function runStatusWebhook(status: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.state.conexiones = {}
+  h.decrypt.mockImplementation(() => 'plain-token')
+  h.handleHealthWebhookChange.mockResolvedValue(undefined)
   h.state.messageUpsertResult = [{ id: 'msg-1' }]
   h.state.firstInboundUnclaimed = true
   h.state.firstInboundClaims = 0
@@ -1357,5 +1386,205 @@ describe('convivencia Flow Builder ↔ IA (22-nov-2026)', () => {
     h.dispatchInboundToFlows.mockResolvedValue({ consumed: false, outcome: 'no_match' })
     await runWebhook(TOQUE_BOTON)
     expect(triggers()).toContain('interactive_reply')
+  })
+})
+
+/** POST con varios changes en el mismo lote y drena el after(). */
+async function runBatch(changes: Record<string, unknown>[]) {
+  const res = await POST(
+    signedPost(JSON.stringify({ entry: [{ id: 'WABA-1', changes }] })),
+  )
+  for (const cb of h.state.afterCallbacks) await cb()
+  return res
+}
+
+const messageChange = (phoneNumberId: string, message: Record<string, unknown>) => ({
+  field: 'messages',
+  value: {
+    metadata: { phone_number_id: phoneNumberId },
+    contacts: LEGACY_CONTACTS,
+    messages: [message],
+  },
+})
+
+const messageReceivedCalls = () =>
+  h.dispatchWebhookEvent.mock.calls.filter(([, , event]) => event === 'message.received')
+
+describe('webhook saliente message.received: una vez por mensaje entrante', () => {
+  it('camino normal (IA): se dispara una sola vez', async () => {
+    await runWebhook()
+    expect(messageReceivedCalls()).toHaveLength(1)
+    expect(messageReceivedCalls()[0][3]).toMatchObject({
+      conversation_id: 'conv-1',
+      contact_id: 'contact-1',
+      whatsapp_message_id: 'wamid.TEST1',
+      content_type: 'text',
+      text: 'hello',
+    })
+  })
+
+  it('cuando atiende el agente autónomo también se dispara (una vez)', async () => {
+    h.responderConAgente.mockResolvedValue({ atendio: true, motivo: 'respuesta enviada' })
+    await runWebhook()
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled()
+    expect(messageReceivedCalls()).toHaveLength(1)
+  })
+
+  it('cuando atiende un flujo se dispara una sola vez', async () => {
+    h.dispatchInboundToFlows.mockResolvedValue({ consumed: true, outcome: 'advanced' })
+    await runWebhook()
+    expect(messageReceivedCalls()).toHaveLength(1)
+  })
+
+  it('un reenvío duplicado de Meta no lo dispara', async () => {
+    h.state.messageUpsertResult = []
+    await runWebhook()
+    expect(messageReceivedCalls()).toHaveLength(0)
+  })
+})
+
+describe('webhooks salientes: no bloquean el procesamiento en serie', () => {
+  it('un suscriptor lento de estados no frena el siguiente estado del lote', async () => {
+    h.applyMessageStatus.mockResolvedValue([{ id: 'm1', conversation_id: 'conv-9' }])
+    let soltar!: () => void
+    const pendiente = new Promise<void>((resolve) => {
+      soltar = resolve
+    })
+    h.dispatchWebhookEvent.mockImplementation(() => pendiente)
+
+    const statusChange = (id: string) => ({
+      field: 'messages',
+      value: {
+        metadata: { phone_number_id: 'pn-1' },
+        statuses: [{ id, status: 'delivered', timestamp: '1700000100', recipient_id: '1' }],
+      },
+    })
+    await POST(
+      signedPost(
+        JSON.stringify({ entry: [{ id: 'W', changes: [statusChange('a'), statusChange('b')] }] }),
+      ),
+    )
+    let terminado = false
+    const corrida = Promise.resolve(h.state.afterCallbacks[0]()).then(() => {
+      terminado = true
+    })
+    // Deja correr el lote sin soltar al suscriptor.
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0))
+
+    expect(h.applyMessageStatus).toHaveBeenCalledTimes(2)
+    expect(h.dispatchWebhookEvent).toHaveBeenCalledTimes(2)
+    // ...pero el after() sigue vivo hasta que los avisos terminan.
+    expect(terminado).toBe(false)
+    soltar()
+    await corrida
+    expect(terminado).toBe(true)
+  })
+
+  it('un aviso que lanza no rompe el after()', async () => {
+    h.dispatchWebhookEvent.mockRejectedValue(new Error('boom'))
+    const errores = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(runWebhook()).resolves.toBeDefined()
+    expect(h.state.rpcCalls).toHaveLength(1)
+    errores.mockRestore()
+  })
+})
+
+describe('lote resiliente: un fallo no corta el resto', () => {
+  it('un mensaje que revienta no impide procesar el siguiente del mismo change', async () => {
+    const errores = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockFindExistingContact.mockRejectedValueOnce(new Error('BD caída'))
+    const body = {
+      entry: [
+        {
+          changes: [
+            {
+              field: 'messages',
+              value: {
+                metadata: { phone_number_id: 'pn-1' },
+                contacts: LEGACY_CONTACTS,
+                messages: [TEXT_MESSAGE, { ...TEXT_MESSAGE, id: 'wamid.TEST2' }],
+              },
+            },
+          ],
+        },
+      ],
+    }
+    await POST(signedPost(JSON.stringify(body)))
+    for (const cb of h.state.afterCallbacks) await cb()
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].row).toMatchObject({ message_id: 'wamid.TEST2' })
+    errores.mockRestore()
+  })
+
+  it('un token de conexión ilegible corta solo su change', async () => {
+    const errores = vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.state.conexiones['pn-roto'] = {
+      id: 'conn-roto',
+      account_id: 'acc-2',
+      access_token: 'basura',
+      status: 'connected',
+    }
+    h.decrypt.mockImplementation((v: string) => {
+      if (v === 'basura') throw new Error('Unsupported state or unable to authenticate data')
+      return 'plain-token'
+    })
+
+    await runBatch([
+      messageChange('pn-roto', { ...TEXT_MESSAGE, id: 'wamid.ROTO' }),
+      messageChange('pn-1', TEXT_MESSAGE),
+    ])
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].row).toMatchObject({ message_id: 'wamid.TEST1' })
+    errores.mockRestore()
+  })
+
+  it('un estado que revienta no impide el siguiente', async () => {
+    const errores = vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.applyMessageStatus.mockRejectedValueOnce(new Error('timeout'))
+    const statuses = [
+      { id: 'a', status: 'delivered', timestamp: '1700000100', recipient_id: '1' },
+      { id: 'b', status: 'read', timestamp: '1700000200', recipient_id: '1' },
+    ]
+    await runBatch([
+      { field: 'messages', value: { metadata: { phone_number_id: 'pn-1' }, statuses } },
+    ])
+    expect(h.applyMessageStatus).toHaveBeenCalledTimes(2)
+    errores.mockRestore()
+  })
+})
+
+describe('message_template_quality_update: plantillas y salud', () => {
+  it('pasa por el manejador de plantillas (quality_score) y luego por el de salud (pausa RED)', async () => {
+    const orden: string[] = []
+    vi.mocked(handleTemplateWebhookChange).mockImplementation(async () => {
+      orden.push('plantillas')
+    })
+    h.handleHealthWebhookChange.mockImplementation(async () => {
+      orden.push('salud')
+    })
+    const value = {
+      message_template_id: 77,
+      message_template_name: 'promo',
+      previous_quality_score: 'GREEN',
+      new_quality_score: 'RED',
+    }
+
+    await runBatch([{ field: 'message_template_quality_update', value }])
+
+    expect(orden).toEqual(['plantillas', 'salud'])
+    expect(vi.mocked(handleTemplateWebhookChange).mock.calls[0][0]).toEqual({
+      field: 'message_template_quality_update',
+      value,
+      wabaId: 'WABA-1',
+    })
+    expect(h.state.upsertCalls).toHaveLength(0)
+  })
+
+  it('un field solo de salud no pasa por plantillas', async () => {
+    await runBatch([{ field: 'account_update', value: { event: 'X' } }])
+    expect(h.handleHealthWebhookChange).toHaveBeenCalledTimes(1)
+    expect(handleTemplateWebhookChange).not.toHaveBeenCalled()
   })
 })

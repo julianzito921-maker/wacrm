@@ -17,6 +17,7 @@ import {
   User,
   UsersRound,
   Wallet,
+  Webhook,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -44,6 +45,7 @@ export const SETTINGS_SECTIONS = [
   'api',
   'tracking',
   'mcp',
+  'webhooks',
   'departments',
   'business-hours',
   'payments',
@@ -85,6 +87,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   calling: { id: 'calling', label: 'Official calls', icon: Phone, group: 'integrations' },
   'http-credentials': { id: 'http-credentials', label: 'HTTP credentials', icon: KeyRound, group: 'integrations' },
   mcp: { id: 'mcp', label: 'MCP tools', icon: BrainCircuit, group: 'integrations' },
+  webhooks: { id: 'webhooks', label: 'Webhooks', icon: Webhook, group: 'integrations' },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [

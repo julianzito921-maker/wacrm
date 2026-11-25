@@ -500,55 +500,79 @@ async function aplicarUserPreferences(
   }
 }
 
+/**
+ * message_template_quality_update: el `quality_score` de la plantilla lo
+ * escribe template-webhook (handleQualityUpdate, que lee
+ * `new_quality_score` y crea la fila si aún no existe). Aquí solo va la
+ * reacción de salud: una plantilla en RED pausa los broadcasts que la usan
+ * en las cuentas dueñas de esta WABA.
+ *
+ * Antes se leía `quality_score`/`event` (Meta manda `new_quality_score`,
+ * así que todo quedaba en GREEN), se buscaba por nombre sin filtrar por
+ * cuenta y se usaba `.maybeSingle()`, que falla con varias filas.
+ */
 async function aplicarCalidadPlantilla(
   db: Db,
+  conexiones: ConexionSalud[],
   value: Record<string, unknown>,
 ): Promise<void> {
   const templateId = primerTexto(value.message_template_id);
   const nombre = primerTexto(value.message_template_name, value.template_name);
-  const quality = (primerTexto(value.quality_score, value.event) ?? "").toUpperCase();
-  if (!templateId && !nombre) return;
+  const quality = (
+    primerTexto(value.new_quality_score, value.quality_score, value.event) ?? ""
+  ).toUpperCase();
+  if ((!templateId && !nombre) || !quality.includes("RED")) return;
 
-  let query = db.from("message_templates").update({
-    quality_score: quality.includes("RED") ? "RED" : quality.includes("YELLOW") ? "YELLOW" : "GREEN",
-    updated_at: new Date().toISOString(),
-  });
-  if (templateId) query = query.or(`meta_template_id.eq.${templateId},name.eq.${nombre ?? templateId}`);
-  else if (nombre) query = query.eq("name", nombre);
-  await query;
+  const accountIds = [...new Set(conexiones.map((c) => c.account_id))];
+  if (accountIds.length === 0) return;
 
-  if (quality.includes("RED")) {
-    const { data: plantilla } = await db
+  let filas: Array<{ account_id?: string; name?: string }> = [];
+  if (templateId) {
+    const { data } = await db
       .from("message_templates")
       .select("account_id, name")
-      .or(
-        templateId
-          ? `meta_template_id.eq.${templateId}${nombre ? `,name.eq.${nombre}` : ""}`
-          : `name.eq.${nombre}`,
-      )
-      .maybeSingle();
-    const p = plantilla as { account_id?: string; name?: string } | null;
-    if (p?.account_id && p.name) {
-      const { data: broadcasts } = await db
-        .from("broadcasts")
-        .update({
-          status: "paused",
-          paused_at: new Date().toISOString(),
-          pause_reason: "template_quality_red",
-        })
-        .eq("account_id", p.account_id)
-        .eq("template_name", p.name)
-        .in("status", ["sending", "scheduled"])
-        .select("id");
-      if ((broadcasts?.length ?? 0) > 0) {
-        await alertarSalud(db, {
-          accountId: p.account_id,
-          regla: "plantilla_calidad_roja",
-          titulo: "Plantilla con calidad roja",
-          detalle: `La plantilla ${p.name} está en RED; broadcasts pausados: ${broadcasts?.length}.`,
-          metadata: { template: p.name, quality },
-        });
-      }
+      .in("account_id", accountIds)
+      .eq("meta_template_id", templateId);
+    filas = (data as typeof filas | null) ?? [];
+  }
+  if (filas.length === 0 && nombre) {
+    const { data } = await db
+      .from("message_templates")
+      .select("account_id, name")
+      .in("account_id", accountIds)
+      .eq("name", nombre);
+    filas = (data as typeof filas | null) ?? [];
+  }
+  if (filas.length === 0 && nombre) {
+    // Plantilla aún sin fila local: se pausa por el nombre que trae Meta.
+    filas = accountIds.map((account_id) => ({ account_id, name: nombre }));
+  }
+
+  const vistos = new Set<string>();
+  for (const p of filas) {
+    if (!p.account_id || !p.name) continue;
+    const clave = `${p.account_id}:${p.name}`;
+    if (vistos.has(clave)) continue;
+    vistos.add(clave);
+    const { data: broadcasts } = await db
+      .from("broadcasts")
+      .update({
+        status: "paused",
+        paused_at: new Date().toISOString(),
+        pause_reason: "template_quality_red",
+      })
+      .eq("account_id", p.account_id)
+      .eq("template_name", p.name)
+      .in("status", ["sending", "scheduled"])
+      .select("id");
+    if ((broadcasts?.length ?? 0) > 0) {
+      await alertarSalud(db, {
+        accountId: p.account_id,
+        regla: "plantilla_calidad_roja",
+        titulo: "Plantilla con calidad roja",
+        detalle: `La plantilla ${p.name} está en RED; broadcasts pausados: ${broadcasts?.length}.`,
+        metadata: { template: p.name, quality },
+      });
     }
   }
 }
@@ -604,7 +628,7 @@ export async function handleHealthWebhookChange(args: {
       break;
     }
     case "message_template_quality_update": {
-      await aplicarCalidadPlantilla(db, value);
+      await aplicarCalidadPlantilla(db, conexiones, value);
       break;
     }
     case "user_preferences": {

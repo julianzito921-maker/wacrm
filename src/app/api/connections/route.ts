@@ -5,6 +5,7 @@ import { getPhoneNumberHealth } from '@/lib/whatsapp/meta-api';
 import { parseQualityRating } from '@/lib/whatsapp/phone-health';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { CAMPOS_CONEXION_PUBLICOS } from '@/lib/whatsapp/connections';
+import { emparejarConexionEnMeta, pinValido } from '@/lib/whatsapp/conexion-meta';
 
 
 
@@ -48,9 +49,14 @@ export async function POST(request: Request) {
     }
     const requestedDefault = body.is_default === true;
     const active = body.active !== false;
+    const pinRaw = body.pin;
+    const pin = pinRaw === undefined || pinRaw === null || pinRaw === '' ? null : pinRaw;
 
     if (!name || !phoneNumberId || !accessToken) {
       return NextResponse.json({ error: 'missing_fields' }, { status: 400 });
+    }
+    if (pin !== null && !pinValido(pin)) {
+      return NextResponse.json({ error: 'invalid_pin' }, { status: 400 });
     }
 
     if (trackingPixelId) {
@@ -72,15 +78,6 @@ export async function POST(request: Request) {
       .eq('account_id', ctx.accountId);
     const isDefault = requestedDefault || (existentes ?? 0) === 0;
 
-    if (isDefault) {
-      await supabaseAdmin()
-        .from('whatsapp_connections')
-        .update({ is_default: false })
-        .eq('account_id', ctx.accountId)
-        .eq('is_default', true);
-    }
-
-
     let health;
     try {
       health = await getPhoneNumberHealth({ phoneNumberId, accessToken });
@@ -92,6 +89,34 @@ export async function POST(request: Request) {
         },
         { status: 502 },
       );
+    }
+
+    // Igual que la ruta legada (/api/whatsapp/config): sin suscribir la
+    // WABA a la app, Meta no entrega webhooks entrantes; con PIN se
+    // registra el número. Si falla la suscripción no se guarda nada; si
+    // falla /register, se guarda como desconectada con el motivo.
+    const emparejado = await emparejarConexionEnMeta({
+      phoneNumberId,
+      wabaId,
+      accessToken,
+      pin: pin as string | null,
+    });
+    if (!emparejado.ok) {
+      return NextResponse.json(
+        { error: 'meta_error', detail: emparejado.error, meta: emparejado.meta },
+        { status: emparejado.httpStatus },
+      );
+    }
+
+    // El default se mueve solo cuando Meta ya aceptó todo: antes se quitaba
+    // al default anterior aunque el alta fallara después, y la cuenta se
+    // quedaba sin ninguno.
+    if (isDefault) {
+      await supabaseAdmin()
+        .from('whatsapp_connections')
+        .update({ is_default: false })
+        .eq('account_id', ctx.accountId)
+        .eq('is_default', true);
     }
 
     const quality = parseQualityRating(health.quality_rating);
@@ -108,7 +133,7 @@ export async function POST(request: Request) {
         access_token: encrypt(accessToken),
         verify_token: verifyToken ? encrypt(verifyToken) : null,
         app_secret: appSecret ? encrypt(appSecret) : null,
-        status: 'connected',
+        status: emparejado.errorRegistro ? 'disconnected' : 'connected',
         quality_rating: health.quality_rating ?? null,
         whatsapp_business_manager_messaging_limit: limit,
         messaging_limit_tier: limit,
@@ -131,7 +156,22 @@ export async function POST(request: Request) {
       }
       throw new Error(error.message);
     }
-    return NextResponse.json({ connection: data }, { status: 201 });
+    return NextResponse.json(
+      {
+        connection: data,
+        waba_subscribed: emparejado.suscrita,
+        registered: emparejado.registrada,
+        ...(emparejado.errorRegistro
+          ? {
+              warning: 'registration_failed',
+              registration_error: emparejado.errorRegistro,
+              meta: emparejado.metaRegistro,
+            }
+          : {}),
+        ...(wabaId ? {} : { warning_waba: 'missing_waba_id' }),
+      },
+      { status: 201 },
+    );
   } catch (err) {
     return toErrorResponse(err);
   }

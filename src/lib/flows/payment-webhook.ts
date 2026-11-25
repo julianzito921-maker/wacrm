@@ -3,8 +3,9 @@
  *
  * Verifica la firma de cada proveedor antes de confiar en el payload.
  * Stripe/Whop/Mercado Pago usan HMAC con tolerancia de 5 minutos;
- * Hotmart usa el hottok compartido; SPEI solo se confirma a mano (o
- * con un secreto genérico si se conecta un agregador).
+ * Hotmart usa el hottok compartido; SPEI se confirma a mano, o por
+ * webhook solo si el agregador firma con un secreto (HMAC del body).
+ * Sin secreto configurado, ningún proveedor acepta avisos.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -166,6 +167,8 @@ interface SesionPago {
   status: string;
   contact_id: string | null;
   contact?: { email?: string | null } | null;
+  /** true si se encontró por referencia; false si fue por correo + monto. */
+  porReferencia?: boolean;
 }
 
 async function buscarSesion(
@@ -184,9 +187,15 @@ async function buscarSesion(
       .eq("provider", args.provider)
       .eq("reference", args.event.reference)
       .maybeSingle();
-    if (data) return data as unknown as SesionPago;
+    if (data) return { ...(data as unknown as SesionPago), porReferencia: true };
   }
 
+  // Respaldo por correo + monto. SPEI no lo usa: solo se concilia por
+  // referencia (el correo de un agregador no prueba quién pagó). Y sin
+  // monto en el evento el respaldo no aplica: `montoCoincide(x, null)`
+  // da true y cualquier sesión pendiente de ese correo calzaría.
+  if (args.provider === "spei") return null;
+  if (args.event.amount === null || !Number.isFinite(args.event.amount)) return null;
   const email = correoNormalizado(args.event.email);
   if (!email) return null;
   const desde = new Date(Date.now() - 7 * 86_400_000).toISOString();
@@ -209,7 +218,7 @@ async function buscarSesion(
     ) {
       continue;
     }
-    return fila;
+    return { ...fila, porReferencia: false };
   }
   return null;
 }
@@ -217,6 +226,20 @@ async function buscarSesion(
 export interface ResultadoWebhook {
   status: number;
   body: Record<string, unknown>;
+}
+
+/** Id del pago que manda Mercado Pago (`data.id` o `id`). */
+function dataIdMercadoPago(payload: Record<string, unknown>): string {
+  return String((payload.data as { id?: string } | undefined)?.id ?? payload.id ?? "");
+}
+
+/**
+ * Topic del aviso de Mercado Pago. Los webhooks traen `type`; las IPN
+ * viejas, `topic`. Solo `payment` lleva un pago que conciliar.
+ */
+function topicMercadoPago(payload: Record<string, unknown>): string | null {
+  const t = payload.type ?? payload.topic;
+  return typeof t === "string" && t.trim() ? t.trim() : null;
 }
 
 export async function procesarWebhookPago(args: {
@@ -232,9 +255,11 @@ export async function procesarWebhookPago(args: {
   if (!config) {
     return { status: 400, body: { error: "gateway_not_configured" } };
   }
+  // Sin secreto (o si no se pudo descifrar) no hay forma de saber quién
+  // manda el aviso: se rechaza para TODOS los proveedores, SPEI incluido.
   const webhookSecret = secreto(config.webhook_secret);
-  if (!webhookSecret && provider !== "spei") {
-    return { status: 400, body: { error: "webhook_secret_missing" } };
+  if (!webhookSecret) {
+    return { status: 401, body: { error: "webhook_secret_missing" } };
   }
 
   let payload: Record<string, unknown>;
@@ -244,66 +269,52 @@ export async function procesarWebhookPago(args: {
     return { status: 400, body: { error: "invalid_json" } };
   }
 
+  let firmaOk = false;
   if (provider === "stripe") {
-    if (
-      !firmaStripeValida({
-        header: headers.get("stripe-signature"),
-        rawBody,
-        secret: webhookSecret!,
-      })
-    ) {
-      return { status: 401, body: { error: "invalid_signature" } };
-    }
+    firmaOk = firmaStripeValida({
+      header: headers.get("stripe-signature"),
+      rawBody,
+      secret: webhookSecret,
+    });
   } else if (provider === "whop") {
-    if (
-      !firmaWhopValida({
-        id: headers.get("webhook-id"),
-        timestamp: headers.get("webhook-timestamp"),
-        signature: headers.get("webhook-signature"),
-        rawBody,
-        secret: webhookSecret!,
-      })
-    ) {
-      return { status: 401, body: { error: "invalid_signature" } };
-    }
+    firmaOk = firmaWhopValida({
+      id: headers.get("webhook-id"),
+      timestamp: headers.get("webhook-timestamp"),
+      signature: headers.get("webhook-signature"),
+      rawBody,
+      secret: webhookSecret,
+    });
   } else if (provider === "hotmart") {
-    if (!firmaHotmartValida(headers.get("x-hotmart-hottok"), webhookSecret!)) {
-      return { status: 401, body: { error: "invalid_signature" } };
-    }
+    firmaOk = firmaHotmartValida(headers.get("x-hotmart-hottok"), webhookSecret);
   } else if (provider === "spei") {
-    if (
-      webhookSecret &&
-      !firmaSpeiValida({
-        header: headers.get("x-spei-signature"),
-        rawBody,
-        secret: webhookSecret,
-      })
-    ) {
-      return { status: 401, body: { error: "invalid_signature" } };
-    }
+    firmaOk = firmaSpeiValida({
+      header: headers.get("x-spei-signature"),
+      rawBody,
+      secret: webhookSecret,
+    });
   } else if (provider === "mercadopago") {
-    const dataId = String(
-      (payload.data as { id?: string } | undefined)?.id ?? payload.id ?? "",
-    );
-    if (
-      !firmaMercadoPagoValida({
-        signature: headers.get("x-signature"),
-        requestId: headers.get("x-request-id"),
-        dataId,
-        secret: webhookSecret!,
-      })
-    ) {
-      return { status: 401, body: { error: "invalid_signature" } };
-    }
+    firmaOk = firmaMercadoPagoValida({
+      signature: headers.get("x-signature"),
+      requestId: headers.get("x-request-id"),
+      dataId: dataIdMercadoPago(payload),
+      secret: webhookSecret,
+    });
+  }
+  if (!firmaOk) {
+    return { status: 401, body: { error: "invalid_signature" } };
   }
 
   let evento = eventoDesdePayload(provider, payload, headers.get("webhook-id"));
 
   // Mercado Pago manda solo el id: el estado real está en la API.
   if (provider === "mercadopago") {
-    const dataId = String(
-      (payload.data as { id?: string } | undefined)?.id ?? payload.id ?? "",
-    );
+    // merchant_order, chargebacks, etc. no traen un pago que conciliar:
+    // se responde 200 para que MP no los reintente.
+    const topic = topicMercadoPago(payload);
+    if (topic && topic !== "payment") {
+      return { status: 200, body: { ok: true, ignored: "topic_not_payment", topic } };
+    }
+    const dataId = dataIdMercadoPago(payload);
     const accessToken = secreto(config.api_key);
     if (!dataId || !accessToken) {
       return { status: 400, body: { error: "payment_lookup_failed" } };
@@ -317,6 +328,12 @@ export async function procesarWebhookPago(args: {
     }
     const pago = (await res.json()) as Record<string, unknown>;
     const normalizado = pagoMercadoPago(pago);
+    // El mismo pago avisa varias veces (pending, approved, refunded...).
+    // La clave lleva la acción y el estado consultado para que el aviso
+    // `approved` no choque con el `pending` anterior y se descarte.
+    const accion = typeof payload.action === "string" && payload.action ? payload.action : "-";
+    const estadoMp =
+      typeof pago.status === "string" && pago.status ? pago.status : normalizado.status;
     evento = {
       ...evento,
       status: normalizado.status,
@@ -325,7 +342,7 @@ export async function procesarWebhookPago(args: {
       externalId: normalizado.externalId,
       reference: normalizado.reference ?? evento.reference,
       email: normalizado.email ?? evento.email,
-      eventId: `${String(payload.type ?? "payment")}:${dataId}`,
+      eventId: `${topic ?? "payment"}:${accion}:${dataId}:${estadoMp}`,
       raw: { webhook: payload, payment: pago },
     };
   }
@@ -342,9 +359,10 @@ export async function procesarWebhookPago(args: {
   if (!accountId) {
     return { status: 400, body: { error: "account_not_resolved" } };
   }
+  const cuenta = accountId;
 
   const { error: dupErr } = await db.from("payment_webhook_events").insert({
-    account_id: accountId,
+    account_id: cuenta,
     provider,
     event_id: evento.eventId,
     reference: evento.reference,
@@ -357,16 +375,55 @@ export async function procesarWebhookPago(args: {
     return { status: 500, body: { error: dupErr.message } };
   }
 
-  const sesion = await buscarSesion(db, {
-    accountId,
-    provider,
-    event: evento,
-  });
+  // Si algo falla después de registrar el evento, se borra la fila de
+  // idempotencia: si no, el reintento del proveedor llegaría como
+  // `duplicate` y el pago se perdería.
+  const liberarEvento = async () => {
+    try {
+      const { error } = await db
+        .from("payment_webhook_events")
+        .delete()
+        .eq("account_id", cuenta)
+        .eq("provider", provider)
+        .eq("event_id", evento.eventId);
+      if (error) throw new Error(error.message);
+    } catch (err) {
+      console.error(
+        "[payments/webhook] no se pudo liberar el evento para reintento:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  };
+  try {
+    const resultado = await aplicarEvento(db, { accountId: cuenta, provider, evento });
+    if (resultado.status >= 500) await liberarEvento();
+    return resultado;
+  } catch (err) {
+    await liberarEvento();
+    throw err;
+  }
+}
+
+async function aplicarEvento(
+  db: SupabaseClient,
+  args: { accountId: string; provider: PaymentProvider; evento: EventoPago },
+): Promise<ResultadoWebhook> {
+  const { accountId, provider, evento } = args;
+  const sesion = await buscarSesion(db, { accountId, provider, event: evento });
   if (!sesion) {
     return { status: 200, body: { ok: true, ignored: "session_not_found" } };
   }
 
   if (evento.status === "approved") {
+    // Hotmart/Whop reales a veces no traen el precio: no se rechaza
+    // (montoCoincide lo deja pasar), pero solo se llega aquí si la sesión
+    // se encontró por referencia (el respaldo por correo exige monto).
+    // Queda en el log para revisarlo.
+    if (evento.amount === null) {
+      console.warn(
+        `[payments/webhook] ${provider}: evento approved sin monto; se acepta por referencia (sesión ${sesion.id})`,
+      );
+    }
     if (!montoCoincide(Number(sesion.amount), evento.amount)) {
       return { status: 200, body: { ok: true, ignored: "amount_mismatch" } };
     }
@@ -378,13 +435,51 @@ export async function procesarWebhookPago(args: {
     }
   }
 
+  // Pago tardío: la corrida ya salió por timeout y la sesión quedó en
+  // `expired`. La venta se registra igual (deal/CAPI) para no perder el
+  // ingreso, pero la corrida NO se despierta: ya siguió su camino.
+  if (sesion.status === "expired" && evento.status === "approved") {
+    const ahora = new Date().toISOString();
+    const { data: tardia, error } = await db
+      .from("flow_payment_sessions")
+      .update({
+        status: "approved",
+        external_id: evento.externalId,
+        approved_at: ahora,
+        metadata: { ...evento.raw, provider_event: evento.eventId, late: true },
+        updated_at: ahora,
+      })
+      .eq("id", sesion.id)
+      .eq("status", "expired")
+      .select("id");
+    if (error) throw new Error(error.message);
+    if (!tardia || tardia.length === 0) {
+      return { status: 200, body: { ok: true, ignored: "session_closed" } };
+    }
+    await registrarVentaDeSesionAprobada(db, sesion.id);
+    return {
+      status: 200,
+      body: { ok: true, status: "approved", session_id: sesion.id, late: true, run_resumed: false },
+    };
+  }
+
+  // Sesión ya cerrada (aprobada, rechazada, expirada o cancelada): un
+  // reembolso o un segundo aviso no toca la sesión ni despierta una
+  // corrida que ya siguió.
+  if (sesion.status !== "pending") {
+    return {
+      status: 200,
+      body: { ok: true, ignored: "session_closed", session_status: sesion.status },
+    };
+  }
+
   const nuevoEstado =
     evento.status === "approved"
       ? "approved"
       : evento.status === "rejected"
         ? "rejected"
         : "pending";
-  await db
+  const { data: actualizadas, error: updErr } = await db
     .from("flow_payment_sessions")
     .update({
       status: nuevoEstado,
@@ -394,10 +489,17 @@ export async function procesarWebhookPago(args: {
       updated_at: new Date().toISOString(),
     })
     .eq("id", sesion.id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .select("id");
+  if (updErr) throw new Error(updErr.message);
 
   if (evento.status === "pending") {
     return { status: 200, body: { ok: true, pending: true } };
+  }
+  // Otro aviso (o el timeout, o la confirmación manual) cerró la sesión
+  // entre la lectura y el update: el que ganó ya movió la corrida.
+  if (!actualizadas || actualizadas.length === 0) {
+    return { status: 200, body: { ok: true, ignored: "session_closed" } };
   }
 
   const { data: runRow } = await db
@@ -428,7 +530,7 @@ export async function procesarWebhookPago(args: {
     sessionId: sesion.id,
   });
   if (!reanudada && evento.status === "approved") {
-    // Pago tardío: la corrida ya salió por timeout. La venta se registra
+    // La corrida ya no estaba esperando el pago: la venta se registra
     // igual (deal/CAPI) para no perder el ingreso.
     await registrarVentaDeSesionAprobada(db, sesion.id);
   }

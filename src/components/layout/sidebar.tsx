@@ -124,8 +124,13 @@ const SECTIONS: NavSection[] = [
         icon: PlugZap,
         atajo: true,
       },
-      // Hoy los webhooks solo se configuran por la API pública: sin pantalla.
-      { labelKey: "webhooks", icon: Webhook },
+      // Webhooks salientes: pestaña de Configuración (atajo, como Conexiones).
+      {
+        href: "/settings?tab=webhooks",
+        labelKey: "webhooks",
+        icon: Webhook,
+        atajo: true,
+      },
       { href: "/broadcasts", labelKey: "massSends", icon: Radio },
     ],
   },

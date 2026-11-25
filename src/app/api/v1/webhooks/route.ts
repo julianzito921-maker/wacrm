@@ -11,11 +11,14 @@ import { requireApiKey } from '@/lib/auth/api-context';
 import { ok, okList, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { encrypt } from '@/lib/whatsapp/encryption';
 import { normalizeEvents } from '@/lib/webhooks/events';
+import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 import {
   WEBHOOK_PUBLIC_COLUMNS,
   serializeWebhookEndpoint,
   generateWebhookSecret,
   checkWebhookUrl,
+  MAX_WEBHOOKS_PER_ACCOUNT,
+  webhookLimitReached,
 } from '@/lib/webhooks/endpoints';
 
 export async function GET(request: Request) {
@@ -63,12 +66,29 @@ export async function POST(request: Request) {
       return fail('bad_request', urlCheck.message, 400);
     }
     const url = urlCheck.url;
+    if (!(await isDeliverableUrl(url))) {
+      return fail(
+        'bad_request',
+        "'url' must resolve to a public address",
+        400
+      );
+    }
 
     const events = normalizeEvents(body.events);
     if (!events) {
       return fail(
         'bad_request',
         "'events' must be a non-empty array of known event names",
+        400
+      );
+    }
+
+    const full = await webhookLimitReached(ctx.supabase, ctx.accountId);
+    if (full === null) return fail('internal', 'Failed to create webhook', 500);
+    if (full) {
+      return fail(
+        'bad_request',
+        `An account can have at most ${MAX_WEBHOOKS_PER_ACCOUNT} webhooks`,
         400
       );
     }
