@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   lastInboundAt: null as string | null,
   estado: 'ACTIVE' as string,
   optOut: null as string | null,
-  previos: [] as Array<{ created_at: string; content_hash: string | null }>,
+  previos: [] as Array<{ created_at: string; content_hash: string | null; status?: string }>,
   inserts: [] as Record<string, unknown>[],
   enviar: vi.fn(async () => ({ messageId: 'wamid.ok' })),
 }))
@@ -119,6 +119,12 @@ describe('ventana de 24 horas', () => {
 })
 
 describe('duplicados y límites', () => {
+  it('un intento BLOQUEADO no cuenta como duplicado (nunca salió)', async () => {
+    h.previos = [{ created_at: haceMin(2), content_hash: 'abc-3', status: 'blocked' }]
+    const d = await decidirSalida({ ctx, tipo: 'text', contenido: 'abc', hash: 'abc-3' })
+    expect(d.motivo).not.toBe('duplicate')
+  })
+
   it('frena el mismo contenido repetido dentro de la ventana de deduplicación', async () => {
     h.previos = [{ created_at: haceMin(2), content_hash: 'abc-3' }]
     const d = await decidirSalida({ ctx, tipo: 'text', contenido: 'abc', hash: 'abc-3' })

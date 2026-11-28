@@ -111,6 +111,7 @@ export function rebasaLimitePersonas(
 interface Fila {
   created_at: string;
   content_hash: string | null;
+  status?: string | null;
 }
 
 /**
@@ -220,7 +221,7 @@ export async function decidirSalida(args: {
         .maybeSingle(),
       db
         .from("outbound_message_log")
-        .select("created_at, content_hash")
+        .select("created_at, content_hash, status")
         .eq("conversation_id", ctx.conversationId)
         .in("status", ["sent", "blocked"])
         .gte("created_at", desde)
@@ -262,7 +263,16 @@ export async function decidirSalida(args: {
   // 3) Duplicado exacto reciente.
   if (hash) {
     const dupDesde = ahora - TOPES.dupMinutos() * 60_000;
-    if (filas.some((f) => f.content_hash === hash && new Date(f.created_at).getTime() >= dupDesde)) {
+    // Solo cuenta lo que SÍ salió: un intento bloqueado nunca le llegó a
+    // la clienta, así que reintentarlo no es repetirle nada.
+    if (
+      filas.some(
+        (f) =>
+          f.status !== "blocked" &&
+          f.content_hash === hash &&
+          new Date(f.created_at).getTime() >= dupDesde,
+      )
+    ) {
       return frenar(
         "duplicate",
         `El mismo contenido ya se envió a esta conversación en los últimos ${TOPES.dupMinutos()} minutos.`,
