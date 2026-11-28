@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import {
   checkRateLimit,
@@ -157,7 +158,11 @@ export async function POST(request: Request) {
     // `SendMessageError` carries a machine code + HTTP status; the
     // dashboard maps it to the internal `{ error }` shape.
     try {
-      const result = await sendMessageToConversation(supabase, accountId, {
+      // Cliente de servicio, igual que /api/v1/messages: la sesión del
+      // dashboard no puede leer `access_token` (grants por columna, 089) y
+      // el núcleo filtra todo por account_id; la conversación ya se validó
+      // arriba contra esta cuenta.
+      const result = await sendMessageToConversation(supabaseAdmin(), accountId, {
         conversationId,
         messageType: message_type,
         contentText: content_text,

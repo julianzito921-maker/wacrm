@@ -143,17 +143,10 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))
 
+// The route sends with the service client (the dashboard session can't read
+// access_token); in tests it is the same fake db.
 vi.mock('@/lib/flows/admin-client', () => ({
-  supabaseAdmin: () => ({
-    from: () => {
-      const b: Record<string, unknown> = {}
-      const chain = () => b
-      for (const m of ['update', 'eq', 'select']) b[m] = vi.fn(chain)
-      b.then = (resolve: (v: unknown) => unknown) =>
-        resolve({ data: null, error: null })
-      return b
-    },
-  }),
+  supabaseAdmin: () => supabaseMock,
 }))
 
 vi.mock('@/lib/whatsapp/encryption', () => ({
