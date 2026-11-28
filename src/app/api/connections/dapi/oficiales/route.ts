@@ -82,6 +82,13 @@ export async function POST(request: Request) {
     }
 
     const info = await obtenerConexionOficial(apiKey, sessionId);
+    const { data: integ } = await db
+      .from('account_integrations')
+      .select('secret')
+      .eq('account_id', ctx.accountId)
+      .eq('provider', 'dapi')
+      .maybeSingle();
+    const claveCifrada = (integ as { secret?: string } | null)?.secret ?? null;
     const { count } = await db
       .from('whatsapp_connections')
       .select('id', { count: 'exact', head: true })
@@ -99,7 +106,9 @@ export async function POST(request: Request) {
         phone_number: info.telefono || null,
         display_phone_number: info.telefono ? `+${info.telefono}` : null,
         quality_rating: info.calidad,
-        access_token: encrypt(apiKey),
+        // Mismo texto cifrado que la clave de la cuenta: si cambias la clave
+        // en Integraciones, esta conexión toma la nueva.
+        access_token: claveCifrada ?? encrypt(apiKey),
         verify_token: encrypt(token),
         app_secret: encrypt(randomBytes(32).toString('hex')),
         status: 'connected',

@@ -43,6 +43,37 @@ export function OficialesDapiDialog({
   const [sesiones, setSesiones] = useState<Sesion[]>([]);
   const [sinClave, setSinClave] = useState(false);
   const [conectando, setConectando] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', instanceId: '', apiKey: '' });
+  const [enviando, setEnviando] = useState(false);
+
+  const finalizar = async () => {
+    setEnviando(true);
+    try {
+      const res = await fetch('/api/connections/dapi/instancia', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg: Record<string, string> = {
+          invalid_instance: 'Revisa el Instance ID.',
+          invalid_api_key: 'La API Key no es válida para esa instancia.',
+          instance_not_found: 'D-API no encontró esa instancia.',
+          already_connected: 'Esa instancia ya está conectada.',
+          duplicate_phone: 'Esa instancia ya está conectada en otra cuenta.',
+        };
+        toast.error(msg[json.error] ?? (json.detail ? `D-API: ${json.detail}` : 'No se pudo conectar.'));
+        return;
+      }
+      toast.success('¡Instancia conectada! Los mensajes ya entran al WaCRM.');
+      setForm({ name: '', instanceId: '', apiKey: '' });
+      onConectado();
+      onOpenChange(false);
+    } finally {
+      setEnviando(false);
+    }
+  };
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -106,18 +137,59 @@ export function OficialesDapiDialog({
             API Oficial (D-API)
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            Conecta tus números oficiales de WhatsApp. Se crean en D-API (Embedded Signup o
-            Coexistencia) y aquí los traes al WaCRM, uno por uno.
+            Conecta tus números de D-API (oficiales o de QR), uno por uno. Desde ahí todo entra al
+            WaCRM: contactos, inbox, flujos e IA.
           </DialogDescription>
         </DialogHeader>
 
+        {/* Como en el tutorial de D-API: Instance ID + API Key de la instancia. */}
+        <div className="border-border space-y-2 rounded-lg border p-3">
+          <p className="text-[12px] text-muted-foreground">
+            En D-API: Instâncias → ⋮ → Configurações → <b>Desenvolvedor</b>. Copia el{' '}
+            <b>Instance ID</b> y la <b>API Key</b> de la instancia y pégalos aquí.
+          </p>
+          <input
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Nombre de la conexión (ej. Atención)"
+            className="border-border bg-muted h-9 w-full rounded-md border px-3 text-sm outline-none focus:border-primary"
+          />
+          <input
+            value={form.instanceId}
+            onChange={(e) => setForm({ ...form, instanceId: e.target.value.trim() })}
+            placeholder="Instance ID (ej. cloud-… o d-api-a1)"
+            className="border-border bg-muted h-9 w-full rounded-md border px-3 font-mono text-xs outline-none focus:border-primary"
+          />
+          <input
+            type="password"
+            value={form.apiKey}
+            onChange={(e) => setForm({ ...form, apiKey: e.target.value.trim() })}
+            placeholder="API Key de la instancia"
+            autoComplete="off"
+            className="border-border bg-muted h-9 w-full rounded-md border px-3 font-mono text-xs outline-none focus:border-primary"
+          />
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={() => void finalizar()}
+            disabled={enviando || !form.instanceId || !form.apiKey}
+          >
+            {enviando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Finalizar
+          </Button>
+        </div>
+
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          O elige de tus números oficiales
+        </p>
+
         {sinClave ? (
           <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-[13px] text-amber-200">
-            Primero guarda tu API Key secreta de D-API en{' '}
+            Para ver la lista, guarda la API Key de tu cuenta de D-API en{' '}
             <Link href="/settings?tab=integrations" className="font-semibold underline">
               Configuración → Integraciones → D-API
             </Link>
-            .
+            . O usa el formulario de arriba con la clave de la instancia.
           </p>
         ) : cargando ? (
           <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">

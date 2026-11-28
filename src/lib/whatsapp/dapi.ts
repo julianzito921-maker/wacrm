@@ -147,6 +147,11 @@ export async function borrarSesion(args: {
   await llamar(args.apiKey, 'DELETE', `/sessions/${encodeURIComponent(args.sessionId)}`)
 }
 
+/** Apunta el webhook de una instancia de QR (ya creada en D-API) al WaCRM. */
+export async function actualizarWebhookSesion(apiKey: string, sessionId: string, webhookUrl: string): Promise<void> {
+  await llamar(apiKey, 'POST', `/sessions/${encodeURIComponent(sessionId)}/webhook`, { webhookUrl })
+}
+
 // ============================================================
 // API oficial (WhatsApp Cloud API con D-API como proveedor)
 // ============================================================

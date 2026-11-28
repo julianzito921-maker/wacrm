@@ -392,7 +392,7 @@ export function ConnectionsView() {
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => setOficialAbierto(true)} className="bg-emerald-600 text-white hover:bg-emerald-700">
             <BadgeCheck className="size-4" />
-            API Oficial (D-API)
+            Conectar D-API
           </Button>
           <Button variant="outline" onClick={() => abrirQr()}>
             <QrCode className="size-4" />

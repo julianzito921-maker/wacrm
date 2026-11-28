@@ -55,6 +55,13 @@ export async function PUT(request: Request) {
       if (!actual) return NextResponse.json({ error: 'invalid_api_key' }, { status: 400 });
     }
 
+    // Clave anterior (cifrada): sirve para saber qué conexiones la usaban.
+    const { data: anterior } = await supabase
+      .from('account_integrations')
+      .select('secret')
+      .eq('account_id', accountId)
+      .eq('provider', provider)
+      .maybeSingle();
     const { error } = clave
       ? await supabase.from('account_integrations').upsert(patch, { onConflict: 'account_id,provider' })
       : await supabase
@@ -64,13 +71,15 @@ export async function PUT(request: Request) {
           .eq('provider', provider);
     if (error) throw new Error(error.message);
 
-    // Las islas D-API ya creadas usan la clave nueva al instante.
-    if (provider === 'dapi' && patch.secret) {
+    // Las islas D-API que usaban la clave de la cuenta toman la nueva al
+    // instante. Las conectadas con la API Key de su instancia no se tocan.
+    if (provider === 'dapi' && patch.secret && anterior?.secret) {
       await supabaseAdmin()
         .from('whatsapp_connections')
         .update({ access_token: patch.secret })
         .eq('account_id', accountId)
-        .eq('provider', 'dapi');
+        .eq('provider', 'dapi')
+        .eq('access_token', (anterior as { secret: string }).secret);
     }
     // El agente de IA que ya apunta a OpenRouter toma la clave nueva.
     if (provider === 'openrouter' && patch.secret) {
