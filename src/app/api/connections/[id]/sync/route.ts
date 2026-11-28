@@ -5,7 +5,7 @@ import { getPhoneNumberHealth } from '@/lib/whatsapp/meta-api';
 import { parseQualityRating } from '@/lib/whatsapp/phone-health';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { CAMPOS_CONEXION_PUBLICOS } from '@/lib/whatsapp/connections';
-import { esDapi, obtenerQr, sesionDe } from '@/lib/whatsapp/dapi';
+import { esDapi, esSesionOficial, obtenerConexionOficial, obtenerQr, sesionDe } from '@/lib/whatsapp/dapi';
 
 export async function POST(
   _request: Request,
@@ -22,6 +22,35 @@ export async function POST(
       .maybeSingle();
     if (!conexion?.access_token) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    }
+
+    if (esSesionOficial(conexion.phone_number_id as string)) {
+      try {
+        const info = await obtenerConexionOficial(
+          decrypt(conexion.access_token as string),
+          sesionDe(conexion.phone_number_id as string),
+        );
+        const { data, error } = await supabaseAdmin()
+          .from('whatsapp_connections')
+          .update({
+            status: 'connected',
+            ...(info.wabaId ? { waba_id: info.wabaId } : {}),
+            ...(info.telefono ? { phone_number: info.telefono, display_phone_number: `+${info.telefono}` } : {}),
+            ...(info.calidad ? { quality_rating: info.calidad } : {}),
+            last_synced_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+          .eq('account_id', ctx.accountId)
+          .select(CAMPOS_CONEXION_PUBLICOS)
+          .single();
+        if (error) throw new Error(error.message);
+        return NextResponse.json({ connection: data });
+      } catch (err) {
+        return NextResponse.json(
+          { error: 'meta_error', detail: err instanceof Error ? err.message : String(err) },
+          { status: 502 },
+        );
+      }
     }
 
     if (esDapi(conexion.phone_number_id as string)) {

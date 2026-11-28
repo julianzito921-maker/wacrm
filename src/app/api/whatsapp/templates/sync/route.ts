@@ -28,6 +28,8 @@ const t = getT('Api')
  */
 
 const META_API_VERSION = 'v21.0'
+import { esSesionOficial, listarPlantillas, plantillaComoMeta, sesionDe } from '@/lib/whatsapp/dapi'
+
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
 interface MetaButton {
@@ -145,7 +147,7 @@ export async function POST() {
 
     const { data: conn } = await supabaseAdmin()
       .from('whatsapp_connections')
-      .select('id, waba_id, access_token')
+      .select('id, waba_id, access_token, phone_number_id')
       .eq('account_id', accountId)
       .eq('active', true)
       .order('is_default', { ascending: false })
@@ -155,7 +157,11 @@ export async function POST() {
 
     let wabaId = (conn?.waba_id as string | undefined) ?? ''
     let accessToken: string
-    if (conn?.access_token && wabaId) {
+    // Número oficial por D-API: las plantillas se leen de D-API.
+    const oficialDapi = esSesionOficial(conn?.phone_number_id as string | undefined)
+    if (oficialDapi && conn?.access_token) {
+      accessToken = decrypt(conn.access_token as string)
+    } else if (conn?.access_token && wabaId) {
       accessToken = decrypt(conn.access_token as string)
     } else {
       const { data: config, error: configError } = await supabase
@@ -181,6 +187,19 @@ export async function POST() {
       | null = `${META_API_BASE}/${wabaId}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
     const PAGE_CAP = 20
     let pageCount = 0
+
+    if (oficialDapi) {
+      try {
+        const lista = await listarPlantillas(accessToken, sesionDe(conn!.phone_number_id as string))
+        metaTemplates.push(...(lista.map(plantillaComoMeta) as unknown as MetaTemplate[]))
+      } catch (err) {
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : 'D-API' },
+          { status: 502 },
+        )
+      }
+      nextUrl = null
+    }
 
     while (nextUrl && pageCount < PAGE_CAP) {
       pageCount++

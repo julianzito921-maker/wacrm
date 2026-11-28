@@ -8,7 +8,7 @@ import {
   pinValido,
   type ResultadoEmparejar,
 } from '@/lib/whatsapp/conexion-meta';
-import { borrarSesion, esDapi, sesionDe } from '@/lib/whatsapp/dapi';
+import { borrarSesion, configurarWebhookOficial, esDapi, esSesionOficial, sesionDe } from '@/lib/whatsapp/dapi';
 
 export async function PATCH(
   request: Request,
@@ -205,10 +205,15 @@ export async function DELETE(
       .maybeSingle();
     if (previa && esDapi(previa.phone_number_id as string)) {
       try {
-        await borrarSesion({
-          apiKey: decrypt(previa.access_token as string),
-          sessionId: sesionDe(previa.phone_number_id as string),
-        });
+        const apiKey = decrypt(previa.access_token as string);
+        const sessionId = sesionDe(previa.phone_number_id as string);
+        // Número oficial: solo se le quita el webhook; el número sigue
+        // vivo en D-API (borrarlo ahí lo desconectaría de Meta).
+        if (esSesionOficial(previa.phone_number_id as string)) {
+          await configurarWebhookOficial(apiKey, sessionId, null);
+        } else {
+          await borrarSesion({ apiKey, sessionId });
+        }
       } catch (err) {
         console.warn(
           '[connections] no se pudo borrar la sesión en D-API:',

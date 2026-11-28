@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { readCappedBody } from '@/lib/whatsapp/webhook-body';
-import { aWebhookMeta, esDapi, numeroDeJid, sesionDe, type EventoDapi } from '@/lib/whatsapp/dapi';
+import { aWebhookMeta, esDapi, esSesionOficial, numeroDeJid, sesionDe, type EventoDapi } from '@/lib/whatsapp/dapi';
 import { POST as webhookMeta } from '../../../webhook/route';
 
 export const runtime = 'nodejs';
@@ -62,7 +62,12 @@ export async function POST(
   }
   const phoneNumberId = conexion.phone_number_id as string;
   if (evento.sessionId !== sesionDe(phoneNumberId)) {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    // QR: el sessionId tiene que coincidir. Oficial: D-API puede usar el id
+    // de conexión en vez del de sesión; la URL secreta ya identifica la isla.
+    if (!esSesionOficial(phoneNumberId)) {
+      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    }
+    console.warn('[dapi] sessionId distinto en número oficial:', evento.sessionId, '≠', sesionDe(phoneNumberId));
   }
 
   if (evento.event === 'connection.status') {

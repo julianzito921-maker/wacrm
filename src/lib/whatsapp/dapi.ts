@@ -60,7 +60,7 @@ function destino(to: string): string {
 
 async function llamar(
   apiKey: string,
-  metodo: 'GET' | 'POST' | 'DELETE',
+  metodo: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   ruta: string,
   body?: unknown,
 ): Promise<Record<string, unknown>> {
@@ -145,6 +145,137 @@ export async function borrarSesion(args: {
   sessionId: string
 }): Promise<void> {
   await llamar(args.apiKey, 'DELETE', `/sessions/${encodeURIComponent(args.sessionId)}`)
+}
+
+// ============================================================
+// API oficial (WhatsApp Cloud API con D-API como proveedor)
+// ============================================================
+//
+// El número oficial se conecta en el panel de D-API (Embedded Signup o
+// Coexistencia). Su sesión se llama «cloud-<uuid>». Aquí: listarlas,
+// leer su WABA/número, apuntar su webhook al WaCRM (modo «normalized»,
+// el mismo sobre que el QR) y mandar/listar plantillas aprobadas.
+
+/** ¿La isla D-API es un número oficial (Cloud API)? */
+export function esSesionOficial(phoneNumberId: string | null | undefined): boolean {
+  return esDapi(phoneNumberId) && sesionDe(phoneNumberId as string).startsWith('cloud-');
+}
+
+export interface SesionDapi {
+  sessionId: string;
+  nombre: string;
+  telefono: string;
+  estado: string;
+  oficial: boolean;
+}
+
+const texto = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
+
+/** Lista que venga como array, {data: []}, {sessions: []} o {data: {items: []}}. */
+function lista(json: Record<string, unknown>): Array<Record<string, unknown>> {
+  const candidatos = [json.data, json.sessions, json.items, (json.data as Record<string, unknown> | undefined)?.items,
+    (json.data as Record<string, unknown> | undefined)?.sessions];
+  for (const c of candidatos) if (Array.isArray(c)) return c as Array<Record<string, unknown>>;
+  return Array.isArray(json) ? (json as unknown as Array<Record<string, unknown>>) : [];
+}
+
+export async function listarSesiones(apiKey: string, tipo: 'cloud_api' | 'unofficial'): Promise<SesionDapi[]> {
+  const json = await llamar(apiKey, 'GET', `/sessions?type=${tipo}&limit=100`);
+  return lista(json).map((s) => {
+    const id = texto(s.sessionId ?? s.session_id ?? s.id);
+    return {
+      sessionId: id,
+      nombre: texto(s.name ?? s.verifiedName ?? s.verified_name ?? s.displayName ?? id),
+      telefono: numeroDeJid(texto(s.phone ?? s.phoneNumber ?? s.displayPhoneNumber ?? s.display_phone_number ?? s.jid)),
+      estado: texto(s.status ?? s.connectionStatus ?? ''),
+      oficial: tipo === 'cloud_api' || id.startsWith('cloud-'),
+    };
+  }).filter((s) => s.sessionId);
+}
+
+export interface ConexionOficial {
+  wabaId: string | null;
+  phoneNumberId: string | null;
+  telefono: string;
+  nombre: string;
+  calidad: string | null;
+}
+
+export async function obtenerConexionOficial(apiKey: string, id: string): Promise<ConexionOficial> {
+  const json = await llamar(apiKey, 'GET', `/connections/cloud-api/${encodeURIComponent(id)}`);
+  const d = (json.data ?? json) as Record<string, unknown>;
+  const salud = (d.health ?? {}) as Record<string, unknown>;
+  return {
+    wabaId: texto(d.wabaId ?? d.waba_id) || null,
+    phoneNumberId: texto(d.phoneNumberId ?? d.phone_number_id) || null,
+    telefono: numeroDeJid(texto(d.displayPhoneNumber ?? d.display_phone_number ?? d.phoneNumber ?? d.phone)),
+    nombre: texto(d.verifiedName ?? d.verified_name ?? d.name),
+    calidad: texto(d.qualityRating ?? d.quality_rating ?? salud.qualityRating ?? salud.quality) || null,
+  };
+}
+
+/** Apunta el webhook del número oficial al WaCRM (sobre «normalized»). */
+export async function configurarWebhookOficial(apiKey: string, id: string, webhookUrl: string | null): Promise<void> {
+  await llamar(apiKey, 'PATCH', `/connections/cloud-api/${encodeURIComponent(id)}`, {
+    webhookUrl,
+    webhookMode: 'normalized',
+  });
+}
+
+export async function enviarPlantilla(args: {
+  apiKey: string;
+  phoneNumberId: string;
+  to: string;
+  name: string;
+  language: string;
+  components?: unknown[];
+}): Promise<{ messageId: string }> {
+  const json = await llamar(args.apiKey, 'POST', '/messages/send/template', {
+    sessionId: sesionDe(args.phoneNumberId),
+    to: destino(args.to),
+    template: {
+      name: args.name,
+      language: args.language,
+      ...(args.components?.length ? { components: args.components } : {}),
+    },
+  });
+  return { messageId: idDelEnvio(json) };
+}
+
+/** Plantillas de la conexión oficial (todas, con su estado). */
+export async function listarPlantillas(apiKey: string, id: string): Promise<Array<Record<string, unknown>>> {
+  const json = await llamar(apiKey, 'GET', `/connections/cloud-api/${encodeURIComponent(id)}/templates/all`);
+  return lista(json);
+}
+
+/**
+ * Plantilla de D-API → forma de Meta ({id,name,language,status,category,
+ * components}) para reutilizar la sincronización que ya existe.
+ */
+export function plantillaComoMeta(t: Record<string, unknown>) {
+  const components: Array<Record<string, unknown>> = [];
+  if (Array.isArray(t.components)) {
+    return {
+      id: texto(t.id), name: texto(t.name), language: texto(t.language),
+      status: texto(t.status), category: texto(t.category),
+      components: t.components as Array<Record<string, unknown>>,
+    };
+  }
+  const header = texto(t.headerFormat).toUpperCase();
+  if (header && header !== 'NONE') {
+    components.push({ type: 'HEADER', format: header, ...(t.headerText ? { text: texto(t.headerText) } : {}) });
+  }
+  components.push({ type: 'BODY', text: texto(t.body) });
+  if (t.footerText) components.push({ type: 'FOOTER', text: texto(t.footerText) });
+  if (Array.isArray(t.buttons) && t.buttons.length) components.push({ type: 'BUTTONS', buttons: t.buttons });
+  return {
+    id: texto(t.id) || `${texto(t.name)}_${texto(t.language)}`,
+    name: texto(t.name),
+    language: texto(t.language),
+    status: texto(t.status),
+    category: texto(t.category),
+    components,
+  };
 }
 
 // ============================================================
@@ -294,6 +425,35 @@ function segundos(ms: unknown): string {
 }
 
 /**
+ * Respuesta a botón/lista en el sobre de D-API (sus nombres varían según
+ * el tipo de conexión): devuelve el id elegido para que el flujo avance
+ * igual que con Meta, o null si no es una respuesta interactiva.
+ */
+function respuestaInteractiva(
+  d: Record<string, unknown>,
+): { tipo: 'button_reply' | 'list_reply' | 'button'; id: string; titulo: string } | null {
+  const tipo = String(d.type ?? '');
+  const inter = (d.interactive ?? {}) as Record<string, Record<string, unknown> | undefined>;
+  const titulo = (v: unknown) => (typeof v === 'string' ? v : '');
+  if (tipo === 'list_response' || inter.list_reply) {
+    const id = String(d.selected_row_id ?? d.selectedRowId ?? inter.list_reply?.id ?? '');
+    return id ? { tipo: 'list_reply', id, titulo: titulo(d.selected_title ?? inter.list_reply?.title ?? d.message) } : null;
+  }
+  if (tipo === 'template_button_reply' || (tipo === 'button' && (d.button as Record<string, unknown>)?.payload)) {
+    const b = (d.button ?? {}) as Record<string, unknown>;
+    const id = String(d.selected_id ?? d.selectedId ?? b.payload ?? '');
+    return id ? { tipo: 'button', id, titulo: titulo(d.selected_display_text ?? b.text ?? d.message) } : null;
+  }
+  if (tipo === 'buttons_response' || tipo === 'button_reply' || tipo === 'interactive' || inter.button_reply) {
+    const id = String(d.selected_id ?? d.selectedButtonId ?? d.selected_button_id ?? inter.button_reply?.id ?? '');
+    return id
+      ? { tipo: 'button_reply', id, titulo: titulo(d.selected_display_text ?? inter.button_reply?.title ?? d.message) }
+      : null;
+  }
+  return null;
+}
+
+/**
  * Traduce un evento de D-API al cuerpo que manda Meta a su webhook.
  * Devuelve null cuando no hay nada que procesar (grupos, propios, etc.).
  */
@@ -329,6 +489,29 @@ export function aWebhookMeta(
     })
   }
 
+  if (evento.event === 'message.failed') {
+    const idFallo = String(d.message_id ?? d.id ?? '')
+    if (!idFallo) return null
+    const err = (d.error ?? (Array.isArray(d.errors) ? d.errors[0] : null) ?? {}) as Record<string, unknown>
+    return envolver({
+      statuses: [
+        {
+          id: idFallo,
+          status: 'failed',
+          timestamp: segundos(d.timestamp),
+          recipient_id: numeroDeJid((d.remote_jid as string) ?? (d.to as string)),
+          errors: [
+            {
+              code: Number(err.code ?? d.error_code ?? 0) || 0,
+              title: String(err.title ?? err.message ?? d.reason ?? 'failed'),
+              ...(err.message ? { message: String(err.message) } : {}),
+            },
+          ],
+        },
+      ],
+    })
+  }
+
   if (evento.event !== 'messages.received') return null
   if (d.fromMe === true || d.is_group === true || d.isMetaAI === true) return null
 
@@ -347,7 +530,18 @@ export function aWebhookMeta(
   const mediaUrl = typeof d.media_url === 'string' ? d.media_url : ''
 
   const mensaje: Record<string, unknown> = { id, from: numero, timestamp: segundos(d.timestamp) }
-  if (TIPOS_MEDIA.has(tipo) && mediaUrl && esUrlMediaDapi(mediaUrl)) {
+  const respuesta = respuestaInteractiva(d)
+  if (respuesta?.tipo === 'button') {
+    // Botón de una plantilla (QUICK_REPLY): como Meta, `button.payload`.
+    mensaje.type = 'button'
+    mensaje.button = { payload: respuesta.id, text: respuesta.titulo }
+  } else if (respuesta) {
+    mensaje.type = 'interactive'
+    mensaje.interactive =
+      respuesta.tipo === 'list_reply'
+        ? { type: 'list_reply', list_reply: { id: respuesta.id, title: respuesta.titulo } }
+        : { type: 'button_reply', button_reply: { id: respuesta.id, title: respuesta.titulo } }
+  } else if (TIPOS_MEDIA.has(tipo) && mediaUrl && esUrlMediaDapi(mediaUrl)) {
     const media: Record<string, unknown> = {
       id: mediaIdDapi(mediaUrl, mediaData.mimetype),
       mime_type: mediaData.mimetype ?? 'application/octet-stream',

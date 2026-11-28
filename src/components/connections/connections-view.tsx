@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   QrCode,
+  BadgeCheck,
   RefreshCw,
   Search,
   Trash2,
@@ -31,6 +32,7 @@ import { Switch } from '@/components/ui/switch';
 import { estadoCalentamiento } from '@/lib/whatsapp/warmup';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { OficialesDapiDialog } from './oficiales-dapi-dialog';
 
 interface Connection {
   id: string;
@@ -90,6 +92,11 @@ function esDapi(c: Pick<Connection, 'phone_number_id'>) {
   return c.phone_number_id.startsWith('dapi:');
 }
 
+/** Número oficial (Cloud API) con D-API como proveedor: sesión «cloud-…». */
+function esOficialDapi(c: Pick<Connection, 'phone_number_id'>) {
+  return c.phone_number_id.startsWith('dapi:cloud-');
+}
+
 function tierTexto(t: string | null) {
   if (!t) return '—';
   return t.replace('TIER_', '').replace('_', ',');
@@ -131,6 +138,7 @@ export function ConnectionsView() {
   const [qrConexion, setQrConexion] = useState<string | null>(null);
   const [qrImagen, setQrImagen] = useState<string | null>(null);
   const [qrCreando, setQrCreando] = useState(false);
+  const [oficialAbierto, setOficialAbierto] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -382,6 +390,10 @@ export function ConnectionsView() {
           <p className="text-muted-foreground text-sm">{t('description')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setOficialAbierto(true)} className="bg-emerald-600 text-white hover:bg-emerald-700">
+            <BadgeCheck className="size-4" />
+            API Oficial (D-API)
+          </Button>
           <Button variant="outline" onClick={() => abrirQr()}>
             <QrCode className="size-4" />
             Conectar por QR
@@ -488,7 +500,9 @@ export function ConnectionsView() {
                     </div>
                     <p className="mt-1 text-xs text-slate-400">
                       {c.phone_number ?? '—'} ·{' '}
-                      {esDapi(c) ? (
+                      {esOficialDapi(c) ? (
+                        <span>D-API · Oficial</span>
+                      ) : esDapi(c) ? (
                         <span>D-API · QR</span>
                       ) : (
                         <span className="font-mono">{c.phone_number_id}</span>
@@ -498,7 +512,7 @@ export function ConnectionsView() {
                       <p className="text-[11px] text-slate-500">WABA {c.waba_id}</p>
                     )}
                   </div>
-                  {esDapi(c) && c.status !== 'connected' ? (
+                  {esDapi(c) && !esOficialDapi(c) && c.status !== 'connected' ? (
                   <Button
                     size="sm"
                     variant="outline"
@@ -526,7 +540,7 @@ export function ConnectionsView() {
                   )}
                 </div>
 
-                {!esDapi(c) && (
+                {(!esDapi(c) || esOficialDapi(c)) && (
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <div className="rounded-lg border border-indigo-400/20 bg-black/30 p-2.5">
                     <p className="text-[9px] tracking-wider text-slate-500 uppercase">
@@ -627,6 +641,12 @@ export function ConnectionsView() {
           ))}
         </div>
       )}
+
+      <OficialesDapiDialog
+        open={oficialAbierto}
+        onOpenChange={setOficialAbierto}
+        onConectado={() => void cargar()}
+      />
 
       <Dialog open={qrAbierto} onOpenChange={setQrAbierto}>
         <DialogContent className="border-border bg-popover sm:max-w-sm">

@@ -693,7 +693,7 @@ export async function sendTemplateMessage(
     messageParams,
     contextMessageId,
   } = args
-  if (dapi.esDapi(phoneNumberId)) {
+  if (dapi.esDapi(phoneNumberId) && !dapi.esSesionOficial(phoneNumberId)) {
     throw new Error('Las plantillas de Meta no existen en conexiones D-API (QR): manda texto normal.')
   }
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
@@ -724,6 +724,18 @@ export async function sendTemplateMessage(
         parameters: params.map((p) => ({ type: 'text', text: String(p) })),
       },
     ]
+  }
+
+  // API oficial por D-API: mismos componentes (formato Graph), por su API.
+  if (dapi.esDapi(phoneNumberId)) {
+    return dapi.enviarPlantilla({
+      apiKey: accessToken,
+      phoneNumberId,
+      to,
+      name: templateName,
+      language,
+      components: templatePayload.components as unknown[] | undefined,
+    })
   }
 
   const body: Record<string, unknown> = {
