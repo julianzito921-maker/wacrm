@@ -31,6 +31,7 @@ const ID = {
   predeterminada: "33333333-3333-4333-8333-333333333333",
   atencion: "44444444-4444-4444-8444-444444444444",
   promo: "55555555-5555-4555-8555-555555555555",
+  embudo: "66666666-6666-4666-8666-666666666666",
 };
 
 describe("palabras clave y orden (lógica)", () => {
@@ -157,6 +158,58 @@ describe("motor con flujos estándar del número", () => {
     const r = await entrar("sigo aquí");
     expect(r.consumed).toBe(false);
     expect(h.sendText).not.toHaveBeenCalled();
+  });
+
+  it("palabra clave de otro producto saca al contacto del embudo en curso", async () => {
+    // Embudo A que se queda esperando respuesta (corrida activa).
+    h.tables.flows.push({
+      id: ID.embudo,
+      account_id: "acct-1",
+      user_id: "u-1",
+      status: "active",
+      entry_node_id: "inicio",
+      fallback_policy: { on_timeout_hours: 24 },
+      created_at: "2026-01-01T00:00:00Z",
+      trigger_type: "manual",
+      trigger_config: {},
+    });
+    h.tables.flow_nodes.push(
+      { flow_id: ID.embudo, node_key: "inicio", node_type: "start", config: { next_node_key: "espera" } },
+      {
+        flow_id: ID.embudo,
+        node_key: "espera",
+        node_type: "save_reply",
+        config: { var_key: "resp", contesto_next: "", no_contesto_next: "" },
+      },
+    );
+    const conn = h.tables.whatsapp_connections[0] as { standard_flows: Record<string, unknown> };
+    conn.standard_flows = { ...conn.standard_flows, welcome_flow_id: ID.embudo };
+    await entrar("hola", { primero: true });
+    for (const r of h.tables.flow_runs) r.started_at ??= new Date().toISOString();
+    expect(h.tables.flow_runs.some((r) => r.flow_id === ID.embudo && r.status === "active")).toBe(true);
+
+    // Escribe la palabra del anuncio de otro producto → arranca ese embudo.
+    await entrar("Hola! info de la PROMO");
+    expect(enviado()).toBe("promo");
+    const embudoA = h.tables.flow_runs.find((r) => r.flow_id === ID.embudo);
+    expect(embudoA?.status).toBe("cancelled");
+  });
+
+  it("la palabra clave del MISMO embudo no lo reinicia", async () => {
+    h.tables.flow_nodes = h.tables.flow_nodes.filter((n) => n.flow_id !== ID.promo);
+    h.tables.flow_nodes.push(
+      { flow_id: ID.promo, node_key: "inicio", node_type: "start", config: { next_node_key: "espera" } },
+      {
+        flow_id: ID.promo,
+        node_key: "espera",
+        node_type: "save_reply",
+        config: { var_key: "resp", contesto_next: "", no_contesto_next: "" },
+      },
+    );
+    await entrar("quiero la promo");
+    for (const r of h.tables.flow_runs) r.started_at ??= new Date().toISOString();
+    await entrar("promo otra vez");
+    expect(h.tables.flow_runs.filter((r) => r.flow_id === ID.promo)).toHaveLength(1);
   });
 
   it("Atención finalizada arranca su flujo", async () => {

@@ -100,6 +100,7 @@ import { enviarVentaLowtrack } from "@/lib/integraciones/lowtrack";
 import { sumarVariablesGlobales } from "./globales";
 import {
   candidatosEstandar,
+  flujoPorPalabraClave,
   HORAS_PREDETERMINADA,
   normalizarFlujosEstandar,
   tieneFlujosEstandar,
@@ -582,6 +583,41 @@ async function flujoEstandarDeEntrada(
     console.warn("[flows] flujos estándar no disponibles:", err instanceof Error ? err.message : err);
   }
   return null;
+}
+
+/**
+ * Palabra clave de Flujos estándar del número → su flujo (activo). Sirve
+ * para que un anuncio con la palabra de OTRO producto saque al contacto
+ * del embudo en que está y lo meta al nuevo. Nunca lanza.
+ */
+async function flujoPorPalabraClaveDelNumero(
+  db: AdminClient,
+  accountId: string,
+  connectionId: string,
+  textos: string[],
+): Promise<FlowRow | null> {
+  if (textos.length === 0) return null;
+  try {
+    const { data: conn } = await db
+      .from("whatsapp_connections")
+      .select("standard_flows")
+      .eq("id", connectionId)
+      .eq("account_id", accountId)
+      .maybeSingle();
+    const cfg = normalizarFlujosEstandar((conn as { standard_flows?: unknown } | null)?.standard_flows);
+    const flowId = flujoPorPalabraClave(cfg, textos);
+    if (!flowId) return null;
+    const { data: flow } = await db
+      .from("flows")
+      .select("*")
+      .eq("id", flowId)
+      .eq("account_id", accountId)
+      .eq("status", "active")
+      .maybeSingle();
+    return (flow as FlowRow | null) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2925,6 +2961,23 @@ export async function dispatchInboundToFlows(
           flow_run_id: activeRun.id,
           outcome: "duplicate_inbound_ignored",
         };
+      }
+      // Palabra clave de OTRO flujo (anuncio de otro producto): cierra el
+      // embudo en curso y arranca el de esa palabra, como en Leona.
+      if (input.connectionId) {
+        const otro = await flujoPorPalabraClaveDelNumero(
+          db,
+          input.accountId,
+          input.connectionId,
+          entryTriggerTexts(input.message),
+        );
+        if (otro && otro.id !== activeRun.flow_id && otro.entry_node_id) {
+          await endRun(db, activeRun.id, "cancelled", "palabra_clave_otro_flujo");
+          ownedRunId = null;
+          const nodosOtro = await loadAllNodes(db, otro.id);
+          const respuestaOtro = await startNewRun(db, otro, input, nodosOtro);
+          return { ...respuestaOtro, flow: otro };
+        }
       }
       // One SELECT for the whole flow's nodes — advance loop is now
       // in-memory. See loadAllNodes.
