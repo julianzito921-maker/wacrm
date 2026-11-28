@@ -114,6 +114,22 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
   });
 });
 
+describe("middleware — WhatsApp webhooks are public", () => {
+  it("lets D-API's webhook through without a session (it checks its URL secret)", async () => {
+    mockUser = null;
+    const res = await middleware(
+      new NextRequest("https://app.test/api/whatsapp/dapi/conn-1/secreto", { method: "POST" }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("still blocks other /api/whatsapp routes without a session", async () => {
+    mockUser = null;
+    const res = await middleware(new NextRequest("https://app.test/api/whatsapp/send"));
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("middleware — every dashboard route requires a session", () => {
   // Read the route group rather than hard-coding a list, so a new page added
   // under src/app/(dashboard)/ fails here until it is added to
