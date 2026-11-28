@@ -243,3 +243,26 @@ describe("Esperar respuesta — campo del contacto", () => {
     expect(h.tables.contacts[0]).toMatchObject({ name: "Marta" });
   });
 });
+
+describe("Esperar respuesta — salidas sin conectar (como Leona)", () => {
+  it("«si contesta» vacía: guarda la respuesta, termina y deja el mensaje al agente", async () => {
+    flujo({ espera_segundos: 120, contesto_next: "" });
+    await dispatch(texto("chia", "m0"));
+    const r = await dispatch(texto("sí quiero", "m1"));
+    const run = corrida();
+    expect(r.consumed).toBe(false);
+    expect(run.status).toBe("completed");
+    expect(run.end_reason).toBe("contesto_sin_salida");
+    expect(run.vars).toMatchObject({ resp: "sí quiero" });
+  });
+
+  it("«si no responde» vacía: al vencerse la espera la conversación termina", async () => {
+    flujo({ espera_segundos: 60, no_contesto_next: "" });
+    await dispatch(texto("chia", "m0"));
+    const run = corrida();
+    run.last_advanced_at = new Date(Date.now() - 5 * 60_000).toISOString();
+    expect(await resumeSaveReplyTimeout(supabaseAdmin(), String(run.id))).toBe(true);
+    expect(run.status).toBe("completed");
+    expect(run.end_reason).toBe("timeout_sin_salida");
+  });
+});

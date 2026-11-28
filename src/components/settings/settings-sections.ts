@@ -1,21 +1,30 @@
 import {
-  BrainCircuit,
+  AtSign,
+  Bot,
   Building2,
   Clock,
   Coins,
+  Database,
   FileText,
+  Headphones,
   Inbox,
   KeyRound,
+  Languages,
   LayoutGrid,
+  MessageCircle,
+  Package,
   Palette,
-  PlugZap,
-  Shield,
   Phone,
+  Plug,
+  PlugZap,
+  Radar,
+  Send,
+  Shield,
   Sparkles,
   Tags,
-  Target,
   User,
-  UsersRound,
+  UserPlus,
+  Users,
   Wallet,
   Webhook,
   Zap,
@@ -23,92 +32,140 @@ import {
 } from 'lucide-react';
 
 /**
- * Settings information architecture for the redesigned page.
+ * Configuración, con el mismo menú que Leona (medido el 27-nov-2026):
  *
- * The flat tab strip became a grouped left rail with a new Overview
- * landing. The URL query param stays `?tab=` (deep-linkable, and it
- * keeps the existing links in sidebar.tsx / header.tsx working) — we
- * just map the old values onto the new sections.
+ *   CUENTA          Empresa · Equipo · Invitaciones a la plataforma ·
+ *                   Acceso de soporte · Traducciones de flujo · Uso de IA
+ *   AUTOMATIZACIÓN  Flujos estándar · Envíos masivos · Respuestas rápidas ·
+ *                   Templates de WhatsApp · Variables globales ·
+ *                   Campos personalizados · Etiquetas
+ *   INTEGRACIONES   Integraciones · Seguimiento · Productos · Herramientas MCP
+ *
+ * Las secciones propias del WaCRM que Leona no pone en este menú siguen
+ * existiendo (`?tab=` las abre y los enlaces viejos funcionan) y viven
+ * dentro de su sección madre: Departamentos, Horarios, Moneda e Inbox en
+ * «Empresa»; Pagos, Multimedia IA, Llamadas, Credenciales HTTP, Webhooks
+ * y API keys en «Integraciones»; perfil, seguridad y apariencia en el
+ * menú de usuario; las conexiones de WhatsApp en «Conexiones».
  */
 export const SETTINGS_SECTIONS = [
+  // CUENTA
+  'empresa',
+  'members',
+  'invitaciones',
+  'soporte',
+  'traducciones',
+  'uso-ia',
+  // AUTOMATIZACIÓN
+  'flujos-estandar',
+  'envios',
+  'quick-replies',
+  'templates',
+  'variables',
+  'fields',
+  'tags',
+  // INTEGRACIONES
+  'integrations',
+  'tracking',
+  'productos',
+  'mcp',
+  // Dentro de otra sección (no salen en el menú)
   'overview',
   'profile',
   'security',
   'appearance',
   'whatsapp',
-  'templates',
-  'quick-replies',
   'inbox',
-  'fields',
   'deals',
-  'members',
-  'api',
-  'tracking',
-  'mcp',
-  'webhooks',
   'departments',
   'business-hours',
+  'api',
   'payments',
   'ai-media',
   'calling',
   'http-credentials',
+  'webhooks',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
-export const DEFAULT_SECTION: SettingsSection = 'overview';
+export const DEFAULT_SECTION: SettingsSection = 'empresa';
 
-/** Rail grouping. `adminOnly` items are hidden for non-admins. */
+export type GrupoAjustes = 'cuenta' | 'automatizacion' | 'integraciones' | 'oculta';
+
 export interface SectionMeta {
   id: SettingsSection;
   label: string;
   icon: LucideIcon;
-  group: 'top' | 'account' | 'integrations' | 'workspace';
+  group: GrupoAjustes;
+  /** Sección del menú que se marca cuando esta está abierta. */
+  parent?: SettingsSection;
+  /** Lleva a otra página en vez de abrir un panel (como en Leona). */
+  href?: string;
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
-  overview: { id: 'overview', label: 'Overview', icon: LayoutGrid, group: 'top' },
-  profile: { id: 'profile', label: 'Your profile', icon: User, group: 'account' },
-  security: { id: 'security', label: 'Login & security', icon: Shield, group: 'account' },
-  appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
-  whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
-  templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
-  'quick-replies': { id: 'quick-replies', label: 'Quick replies', icon: Zap, group: 'workspace' },
-  inbox: { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'workspace' },
-  departments: { id: 'departments', label: 'Departments', icon: Building2, group: 'workspace' },
-  'business-hours': { id: 'business-hours', label: 'Business hours', icon: Clock, group: 'workspace' },
-  fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
-  deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
-  members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
-  api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
-  tracking: { id: 'tracking', label: 'Tracking', icon: Target, group: 'integrations' },
-  payments: { id: 'payments', label: 'Payments', icon: Wallet, group: 'integrations' },
-  'ai-media': { id: 'ai-media', label: 'AI media', icon: Sparkles, group: 'integrations' },
-  calling: { id: 'calling', label: 'Official calls', icon: Phone, group: 'integrations' },
-  'http-credentials': { id: 'http-credentials', label: 'HTTP credentials', icon: KeyRound, group: 'integrations' },
-  mcp: { id: 'mcp', label: 'MCP tools', icon: BrainCircuit, group: 'integrations' },
-  webhooks: { id: 'webhooks', label: 'Webhooks', icon: Webhook, group: 'integrations' },
+  empresa: { id: 'empresa', label: 'Empresa', icon: Building2, group: 'cuenta' },
+  members: { id: 'members', label: 'Equipo', icon: Users, group: 'cuenta' },
+  invitaciones: { id: 'invitaciones', label: 'Invitaciones a la plataforma', icon: UserPlus, group: 'cuenta' },
+  soporte: { id: 'soporte', label: 'Acceso de soporte', icon: Headphones, group: 'cuenta' },
+  traducciones: { id: 'traducciones', label: 'Traducciones de flujo', icon: Languages, group: 'cuenta' },
+  'uso-ia': { id: 'uso-ia', label: 'Uso de IA', icon: Sparkles, group: 'cuenta' },
+
+  'flujos-estandar': { id: 'flujos-estandar', label: 'Flujos estándar', icon: Zap, group: 'automatizacion' },
+  envios: { id: 'envios', label: 'Envíos masivos', icon: Send, group: 'automatizacion', href: '/broadcasts' },
+  'quick-replies': { id: 'quick-replies', label: 'Respuestas rápidas', icon: MessageCircle, group: 'automatizacion' },
+  templates: { id: 'templates', label: 'Templates de WhatsApp', icon: FileText, group: 'automatizacion' },
+  variables: { id: 'variables', label: 'Variables globales', icon: AtSign, group: 'automatizacion' },
+  fields: { id: 'fields', label: 'Campos personalizados', icon: Database, group: 'automatizacion' },
+  tags: { id: 'tags', label: 'Etiquetas', icon: Tags, group: 'automatizacion' },
+
+  integrations: { id: 'integrations', label: 'Integraciones', icon: Plug, group: 'integraciones' },
+  tracking: { id: 'tracking', label: 'Seguimiento', icon: Radar, group: 'integraciones' },
+  productos: { id: 'productos', label: 'Productos', icon: Package, group: 'integraciones' },
+  mcp: { id: 'mcp', label: 'Herramientas MCP', icon: Bot, group: 'integraciones' },
+
+  overview: { id: 'overview', label: 'Overview', icon: LayoutGrid, group: 'oculta', parent: 'empresa' },
+  profile: { id: 'profile', label: 'Your profile', icon: User, group: 'oculta', parent: 'members' },
+  security: { id: 'security', label: 'Login & security', icon: Shield, group: 'oculta', parent: 'members' },
+  appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'oculta', parent: 'empresa' },
+  whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'oculta', parent: 'integrations' },
+  inbox: { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'oculta', parent: 'empresa' },
+  deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'oculta', parent: 'empresa' },
+  departments: { id: 'departments', label: 'Departments', icon: Building2, group: 'oculta', parent: 'empresa' },
+  'business-hours': { id: 'business-hours', label: 'Business hours', icon: Clock, group: 'oculta', parent: 'empresa' },
+  api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'oculta', parent: 'integrations' },
+  payments: { id: 'payments', label: 'Payments', icon: Wallet, group: 'oculta', parent: 'integrations' },
+  'ai-media': { id: 'ai-media', label: 'AI media', icon: Sparkles, group: 'oculta', parent: 'integrations' },
+  calling: { id: 'calling', label: 'Official calls', icon: Phone, group: 'oculta', parent: 'integrations' },
+  'http-credentials': { id: 'http-credentials', label: 'HTTP credentials', icon: KeyRound, group: 'oculta', parent: 'integrations' },
+  webhooks: { id: 'webhooks', label: 'Webhooks', icon: Webhook, group: 'oculta', parent: 'integrations' },
 };
 
-export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [
-  { label: null, group: 'top' },
-  { label: 'Account', group: 'account' },
-  { label: 'Integrations', group: 'integrations' },
-  { label: 'Workspace', group: 'workspace' },
+export const RAIL_GROUPS: { label: string | null; group: GrupoAjustes }[] = [
+  { label: 'Cuenta', group: 'cuenta' },
+  { label: 'Automatización', group: 'automatizacion' },
+  { label: 'Integraciones', group: 'integraciones' },
 ];
 
 function isSection(value: string | null): value is SettingsSection {
   return !!value && (SETTINGS_SECTIONS as readonly string[]).includes(value);
 }
 
+/** Sección del menú que se marca para una sección (la madre si está dentro de otra). */
+export function seccionDelMenu(section: SettingsSection): SettingsSection {
+  return SECTION_META[section].parent ?? section;
+}
+
 /**
- * Resolve a raw `?tab=` value to a section. Legacy tabs from the old
- * flat layout collapse onto their new home (Tags + Custom fields → the
- * merged "Fields & tags" section). Anything unknown falls back to the
- * Overview landing.
+ * `?tab=` → sección. Alias viejos: «custom-fields» → Campos
+ * personalizados. Lo desconocido abre «Empresa», como Leona.
  */
 export function resolveSection(raw: string | null): SettingsSection {
-  if (raw === 'tags' || raw === 'custom-fields') return 'fields';
+  if (raw === 'custom-fields') return 'fields';
+  if (raw === 'accounts') return 'empresa';
+  if (raw === 'team') return 'members';
+  if (raw === 'mcp_credentials') return 'mcp';
   if (isSection(raw)) return raw;
   return DEFAULT_SECTION;
 }

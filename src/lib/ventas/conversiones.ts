@@ -22,6 +22,7 @@ import { guardarValor, leerValores } from './contact-values'
 import { leerAtribucion, upsertContactAttribution } from '@/lib/tracking/attribution'
 import { monedaDeCuenta, resolverCredencialesConexion } from '@/lib/tracking/pixels'
 import { parametrosDeUrl } from '@/lib/tracking/links'
+import { enviarVentaLowtrack } from '@/lib/integraciones/lowtrack'
 
 // Compatibilidad: el motor de flujos importa `guardarValor` desde aquí.
 export { guardarValor } from './contact-values'
@@ -139,6 +140,20 @@ export async function enviarEventoMeta(args: {
   try {
     const moneda = args.currency || await monedaDeCuenta(args.accountId)
     const monto = Number(args.value) > 0 ? ` de $${args.value} ${moneda}` : ''
+
+    // LowTrack (Configuración → Integraciones): toda venta, venga o no de
+    // un anuncio. Mismo event_id que Meta → LowTrack no la duplica.
+    if (args.eventName === 'Purchase') {
+      const lt = await enviarVentaLowtrack({
+        accountId: args.accountId,
+        contactId: args.contactId,
+        transactionId: args.eventId,
+        amount: Number(args.value),
+        currency: moneda,
+      })
+      if (lt.enviado) await nota(`📈 Venta${monto} enviada a LowTrack.`)
+      else if (lt.motivo === 'rechazado') await nota(`📈 LowTrack rechazó la venta${monto}: ${lt.detalle ?? ''}`)
+    }
 
     // Resolver la isla antes del píxel. Nunca se cae a "la primera" si
     // hay varias conexiones: eso mezclaría tokens/píxeles.

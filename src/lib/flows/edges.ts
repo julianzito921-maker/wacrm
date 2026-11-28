@@ -54,6 +54,9 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
       case "move_kanban":
       case "set_tag":
       case "department":
+      case "notification":
+      case "sale_approved":
+      case "manipulator":
       case "ai_media": {
         const next = (cfg as { next_node_key?: string }).next_node_key;
         if (next && knownKeys.has(next)) {
@@ -290,6 +293,76 @@ export function deriveCanvasEdges(nodes: BuilderNode[]): CanvasEdge[] {
         break;
       }
 
+      case "ai_block": {
+        const c = cfg as {
+          conditions?: Array<{ id?: string; label?: string; next_node_key?: string }>;
+          identify_receipt?: boolean;
+          receipt_next?: string;
+          fallback_next?: string;
+        };
+        const salidas: Array<[string, string | undefined, string | undefined]> = (c.conditions ?? [])
+          .filter((x) => typeof x.id === "string" && x.id)
+          .map((x) => [`cond:${x.id}`, x.next_node_key, x.label || x.id]);
+        if (c.identify_receipt) salidas.push(["receipt", c.receipt_next, "comprobante"]);
+        salidas.push(["fallback", c.fallback_next, undefined]);
+        for (const [handle, target, label] of salidas) {
+          if (!target || !knownKeys.has(target)) continue;
+          edges.push({
+            id: `${node.node_key}--${handle}--${target}`,
+            source: node.node_key,
+            target,
+            sourceHandle: handle,
+            ...(label ? { label } : {}),
+          });
+        }
+        break;
+      }
+
+      case "distributor": {
+        const outs = (cfg as { outputs?: Array<{ id?: string; label?: string; next_node_key?: string }> }).outputs ?? [];
+        for (const o of outs) {
+          if (!o.id || !o.next_node_key || !knownKeys.has(o.next_node_key)) continue;
+          edges.push({
+            id: `${node.node_key}--out:${o.id}--${o.next_node_key}`,
+            source: node.node_key,
+            target: o.next_node_key,
+            sourceHandle: `out:${o.id}`,
+            label: o.label || o.id,
+          });
+        }
+        break;
+      }
+
+      case "carousel": {
+        const c = cfg as {
+          cards?: Array<{ id?: string; buttons?: Array<{ id?: string; label?: string; type?: string; next_node_key?: string }> }>;
+          timeout_next?: string;
+        };
+        for (const card of c.cards ?? []) {
+          for (const b of card.buttons ?? []) {
+            if (b.type === "url" || !card.id || !b.id) continue;
+            if (!b.next_node_key || !knownKeys.has(b.next_node_key)) continue;
+            edges.push({
+              id: `${node.node_key}--car_${card.id}_${b.id}--${b.next_node_key}`,
+              source: node.node_key,
+              target: b.next_node_key,
+              sourceHandle: `car_${card.id}_${b.id}`,
+              label: b.label || b.id,
+            });
+          }
+        }
+        if (c.timeout_next && knownKeys.has(c.timeout_next)) {
+          edges.push({
+            id: `${node.node_key}--timeout--${c.timeout_next}`,
+            source: node.node_key,
+            target: c.timeout_next,
+            sourceHandle: "timeout",
+            label: "sin respuesta",
+          });
+        }
+        break;
+      }
+
       case "handoff":
       case "end":
         // Terminal nodes — no outgoing edges.
@@ -335,6 +408,9 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
     case "move_kanban":
     case "set_tag":
     case "department":
+    case "notification":
+    case "sale_approved":
+    case "manipulator":
     case "ai_media":
       return [{ id: "next", label: "Next" }];
 
@@ -442,6 +518,28 @@ export function outgoingSlots(node: BuilderNode): OutgoingSlot[] {
       return slots;
     }
 
+    case "distributor": {
+      const outs = (cfg as { outputs?: Array<{ id?: string; label?: string }> }).outputs ?? [];
+      return outs
+        .filter((o) => typeof o.id === "string" && o.id)
+        .map((o, i) => ({ id: `out:${o.id}`, label: o.label || `Camino ${i + 1}` }));
+    }
+
+    case "carousel": {
+      const c = cfg as {
+        cards?: Array<{ id?: string; buttons?: Array<{ id?: string; label?: string; type?: string }> }>;
+      };
+      const slots: OutgoingSlot[] = [];
+      for (const card of c.cards ?? []) {
+        for (const b of card.buttons ?? []) {
+          if (b.type === "url" || !card.id || !b.id) continue;
+          slots.push({ id: `car_${card.id}_${b.id}`, label: b.label || b.id });
+        }
+      }
+      slots.push({ id: "timeout", label: "Sin respuesta" });
+      return slots;
+    }
+
     case "handoff":
     case "end":
       return [];
@@ -475,6 +573,9 @@ export function applyEdgeConnection(
     case "move_kanban":
     case "set_tag":
     case "department":
+    case "notification":
+    case "sale_approved":
+    case "manipulator":
     case "ai_media":
       if (sourceHandle === "next") return { next_node_key: targetKey };
       return null;
@@ -669,6 +770,9 @@ function patchedConfigWithoutKey(
     case "move_kanban":
     case "set_tag":
     case "department":
+    case "notification":
+    case "sale_approved":
+    case "manipulator":
     case "ai_media": {
       const next = (cfg as { next_node_key?: string }).next_node_key;
       if (next !== deletedKey) return null;
@@ -781,7 +885,9 @@ function patchedConfigWithoutKey(
       return null;
 
     case "ai_block":
-      return null;
+    case "distributor":
+    case "carousel":
+      return quitarReferencias(cfg, deletedKey);
 
     case "handoff":
     case "end":
@@ -791,3 +897,31 @@ function patchedConfigWithoutKey(
   }
 }
 
+
+
+/**
+ * Vacía cualquier `*_next` / `next_node_key` que apunte a `deletedKey`,
+ * también dentro de listas (condiciones de IA, salidas del distribuidor,
+ * botones del carrusel). Devuelve null si no había nada que cambiar.
+ */
+function quitarReferencias(
+  cfg: Record<string, unknown>,
+  deletedKey: string,
+): Record<string, unknown> | null {
+  let cambio = false;
+  const limpiar = (valor: unknown, clave?: string): unknown => {
+    if (Array.isArray(valor)) return valor.map((v) => limpiar(v));
+    if (valor && typeof valor === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(valor as Record<string, unknown>)) out[k] = limpiar(v, k);
+      return out;
+    }
+    if (clave && (clave === "next_node_key" || clave.endsWith("_next")) && valor === deletedKey) {
+      cambio = true;
+      return "";
+    }
+    return valor;
+  };
+  const limpio = limpiar(cfg) as Record<string, unknown>;
+  return cambio ? limpio : null;
+}

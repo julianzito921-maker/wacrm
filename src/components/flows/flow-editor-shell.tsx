@@ -127,29 +127,37 @@ function ShellBody() {
     <div
       role="group"
       aria-label={t("editorView")}
-      className="inline-flex gap-0.5 rounded-lg border border-sidebar-border bg-background/50 p-0.5"
+      className="inline-flex h-[26px] items-center gap-0.5 rounded-[7.5px] border border-[#251e45] bg-[#1c1734] p-0.5"
     >
       {!isMobile && (
         <SegButton
           active={effectiveView === "canvas"}
           onClick={() => choose("canvas")}
-          icon={<GitFork className="h-3.5 w-3.5" />}
+          icon={<GitFork className="h-3 w-3" />}
           label={t("canvasView")}
         />
       )}
       <SegButton
         active={effectiveView === "list"}
         onClick={() => choose("list")}
-        icon={<List className="h-3.5 w-3.5" />}
+        icon={<List className="h-3 w-3" />}
         label={t("listView")}
       />
       <SegButton
         active={effectiveView === "preview"}
         onClick={() => choose("preview")}
-        icon={<MessageSquare className="h-3.5 w-3.5" />}
+        icon={<MessageSquare className="h-3 w-3" />}
         label={t("previewView")}
       />
     </div>
+  );
+
+  const barra = (flotante: boolean) => (
+    <EditorHeader
+      className={flotante ? undefined : "rounded-none border-x-0 border-t-0"}
+      viewSwitch={cambioDeVista}
+      issues={<ValidationButton onJump={irAlNodo} />}
+    />
   );
 
   return (
@@ -158,13 +166,10 @@ function ShellBody() {
         ref={setContenedor}
         className="flex min-h-0 flex-1 flex-col bg-canvas"
       >
-        <EditorHeader
-          viewSwitch={cambioDeVista}
-          issues={<ValidationButton onJump={irAlNodo} />}
-        />
+        {effectiveView !== "canvas" && barra(false)}
 
         {/* En móvil el cambio de vista no cabe en la barra: va aquí. */}
-        <div className="flex justify-center border-b border-sidebar-border bg-sidebar px-3 py-2 md:hidden">
+        <div className="flex justify-center border-b border-sidebar-border bg-sidebar px-3 py-2 lg:hidden">
           {cambioDeVista}
         </div>
 
@@ -173,11 +178,15 @@ function ShellBody() {
           {effectiveView === "canvas" ? (
             <>
               <FlowCanvas />
-              {/* Panel flotante, encima del lienzo. `pointer-events-none`
-                  en el contenedor para no tapar el lienzo fuera del panel. */}
-              <div className="pointer-events-none absolute inset-y-3 left-3 z-10 flex flex-col">
+              {/* Como Leona: la barra flota sobre el lienzo y debajo van
+                  «Herramientas» y «Simular». `pointer-events-none` en los
+                  contenedores para no tapar el lienzo. */}
+              <div className="pointer-events-none absolute inset-x-3 top-3 z-20">
+                {barra(true)}
+              </div>
+              <div className="pointer-events-none absolute top-[60px] bottom-3 left-3 z-10 flex flex-col">
                 <FlowPalette
-                  className="max-h-full"
+                  className="max-h-full min-h-0 flex-1"
                   onEditarDesdeSimulacion={editarDesdePreview}
                 />
               </div>
@@ -186,7 +195,7 @@ function ShellBody() {
                 onClick={alternarPantallaCompleta}
                 title={pantallaCompleta ? t("minimize") : t("maximize")}
                 aria-label={pantallaCompleta ? t("minimize") : t("maximize")}
-                className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-lg border border-sidebar-border bg-sidebar/90 text-muted-foreground shadow-lg backdrop-blur-md transition-colors hover:text-foreground"
+                className="absolute top-[60px] right-3 z-10 flex h-[34px] w-[34px] items-center justify-center rounded-[7.5px] border border-[#362c64] bg-[#161229] text-slate-300 transition-colors hover:text-white"
               >
                 {pantallaCompleta ? (
                   <Minimize2 className="h-4 w-4" />
@@ -241,10 +250,10 @@ function SegButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
+        "inline-flex h-[20px] items-center gap-1 rounded-[5.6px] px-2 text-[11.25px] font-medium transition-colors",
         active
-          ? "bg-primary-soft-2 text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground",
+          ? "bg-[#8b5cf6] text-white"
+          : "text-slate-400 hover:text-white",
       )}
     >
       {icon}

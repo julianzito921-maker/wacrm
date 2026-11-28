@@ -1022,6 +1022,18 @@ function validateNode(
             ["no_contesto_next", cfg.no_contesto_next],
           ] as const);
       for (const [campo, valor] of ramas) {
+        // Como en Leona: «si no responde» puede quedar sin conectar; al
+        // vencerse la espera la conversación termina ahí (aviso, no error).
+        if (!valor) {
+          issues.push({
+            severity: "warning",
+            scope: "node",
+            node_key: node.node_key,
+            field: campo,
+            message: t(campo === "no_contesto_next" ? "saveReplyTimeoutEnds" : "saveReplyReplyEnds"),
+          });
+          continue;
+        }
         if (!valor) {
           issues.push({
             severity: "error",

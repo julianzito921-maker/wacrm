@@ -61,3 +61,16 @@ describe("respuestas escritas a botones y listas", () => {
     expect(matchTypedReply(UPSELL, "sí agrégalo")).toBe("si");
   });
 });
+
+describe("número de opción (menús de D-API)", () => {
+  it("«2» elige la segunda opción", () => {
+    expect(matchTypedReply(CASO, "2")).toBe("hinch");
+    expect(matchTypedReply(OFERTA, "1")).toBe("quiero");
+  });
+  it("fuera de rango no elige nada", () => {
+    expect(matchTypedReply(OFERTA, "5")).toBeNull();
+  });
+  it("con títulos de rango manda el rango, no el índice", () => {
+    expect(matchTypedReply(EDAD, "2")).toBe("e39");
+  });
+});

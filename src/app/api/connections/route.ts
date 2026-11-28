@@ -6,6 +6,7 @@ import { parseQualityRating } from '@/lib/whatsapp/phone-health';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { CAMPOS_CONEXION_PUBLICOS } from '@/lib/whatsapp/connections';
 import { emparejarConexionEnMeta, pinValido } from '@/lib/whatsapp/conexion-meta';
+import { esDapi } from '@/lib/whatsapp/dapi';
 
 
 
@@ -53,6 +54,10 @@ export async function POST(request: Request) {
     const pin = pinRaw === undefined || pinRaw === null || pinRaw === '' ? null : pinRaw;
 
     if (!name || !phoneNumberId || !accessToken) {
+      return NextResponse.json({ error: 'missing_fields' }, { status: 400 });
+    }
+    // Las islas D-API solo nacen por /api/connections/dapi (QR).
+    if (esDapi(phoneNumberId)) {
       return NextResponse.json({ error: 'missing_fields' }, { status: 400 });
     }
     if (pin !== null && !pinValido(pin)) {

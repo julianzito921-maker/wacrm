@@ -8,6 +8,7 @@ import {
   RAIL_GROUPS,
   SECTION_META,
   SETTINGS_SECTIONS,
+  seccionDelMenu,
   type SettingsSection,
 } from './settings-sections';
 
@@ -62,33 +63,33 @@ export function SettingsRail({
         return (
           <div
             key={group}
-            className="flex shrink-0 gap-1 lg:flex-col lg:gap-0.5"
+            className="flex shrink-0 gap-1 lg:flex-col lg:gap-[1.5px] lg:pb-[18px]"
           >
             {label ? (
-              <div className="hidden px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase lg:block">
+              <div className="hidden px-[9.4px] pb-[3.75px] text-[11px] font-semibold text-slate-400 uppercase lg:block">
                 {t(`groups.${group}`)}
               </div>
             ) : null}
             {items.map((s) => {
               const meta = SECTION_META[s];
               const Icon = meta.icon;
-              const isActive = s === active;
+              const isActive = s === seccionDelMenu(active);
               return (
                 <button
                   key={s}
                   ref={isActive ? activeRef : undefined}
                   type="button"
-                  onClick={() => onSelect(s)}
+                  onClick={() => (meta.href ? window.location.assign(meta.href) : onSelect(s))}
                   aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium whitespace-nowrap transition-colors',
-                    'lg:w-full',
+                    'flex h-[28px] shrink-0 items-center gap-2 rounded-[5.6px] px-[9.4px] text-left text-[13px] font-medium whitespace-nowrap transition-colors',
+                    'lg:w-[198px]',
                     isActive
-                      ? 'bg-primary-soft text-primary'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                      ? 'bg-[#8b5cf6] text-white'
+                      : 'text-slate-300 hover:bg-[#241e42] hover:text-white',
                   )}
                 >
-                  <Icon className="size-4 shrink-0" />
+                  <Icon className={cn('size-4 shrink-0', isActive ? 'text-white' : 'text-slate-400')} />
                   <span className="flex-1">{t(`sections.${s}`)}</span>
                   {hints?.[s] != null ? (
                     <span

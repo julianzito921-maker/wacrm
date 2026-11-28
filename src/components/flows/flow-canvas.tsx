@@ -43,11 +43,8 @@ import {
   applyNodeChanges,
   Background,
   BackgroundVariant,
-  Controls,
-  Handle,
   MiniMap,
   Panel,
-  Position,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -59,7 +56,7 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { CircleAlert, Copy, GitFork, Pencil, Save, Trash2 } from 'lucide-react';
+import { CircleAlert, Maximize2, RotateCcw, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
@@ -74,509 +71,31 @@ import {
 import {
   applyEdgeConnection,
   deriveCanvasEdges,
-  outgoingSlots,
 } from '@/lib/flows/edges';
 import { autoLayout, shouldAutoLayout } from '@/lib/flows/layout';
 import {
   DND_BLOQUE,
-  NODE_META,
   NodeIconChip,
-  colorDeSalida,
   configAtajoMedio,
-  formatearEspera,
   nodeColors,
-  summarizeNode,
   type BuilderNode,
 } from './shared';
+import { ANCHO_TARJETA, GRIS_CONECTOR, TarjetaNodo, type DatosTarjeta } from './tarjeta-nodo';
 import { useFlowEditor } from './flow-editor-state';
-import {
-  NODOS_FIN_DE_RAMA,
-  type SaveReplyNodeConfig,
-  type ConditionNodeConfig,
-} from '@/lib/flows/types';
 import { FlowEdge } from './flow-edge';
 import { NodeConfigForm } from './forms/node-config-form';
 import type { CargaArrastre } from './flow-palette';
 import { IssueLine } from './validation-panel';
 import type { ValidationIssue } from '@/lib/flows/validate';
 
-// React-Flow node `data` payload — the bits our custom renderer needs.
-interface NodeData extends Record<string, unknown> {
-  node: BuilderNode;
-  isEntry: boolean;
-  /** Validator's "look here" pulse — flashes the card border for
-   *  ~1.6s. Drives a CSS animation, doesn't change layout. */
-  isFlashed: boolean;
-  /** ENTRADAS / AVANCES del nodo (últimos 30 días). */
-  stats?: { entradas: number; avances: number };
-  /** Abre la ventana de edición desde los botones de la tarjeta. */
-  onEdit?: (key: string) => void;
-}
+// React-Flow node `data` payload — lo que pinta la tarjeta.
+type NodeData = DatosTarjeta;
 
-const NODE_WIDTH = 260;
+const NODE_WIDTH = ANCHO_TARJETA;
 // Best-effort default; actual height varies by summary length but
 // dagre needs SOMETHING to compute rank spacing. Underestimating is
 // safer than over (tighter layout that still doesn't overlap).
-const NODE_HEIGHT = 150; // tarjeta con encabezado de color + vista previa (rediseño 22-nov)
-
-// ============================================================
-// Custom node — one card per flow node, styled to match the list
-// view's collapsed card so the two views feel like the same product.
-// ============================================================
-
-function FlowNodeCard({ data, selected }: NodeProps) {
-  const t = useTranslations('Flows.builder');
-  // El contexto está disponible aquí porque las tarjetas las pinta
-  // React-Flow dentro del proveedor: así el botón de borrar actúa
-  // directo sobre el nodo, sin abrir la ventana de edición.
-  const { removeNode, duplicateNode, state } = useFlowEditor();
-  const { node, isEntry, isFlashed } = data as NodeData;
-  const meta = NODE_META[node.node_type];
-  const c = nodeColors(node.node_type);
-  const tSummary = useTranslations('Flows.summary');
-  // «Esperar respuesta» tiene tarjeta propia (diseño Leona): dos salidas
-  // visibles, métricas y acciones rápidas.
-  if (node.node_type === 'save_reply') {
-    return <SaveReplyCard data={data} selected={selected} />;
-  }
-  if (node.node_type === 'condition') {
-    return <ConditionCard data={data} selected={selected} />;
-  }
-  // El Inicio muestra su disparador (vive en el flujo, no en el nodo).
-  const summary =
-    node.node_type === 'start'
-      ? resumenDisparador(state.trigger_type, state.trigger_config, t)
-      : summarizeNode(node, tSummary);
-  // Nodo de una sola salida sin conexión: la rama termina aquí (no es error).
-  const finDeRama =
-    NODOS_FIN_DE_RAMA.has(node.node_type) &&
-    !(node.config as { next_node_key?: string }).next_node_key;
-  const slots = outgoingSlots(node);
-  // Start nodes are entry-only; nothing ever targets them, so they
-  // don't need an incoming Handle. Every other node type accepts
-  // incoming edges (including terminal handoff / end — they're the
-  // common targets).
-  const hasTarget = node.node_type !== 'start';
-  // Single-slot nodes get a single source handle floated on the right
-  // edge of the card. Multi-slot nodes (condition, send_buttons,
-  // send_list) render slot rows inline so each handle visually sits
-  // next to the slot it represents.
-  const isMultiSlot = slots.length > 1;
-  return (
-    <div
-      style={
-        {
-          '--nc': c.solid,
-          '--nc-soft': c.soft,
-          '--nc-ring': c.ring,
-          '--nc-text': c.text,
-          borderColor: selected ? c.solid : undefined,
-          boxShadow: selected
-            ? `0 0 0 1px ${c.solid}, 0 14px 36px -12px ${c.ring}`
-            : undefined,
-        } as React.CSSProperties
-      }
-      className={cn(
-        // Tarjeta oscura (#16192C) con encabezado del color de su categoría.
-        'bg-card relative max-w-[280px] min-w-[250px] rounded-xl border text-left shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8)] transition-[box-shadow,border-color]',
-        selected
-          ? 'border-[var(--nc)]'
-          : 'border-border hover:border-[var(--nc-ring)]',
-        // Flash overrides hover/selected colors briefly. Tailwind's
-        // built-in `animate-pulse` is too gentle; a ring with the
-        // amber accent matches the list view's flash semantics.
-        isFlashed && '!border-amber-400 ring-2 ring-amber-400/60'
-      )}
-    >
-      {hasTarget && (
-        <Handle
-          type="target"
-          position={Position.Left}
-          className="!bg-card !h-2.5 !w-2.5 !border-2 !border-[var(--nc-ring)]"
-        />
-      )}
-
-      <div
-        className="flex items-center gap-2 rounded-t-[11px] border-b px-3 py-2"
-        style={{
-          background: 'color-mix(in oklch, var(--nc) 24%, var(--card))',
-          borderColor: 'color-mix(in oklch, var(--nc) 40%, transparent)',
-        }}
-      >
-        <span
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-          style={{ background: 'var(--nc)', color: '#fff' }}
-        >
-          <meta.icon size={13} />
-        </span>
-        <span
-          className="text-foreground truncate text-[10.5px] font-semibold tracking-wider uppercase"
-        >
-          {t(`nodes.${node.node_type}.label`)}
-        </span>
-        {/* Duplicar: deja una copia conectada detrás cuando el paso
-            tiene una sola salida. El nodo de entrada no se duplica
-            (solo puede haber uno). */}
-        {node.node_type !== 'start' && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              duplicateNode(node.node_key);
-            }}
-            title={t('duplicateNode')}
-            aria-label={t('duplicateNode')}
-            className="text-muted-foreground hover:text-foreground ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-black/5"
-          >
-            <Copy className="h-3 w-3" />
-          </button>
-        )}
-
-        {/* Borrado directo desde la tarjeta. El de entrada se protege
-            (sin él el flujo no tiene por dónde empezar): para ese caso
-            queda oculto y se cambia de entrada desde el panel. */}
-        {!isEntry && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              removeNode(node.node_key);
-            }}
-            title={t('deleteNode')}
-            aria-label={t('deleteNode')}
-            className="text-muted-foreground hover:bg-red-500/10 hover:text-red-500 flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        )}
-        {isEntry && (
-          <span className="border-border text-muted-foreground ml-auto rounded border px-1.5 py-0.5 text-[8.5px] font-bold tracking-[0.1em] uppercase">
-            {t('badgeEntry')}
-          </span>
-        )}
-      </div>
-      <div className="px-3.5 pt-2.5 pb-3">
-      <div className="text-muted-foreground truncate font-mono text-[10.5px]">
-        {node.node_key}
-      </div>
-      {summary && (
-        <div className="text-foreground/85 bg-background/40 border-border mt-1.5 line-clamp-3 rounded-md border px-2 py-1.5 text-xs leading-relaxed">
-          {summary}
-        </div>
-      )}
-
-      {isMultiSlot && (
-        <div className="border-border mt-2.5 flex flex-col gap-1 border-t pt-2.5">
-          {slots.map((slot) => (
-            <div
-              key={slot.id}
-              className="text-muted-foreground relative flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px]"
-            >
-              <span className="flex min-w-0 items-center gap-1.5" title={slot.label}>
-                <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ background: colorDeSalida(node.node_type, slot.id) }}
-                />
-                <span className="truncate">{slot.label}</span>
-              </span>
-              <Handle
-                type="source"
-                id={slot.id}
-                position={Position.Right}
-                style={{
-                  borderColor: colorDeSalida(node.node_type, slot.id),
-                  background: colorDeSalida(node.node_type, slot.id),
-                }}
-                // Override default absolute positioning so the handle
-                // sits flush with the right edge of the card instead
-                // of floating at vertical center. The negative offset
-                // matches the card's px-3 + the handle's own radius.
-                className="!bg-card !relative !top-auto !right-auto !h-2.5 !w-2.5 !translate-x-[14px] !transform-none !border-2"
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      </div>
-
-      {finDeRama && (
-        <span
-          title={t('endOfBranchHint')}
-          className="border-border bg-card text-muted-foreground absolute top-1/2 -right-[46px] -translate-y-1/2 rounded border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase"
-        >
-          {t('endOfBranch')}
-        </span>
-      )}
-
-      {!isMultiSlot && slots.length === 1 && (
-        <Handle
-          type="source"
-          id={slots[0].id}
-          position={Position.Right}
-          style={{ borderColor: c.solid, background: c.solid }}
-          className="!h-2.5 !w-2.5 !border-2"
-        />
-      )}
-    </div>
-  );
-}
-
-/**
- * Tarjeta de «Esperar respuesta» al estilo Leona: encabezado naranja
- * sólido, métricas del nodo y las dos salidas visibles (respuesta y
- * timeout), con la ventana de edición a un clic.
- */
-function ConditionCard({
-  data,
-  selected,
-}: {
-  data: Record<string, unknown>;
-  selected?: boolean;
-}) {
-  const t = useTranslations('Flows.builder.condition');
-  const tStats = useTranslations('Flows.builder.saveReply');
-  const { removeNode, duplicateNode } = useFlowEditor();
-  const { node, isFlashed, stats, onEdit } = data as NodeData;
-  const cfg = node.config as unknown as ConditionNodeConfig;
-  const reglas = cfg.rules?.length ? cfg.rules : [];
-  const logic = cfg.logic ?? 'all';
-  const entradas = stats?.entradas ?? 0;
-  const avances = stats?.avances ?? 0;
-  const tasa = entradas > 0 ? Math.round((avances / entradas) * 100) : null;
-  const handleClass =
-    '!bg-card !relative !top-auto !right-auto !h-2.5 !w-2.5 !translate-x-[16px] !transform-none !border-2';
-
-  return (
-    <div
-      className={cn(
-        'bg-card relative w-[260px] rounded-xl border text-left shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8)] transition-[box-shadow,border-color]',
-        selected ? 'border-[#1d4ed8]' : 'border-border hover:border-blue-400/60',
-        isFlashed && '!border-amber-400 ring-2 ring-amber-400/60'
-      )}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!bg-card !h-2.5 !w-2.5 !border-2 !border-blue-300"
-      />
-
-      <div
-        className="flex items-center gap-2 rounded-t-xl px-2.5 py-2"
-        style={{ background: '#1d4ed8' }}
-      >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/20 text-white">
-          <GitFork size={13} />
-        </span>
-        <span className="flex-1 truncate text-[10.5px] font-semibold tracking-wider text-white uppercase">
-          {t('title')}
-        </span>
-        <QuickButton label={tStats('edit')} onClick={() => onEdit?.(node.node_key)}>
-          <Pencil className="h-3 w-3" />
-        </QuickButton>
-        <QuickButton label={tStats('duplicate')} onClick={() => duplicateNode(node.node_key)}>
-          <Copy className="h-3 w-3" />
-        </QuickButton>
-        <QuickButton label={tStats('delete')} danger onClick={() => removeNode(node.node_key)}>
-          <Trash2 className="h-3 w-3" />
-        </QuickButton>
-      </div>
-
-      <div className="bg-background/50 border-border grid grid-cols-3 border-b">
-        <StatCell label={tStats('entries')} value={String(entradas)} first />
-        <StatCell label={tStats('advances')} value={String(avances)} />
-        <StatCell label={tStats('rate')} value={tasa === null ? '—' : `${tasa}%`} />
-      </div>
-
-      <div className="flex flex-col gap-2 px-3 py-3">
-        <p className="text-muted-foreground text-[10.5px]">
-          {t(logic === 'any' ? 'anyRules' : 'allRules')} ·{' '}
-          {t('ruleCount', { count: reglas.length })}
-        </p>
-        <div className="border-border bg-background/60 text-foreground/85 flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px]">
-          <span>{t('meets')}</span>
-          <Handle
-            type="source"
-            id="true"
-            position={Position.Right}
-            className={handleClass}
-            style={{ borderColor: '#22c55e', background: '#22c55e' }}
-          />
-        </div>
-        <div className="border-border bg-background/60 text-foreground/85 flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px]">
-          <span>{t('noMeets')}</span>
-          <Handle
-            type="source"
-            id="false"
-            position={Position.Right}
-            className={handleClass}
-            style={{ borderColor: '#f43f5e', background: '#f43f5e' }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SaveReplyCard({
-  data,
-  selected,
-}: {
-  data: Record<string, unknown>;
-  selected?: boolean;
-}) {
-  const t = useTranslations('Flows.builder.saveReply');
-  const tSummary = useTranslations('Flows.summary');
-  const { removeNode, duplicateNode } = useFlowEditor();
-  const { node, isFlashed, stats, onEdit } = data as NodeData;
-  const cfg = node.config as unknown as SaveReplyNodeConfig;
-  const indefinido = Boolean(cfg.esperar_indefinido);
-  const segundos =
-    typeof cfg.espera_segundos === 'number'
-      ? cfg.espera_segundos
-      : (Number(cfg.espera_minutos) || 0) * 60;
-  const entradas = stats?.entradas ?? 0;
-  const avances = stats?.avances ?? 0;
-  const tasa = entradas > 0 ? Math.round((avances / entradas) * 100) : null;
-  const colorContesto = colorDeSalida('save_reply', 'contesto');
-  const colorTimeout = colorDeSalida('save_reply', 'no_contesto');
-  const handleClass =
-    '!bg-card !relative !top-auto !right-auto !h-2.5 !w-2.5 !translate-x-[16px] !transform-none !border-2';
-
-  return (
-    <div
-      className={cn(
-        'bg-card relative w-[260px] rounded-xl border text-left shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8)] transition-[box-shadow,border-color]',
-        selected ? 'border-[#EA580C]' : 'border-border hover:border-orange-400/60',
-        isFlashed && '!border-amber-400 ring-2 ring-amber-400/60'
-      )}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!bg-card !h-2.5 !w-2.5 !border-2 !border-orange-300"
-      />
-
-      <div
-        className="flex items-center gap-2 rounded-t-xl px-2.5 py-2"
-        style={{ background: '#EA580C' }}
-      >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/20 text-white">
-          <Save size={13} />
-        </span>
-        <span className="flex-1 truncate text-[10.5px] font-semibold tracking-wider text-white uppercase">
-          {t('title')}
-        </span>
-        <QuickButton label={t('edit')} onClick={() => onEdit?.(node.node_key)}>
-          <Pencil className="h-3 w-3" />
-        </QuickButton>
-        <QuickButton
-          label={t('duplicate')}
-          onClick={() => duplicateNode(node.node_key)}
-        >
-          <Copy className="h-3 w-3" />
-        </QuickButton>
-        <QuickButton
-          label={t('delete')}
-          danger
-          onClick={() => removeNode(node.node_key)}
-        >
-          <Trash2 className="h-3 w-3" />
-        </QuickButton>
-      </div>
-
-      <div className="bg-background/50 border-border grid grid-cols-3 border-b">
-        <StatCell label={t('entries')} value={String(entradas)} first />
-        <StatCell label={t('advances')} value={String(avances)} />
-        <StatCell label={t('rate')} value={tasa === null ? '—' : `${tasa}%`} />
-      </div>
-
-      <div className="flex flex-col gap-2 px-3 py-3">
-        <div className="border-border bg-background/60 text-foreground/85 flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px] leading-snug">
-          <span>{t('waitCustomer')}</span>
-          <Handle
-            type="source"
-            id="contesto"
-            position={Position.Right}
-            style={{ borderColor: colorContesto, background: colorContesto }}
-            className={handleClass}
-          />
-        </div>
-
-        <div className="text-muted-foreground text-center text-[9px] font-semibold tracking-[0.12em] uppercase">
-          {t('orNoReply')}
-        </div>
-
-        {!indefinido && (
-          <div className="border-border bg-background/60 text-foreground/85 flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px] leading-snug">
-            <span>
-              {t('after')}{' '}
-              <span className="text-foreground font-medium">
-                {formatearEspera(segundos, tSummary)}
-              </span>
-            </span>
-            <Handle
-              type="source"
-              id="no_contesto"
-              position={Position.Right}
-              style={{ borderColor: colorTimeout, background: colorTimeout }}
-              className={handleClass}
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function QuickButton({
-  label,
-  onClick,
-  danger,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={cn(
-        'flex h-5 w-5 shrink-0 items-center justify-center rounded text-white/80 transition-colors',
-        danger ? 'hover:bg-black/20 hover:text-white' : 'hover:bg-white/20 hover:text-white'
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function StatCell({
-  label,
-  value,
-  first,
-}: {
-  label: string;
-  value: string;
-  first?: boolean;
-}) {
-  return (
-    <div className={cn('px-1.5 py-1.5', !first && 'border-border border-l')}>
-      <div className="text-muted-foreground truncate text-[8.5px] font-semibold tracking-[0.1em] uppercase">
-        {label}
-      </div>
-      <div className="text-foreground font-mono text-[12px] leading-tight">{value}</div>
-    </div>
-  );
-}
+const NODE_HEIGHT = 200; // cabecera 60 + métricas 45 + contenido (diseño Leona)
 
 /** «Palabra clave: chía, hola», «Cualquier mensaje», etc. */
 function resumenDisparador(
@@ -610,7 +129,7 @@ function TarjetaConAvisos(props: NodeProps) {
   );
   return (
     <div className="relative">
-      <FlowNodeCard {...props} />
+      <TarjetaNodo data={props.data} selected={props.selected} />
       {propios.length > 0 && <GloboAvisos issues={propios} />}
     </div>
   );
@@ -646,6 +165,36 @@ const NODE_TYPES = { flow: TarjetaConAvisos };
 // Constante de módulo a propósito: React-Flow avisa si el objeto cambia
 // de identidad en cada render.
 const EDGE_TYPES = { flujo: FlowEdge };
+
+/** Alejar · Acercar | Ajustar vista · Restablecer vista (Leona). */
+function ControlesZoom() {
+  const t = useTranslations('Flows.builder');
+  const rf = useReactFlow();
+  const botones = [
+    { label: t('zoomOut'), icon: ZoomOut, accion: () => rf.zoomOut({ duration: 200 }), chico: false },
+    { label: t('zoomIn'), icon: ZoomIn, accion: () => rf.zoomIn({ duration: 200 }), chico: false },
+    { label: t('fitView'), icon: Maximize2, accion: () => rf.fitView({ padding: 0.2, duration: 300 }), chico: true },
+    { label: t('resetView'), icon: RotateCcw, accion: () => rf.setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 300 }), chico: true },
+  ];
+  return (
+    <div className="flex items-center gap-[1.9px] rounded-[7.5px] border border-[#362c64] bg-[#161229] p-[1.9px]">
+      {botones.map((b, i) => (
+        <Fragment key={b.label}>
+          {i === 2 && <span className="mx-[3px] h-5 w-px bg-[#362c64]" />}
+          <button
+            type="button"
+            title={b.label}
+            aria-label={b.label}
+            onClick={b.accion}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-[7.5px] text-slate-300 transition-colors hover:bg-[#241e42] hover:text-white"
+          >
+            <b.icon className={b.chico ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+          </button>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
 
 // ============================================================
 // Root canvas
@@ -736,7 +285,7 @@ function FlowCanvasInner() {
             width: NODE_WIDTH,
             // La tarjeta de «Esperar respuesta» es más alta (métricas +
             // dos cajas de salida).
-            height: n.node_type === 'save_reply' ? 230 : NODE_HEIGHT,
+            height: n.node_type === 'save_reply' ? 300 : n.node_type === 'sale_approved' ? 140 : NODE_HEIGHT,
           })),
           canvasEdges.map((e) => ({ source: e.source, target: e.target })),
           { direction: 'TB' }
@@ -775,12 +324,16 @@ function FlowCanvasInner() {
           isFlashed: n.node_key === flashKey,
           stats: stats[n.node_key],
           onEdit: setSelectedNodeKey,
+          disparador:
+            n.node_type === 'start'
+              ? resumenDisparador(state.trigger_type, state.trigger_config, t)
+              : undefined,
         },
       };
     });
 
     return nodes;
-  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions, stats]);
+  }, [builderNodes, entryNodeId, flashKey, autoLayoutPositions, stats, state.trigger_type, state.trigger_config, t]);
 
   const [rfNodes, setRfNodes] = useState<RfNode<NodeData>[]>(derivedRfNodes);
 
@@ -794,7 +347,6 @@ function FlowCanvasInner() {
   // React-Flow escupe errores de handles inexistentes.
   const rfEdges = useMemo(() => {
     const canvasEdges = deriveCanvasEdges(rfNodes.map((n) => n.data.node));
-    const tipoDe = new Map(rfNodes.map((n) => [n.id, n.data.node.node_type]));
 
     // sourceHandle is now wired up — the FlowNodeCard renders a Handle
     // per slot whose id matches the scheme in edges.ts, so React-Flow
@@ -805,17 +357,11 @@ function FlowCanvasInner() {
       source: e.source,
       target: e.target,
       sourceHandle: e.sourceHandle,
-      label: e.label,
-      // Mode-aware via CSS tokens so edge chrome flips with light/dark.
-      labelStyle: { fill: 'var(--muted-foreground)', fontSize: 11 },
-      labelBgStyle: { fill: 'var(--card)' },
-      labelBgPadding: [4, 2] as [number, number],
-      labelBgBorderRadius: 4,
-      // Verde = respuesta / éxito, rojo = no se cumple, ámbar = timeout;
-      // el resto, el color de la categoría del nodo de origen.
+      animated: true,
       style: {
-        stroke: colorDeSalida(tipoDe.get(e.source) ?? 'send_message', e.sourceHandle),
-        strokeWidth: 2,
+        stroke: GRIS_CONECTOR,
+        strokeWidth: 3,
+        strokeDasharray: '8 4',
       },
     }));
 
@@ -858,7 +404,7 @@ function FlowCanvasInner() {
     });
   }, [flashKey, builderNodes, reactFlow]);
 
-  const handleNodeClick = useCallback(
+  const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: RfNode<NodeData>) => {
       setSelectedNodeKey(node.id);
     },
@@ -1001,15 +547,15 @@ function FlowCanvasInner() {
           proOptions={{ hideAttribution: true }}
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
-          onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeDoubleClick}
+          zoomOnDoubleClick={false}
           onConnect={handleConnect}
-          // Clic en la flecha = desconectar: vacía el «a dónde sigue»
-          // del nodo de origen, que es lo único que sostiene la unión.
-          onEdgeClick={(_, edge) => handleEdgesDelete([edge])}
           onNodesDelete={handleNodesDelete}
           onEdgesDelete={handleEdgesDelete}
+          // Como Leona: clic en la línea = quitarla.
+          onEdgeClick={(_, edge) => handleEdgesDelete([edge])}
           // Flechas más fáciles de acertar con el ratón (zona de clic).
-          defaultEdgeOptions={{ interactionWidth: 28 }}
+          defaultEdgeOptions={{ interactionWidth: 20 }}
           // Default is "Backspace" only — accept both so Mac users
           // hitting Delete (Fn+Backspace) get the same behavior.
           deleteKeyCode={['Backspace', 'Delete']}
@@ -1027,17 +573,13 @@ function FlowCanvasInner() {
             variant={BackgroundVariant.Dots}
             gap={20}
             size={1.5}
-            color="var(--canvas-dot)"
-            bgColor="var(--canvas)"
+            color="rgba(226, 232, 240, 0.42)"
+            bgColor="#1d1939"
           />
-          {/* Zoom flotante abajo a la izquierda; se corre a la derecha del
-              panel de bloques para no quedar debajo de él. */}
-          <Controls
-            position="bottom-left"
-            style={{ left: 288 }}
-            className="!border-sidebar-border !bg-sidebar/90 [&_button]:!border-sidebar-border [&_button]:!bg-transparent [&_button:hover]:!bg-sidebar-accent [&_button_svg]:!fill-foreground !overflow-hidden !rounded-xl !border !shadow-[0_10px_28px_-10px_rgba(0,0,0,0.7)] backdrop-blur-md"
-            showInteractive={false}
-          />
+          {/* Como Leona: zoom abajo a la izquierda y minimapa abajo a la derecha. */}
+          <Panel position="bottom-left" className="!m-[11px]">
+            <ControlesZoom />
+          </Panel>
           <MiniMap
             pannable
             zoomable
@@ -1047,9 +589,10 @@ function FlowCanvasInner() {
             nodeStrokeWidth={0}
             nodeBorderRadius={3}
             position="bottom-right"
-            bgColor="var(--sidebar)"
-            maskColor="color-mix(in srgb, var(--canvas) 72%, transparent)"
-            className="!border-sidebar-border !rounded-xl !border !shadow-[0_10px_28px_-10px_rgba(0,0,0,0.7)]"
+            bgColor="#161229"
+            maskColor="rgba(0, 0, 0, 0.6)"
+            style={{ width: 250, height: 180 }}
+            className="!m-[27px] !overflow-hidden !rounded-[8px] !border !border-[#362c64]"
           />
           {rfNodes.length === 0 && (
             <Panel position="top-center" className="!top-1/3">
@@ -1076,10 +619,11 @@ function FlowCanvasInner() {
 }
 
 // ============================================================
-// Ventana de edición — se abre al centro (estilo Leona) al tocar un
-// nodo del lienzo. Monta el mismo NodeConfigForm que la vista Lista,
-// así lo que se edita aquí se comporta igual. Los cambios se aplican
-// al momento (como antes); «Listo» solo cierra.
+// Ventana de edición, igual a Leona: 480 px de ancho y todo el alto,
+// «Editar <bloque>» arriba y «Cancelar / Guardar» abajo. Los cambios se
+// ven en vivo en la tarjeta; «Cancelar» (o la X / Esc) devuelve el bloque
+// a como estaba al abrir, «Guardar» los deja. Clic fuera no cierra, para
+// no perder lo escrito.
 // ============================================================
 
 function NodeEditDialog({
@@ -1101,8 +645,29 @@ function NodeEditDialog({
   onSetEntry: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
-  const { issues } = useFlowEditor();
+  const { issues, setState } = useFlowEditor();
   const open = node !== null;
+
+  // Foto del bloque al abrir, para que «Cancelar» lo deje como estaba.
+  const foto = useRef<{ key: string; config: BuilderNode['config'] } | null>(null);
+  useEffect(() => {
+    if (node && foto.current?.key !== node.node_key) {
+      foto.current = { key: node.node_key, config: structuredClone(node.config) };
+    }
+    if (!node) foto.current = null;
+  }, [node]);
+
+  const cancelar = () => {
+    const f = foto.current;
+    if (f) {
+      setState((s) => ({
+        ...s,
+        nodes: s.nodes.map((n) => (n.node_key === f.key ? { ...n, config: f.config } : n)),
+      }));
+    }
+    onClose();
+  };
+
   const propios = node
     ? issues.filter(
         (i) =>
@@ -1110,31 +675,29 @@ function NodeEditDialog({
           (!i.node_key && node.node_type === 'start')
       )
     : [];
+  const titulo = node ? t(`nodes.${node.node_type}.label`) : '';
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && cancelar()} disablePointerDismissal>
       {node && (
         <DialogContent
-          overlayClassName="bg-black/55 supports-backdrop-filter:backdrop-blur-sm"
-          className="border-border bg-popover flex max-h-[min(88vh,860px)] flex-col gap-0 overflow-hidden border p-0 sm:max-w-2xl"
+          overlayClassName="bg-black/60"
+          className="flex h-[calc(100vh-46px)] max-h-[860px] flex-col gap-0 overflow-hidden rounded-[3.75px] border border-[#251e45] bg-[#110e20] p-0 sm:max-w-[480px]"
         >
-          <div className="border-border flex items-center gap-3 border-b px-5 py-4 pr-12">
-            <NodeIconChip type={node.node_type} size={38} iconSize={18} />
+          <div className="flex items-center gap-3 border-b border-[#251e45] px-5 py-[22px] pr-12">
+            <NodeIconChip type={node.node_type} size={34} iconSize={18} />
             <div className="min-w-0 flex-1">
-              <DialogTitle className="flex items-center gap-2 text-[15px] font-semibold">
-                {t(`nodes.${node.node_type}.label`)}
+              <DialogTitle className="flex items-center gap-2 text-[16.9px] font-semibold text-slate-50">
+                {t('editTitle', { block: titulo.toLowerCase() })}
                 {isEntry && (
                   <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-emerald-300 uppercase">
                     {t('badgeEntry')}
                   </span>
                 )}
               </DialogTitle>
-              <DialogDescription className="text-muted-foreground mt-0.5 truncate text-xs">
+              <DialogDescription className="sr-only">
                 {t(`nodes.${node.node_type}.blurb`)}
               </DialogDescription>
             </div>
-            <code className="bg-muted text-muted-foreground hidden shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] sm:block">
-              {node.node_key}
-            </code>
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
@@ -1160,16 +723,17 @@ function NodeEditDialog({
             />
           </div>
 
-          <div className="border-border bg-muted/30 flex items-center gap-2 border-t px-5 py-3">
+          <div className="flex items-center gap-2 border-t border-[#251e45] px-5 py-3">
             {node.node_type !== 'start' && (
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={onDelete}
+                title={t('deleteNode')}
+                aria-label={t('deleteNode')}
                 className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                {t('deleteNode')}
               </Button>
             )}
             {!isEntry && !allNodes.some((n) => n.node_type === 'start') && (
@@ -1177,8 +741,11 @@ function NodeEditDialog({
                 {t('setAsEntry')}
               </Button>
             )}
-            <Button size="sm" className="ml-auto min-w-24" onClick={onClose}>
-              {t('doneEditing')}
+            <Button variant="outline" size="sm" className="ml-auto min-w-24" onClick={cancelar}>
+              {t('cancelEditing')}
+            </Button>
+            <Button size="sm" className="min-w-24 bg-[#8b5cf6] text-white hover:bg-[#7c3aed]" onClick={onClose}>
+              {t('saveEditing')}
             </Button>
           </div>
         </DialogContent>

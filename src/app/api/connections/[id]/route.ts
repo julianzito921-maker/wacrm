@@ -8,6 +8,7 @@ import {
   pinValido,
   type ResultadoEmparejar,
 } from '@/lib/whatsapp/conexion-meta';
+import { borrarSesion, esDapi, sesionDe } from '@/lib/whatsapp/dapi';
 
 export async function PATCH(
   request: Request,
@@ -194,6 +195,27 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     const ctx = await requireRole('admin');
+    // Isla D-API: también se cierra la sesión en D-API (deja de cobrar y
+    // de mandar avisos). Si D-API falla, se borra igual aquí.
+    const { data: previa } = await supabaseAdmin()
+      .from('whatsapp_connections')
+      .select('phone_number_id, access_token')
+      .eq('id', id)
+      .eq('account_id', ctx.accountId)
+      .maybeSingle();
+    if (previa && esDapi(previa.phone_number_id as string)) {
+      try {
+        await borrarSesion({
+          apiKey: decrypt(previa.access_token as string),
+          sessionId: sesionDe(previa.phone_number_id as string),
+        });
+      } catch (err) {
+        console.warn(
+          '[connections] no se pudo borrar la sesión en D-API:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
     const { data, error } = await supabaseAdmin()
       .from('whatsapp_connections')
       .delete()

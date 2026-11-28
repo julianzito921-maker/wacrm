@@ -14,7 +14,6 @@ import { AppearancePanel } from '@/components/settings/appearance-panel';
 import { ConnectionsView } from '@/components/connections/connections-view';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { QuickRepliesManager } from '@/components/settings/quick-replies-manager';
-import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel';
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { InboxSettings } from '@/components/settings/inbox-settings';
 import { MembersTab } from '@/components/settings/members-tab';
@@ -28,6 +27,21 @@ import { PaymentsSettings } from '@/components/settings/payments-settings';
 import { AiMediaSettings } from '@/components/settings/ai-media-settings';
 import { CallingSettings } from '@/components/settings/calling-settings';
 import { FlowCredentialsSettings } from '@/components/settings/flow-credentials-settings';
+import { IntegrationsSettings } from '@/components/settings/integrations-settings';
+import { TagManager } from '@/components/settings/tag-manager';
+import { CustomFieldsSettings } from '@/components/settings/custom-fields-settings';
+import {
+  EmpresaSettings,
+  InvitacionesSettings,
+  SoporteSettings,
+  TraduccionesSettings,
+  UsoIaSettings,
+} from '@/components/settings/secciones-leona';
+import {
+  FlujosEstandarSettings,
+  ProductosSettings,
+  VariablesGlobalesSettings,
+} from '@/components/settings/secciones-automatizacion';
 import {
   resolveSection,
   type SettingsSection,
@@ -80,6 +94,16 @@ function SettingsPageInner() {
   );
 
   const panel: Record<SettingsSection, ReactNode> = {
+    empresa: <EmpresaSettings />,
+    invitaciones: <InvitacionesSettings />,
+    soporte: <SoporteSettings />,
+    traducciones: <TraduccionesSettings />,
+    'uso-ia': <UsoIaSettings />,
+    'flujos-estandar': <FlujosEstandarSettings />,
+    envios: null,
+    variables: <VariablesGlobalesSettings />,
+    tags: <TagManager />,
+    productos: <ProductosSettings />,
     overview: <SettingsOverview onSelect={go} />,
     profile: <ProfileForm />,
     security: <SecurityPanel />,
@@ -87,13 +111,14 @@ function SettingsPageInner() {
     whatsapp: <ConnectionsView />,
     templates: <TemplateManager />,
     'quick-replies': <QuickRepliesManager />,
-    fields: <FieldsAndTagsPanel />,
+    fields: <CustomFieldsSettings />,
     inbox: <InboxSettings />,
     departments: <DepartmentsSettings />,
     'business-hours': <BusinessHoursSettings />,
     deals: <DealsSettings />,
     members: <MembersTab />,
     api: <ApiKeysSettings />,
+    integrations: <IntegrationsSettings />,
     tracking: <TrackingPanel />,
     payments: <PaymentsSettings />,
     'ai-media': <AiMediaSettings />,
@@ -105,16 +130,11 @@ function SettingsPageInner() {
 
   return (
     <div>
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          {t('pageTitle')}
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('pageDesc')}
-        </p>
-      </div>
+      <p className="text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
+        {t('pageTitle')}
+      </p>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
+      <div className="mt-4 grid gap-6 lg:grid-cols-[222px_minmax(0,1fr)] lg:items-start">
         <SettingsRail active={section} onSelect={go} hints={hints} />
         <div className="min-w-0">{panel[section]}</div>
       </div>

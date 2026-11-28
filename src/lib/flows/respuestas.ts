@@ -122,6 +122,13 @@ export function matchTypedReply(
     }
   }
 
+  // 1b. Número de opción («2»): en conexiones D-API (QR) los botones
+  // llegan como lista numerada. Solo sin rangos, para no chocar con 1.
+  if (!rangos.some(Boolean) && /^\d{1,2}$/.test(t)) {
+    const i = Number(t) - 1;
+    if (i >= 0 && i < opciones.length) return opciones[i].next_node_key;
+  }
+
   // 2. El texto de una opción («las dos», «hambre», «hinchazon»).
   const porTitulo = opciones.filter((o) => {
     const tt = normalizarRespuesta(o.title);

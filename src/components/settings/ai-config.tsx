@@ -32,6 +32,7 @@ import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
 import { invalidateAiAccountStatus } from '@/lib/ai/account-status-cache';
+import { OPENROUTER_BASE_URL } from '@/lib/integraciones/constantes';
 
 const MASKED_KEY = '••••••••••••••••';
 
@@ -142,6 +143,18 @@ export function AiConfig() {
 
   const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
 
+  // OpenRouter (Configuración → Integraciones): sin clave aquí, el
+  // servidor usa la guardada en la integración.
+  const usaOpenRouter =
+    provider === 'openai_compatible' && /^https:\/\/openrouter\.ai\//.test(baseUrl.trim());
+  const elegirOpenRouter = () => {
+    setProvider('openai_compatible');
+    setBaseUrl(OPENROUTER_BASE_URL);
+    if (!model.trim() || Object.values(AI_PROVIDER_DEFAULT_MODEL).includes(model)) {
+      setModel('openai/gpt-4o-mini');
+    }
+  };
+
   // undefined = leave unchanged; '' typed = null (clear); text = set.
   const embeddingsKeyPayload = () =>
     embeddingsKeyEdited ? embeddingsKey.trim() || null : undefined;
@@ -191,7 +204,7 @@ export function AiConfig() {
       toast.error(t('missingBaseUrl'));
       return;
     }
-    if (!configured && !keyEdited) {
+    if (!configured && !keyEdited && !usaOpenRouter) {
       toast.error(t('missingApiKey'));
       return;
     }
@@ -284,7 +297,17 @@ export function AiConfig() {
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>{t('provider')}</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>{t('provider')}</Label>
+                  <button
+                    type="button"
+                    onClick={elegirOpenRouter}
+                    disabled={disabled}
+                    className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
+                  >
+                    Usar OpenRouter
+                  </button>
+                </div>
                 <Select
                   value={provider}
                   onValueChange={(v) => handleProviderChange(v as AiProvider)}
@@ -328,6 +351,12 @@ export function AiConfig() {
                     autoComplete="off"
                   />
                   <p className="text-xs text-muted-foreground">{t('baseUrlHint')}</p>
+                  {usaOpenRouter && (
+                    <p className="text-xs text-muted-foreground">
+                      OpenRouter: deja la clave vacía para usar la de Integraciones. Modelo
+                      como «anthropic/claude-sonnet-4.5» u «openai/gpt-4o-mini».
+                    </p>
+                  )}
                 </div>
               )}
             </div>

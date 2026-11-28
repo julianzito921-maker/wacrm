@@ -1577,15 +1577,15 @@
     "list": {
       "title": "Flujos",
       "beta": "Beta",
-      "description": "Crea conversaciones de WhatsApp con ramificaciones y botones. Útil para menús, preguntas frecuentes y triaje antes de que intervenga una persona.",
-      "newFlow": "Nuevo flujo",
+      "description": "Automatizaciones y flujos de atención",
+      "newFlow": "Flujo nuevo",
       "search": "Buscar flujos…",
       "noResults": "Ningún flujo coincide con la búsqueda.",
       "listView": "Lista",
       "cardView": "Tarjetas",
       "folders": "Carpetas",
       "folderGeneral": "Sin carpeta",
-      "importFlow": "Importar un nuevo flujo",
+      "importFlow": "Importar",
       "archive": "Archivar",
       "archiveConfirm": "Archivar «{name}»? Deja de responder pero se puede recuperar.",
       "archiveSuccess": "Flujo archivado",
@@ -1594,13 +1594,13 @@
       "importError": "No se pudo importar el flujo.",
       "export": "Exportar",
       "exportError": "No se pudo exportar el flujo.",
-      "statusDraft": "Borrador",
+      "statusDraft": "Pausado",
       "statusActive": "Activo",
       "statusArchived": "Archivado",
       "loadError": "No se pudieron cargar los flujos.",
       "createError": "No se pudo crear el flujo.",
       "cloneError": "Error al clonar",
-      "deleteConfirm": "¿Eliminar \"{name}\"? Todas las ejecuciones activas terminarán de inmediato.",
+      "deleteConfirm": "¿Eliminar «{name}» para siempre? Se borran sus pasos y las conversaciones en curso terminan. No se puede deshacer.",
       "deleteSuccess": "Flujo eliminado.",
       "deleteError": "No se pudo eliminar el flujo.",
       "emptyTitle": "Aún no hay flujos",
@@ -1622,7 +1622,27 @@
       "triggerFirstInbound": "Se activa con el primer mensaje entrante de un contacto",
       "triggerManual": "Activación manual",
       "cloneFailedStatus": "Error al clonar: {status}",
-      "importChat": "Importar chat (.zip)"
+      "importChat": "Importar chat (.zip)",
+      "folder": "Carpeta",
+      "noFolder": "Sin carpeta",
+      "folderPrompt": "Nombre de la carpeta nueva",
+      "movePrompt": "Mover a la carpeta (vacío = sin carpeta)",
+      "moveSuccess": "Flujo movido",
+      "moveError": "No se pudo mover el flujo.",
+      "moveToFolder": "Mover a carpeta",
+      "filterAll": "Todos",
+      "filterActive": "Activos",
+      "filterPaused": "Pausados",
+      "filterArchived": "Archivados",
+      "colName": "Nombre",
+      "colStatus": "Estado",
+      "colBlocks": "Bloques",
+      "colUpdated": "Actualizado",
+      "actions": "Acciones",
+      "pause": "Pausar",
+      "activate": "Activar",
+      "restore": "Restaurar",
+      "archiveError": "No se pudo archivar el flujo."
     },
     "edit": {
       "notFound": "Flujo no encontrado.",
@@ -2026,7 +2046,7 @@
       },
       "nodes": {
         "start": {
-          "label": "Inicio / Disparador",
+          "label": "Inicio",
           "blurb": "Cómo arranca el flujo y a qué bloque pasa"
         },
         "send_message": {
@@ -2042,7 +2062,7 @@
           "blurb": "Envía una lista de opciones para tocar"
         },
         "send_media": {
-          "label": "Mensaje multimedia",
+          "label": "Mensaje",
           "blurb": "Envía una imagen, video o documento"
         },
         "collect_input": {
@@ -2058,7 +2078,7 @@
           "blurb": "Guarda lo que conteste, con salida si contesta y si no"
         },
         "meta_capi": {
-          "label": "Pixel (Meta CAPI)",
+          "label": "Pixel",
           "blurb": "Manda un evento de conversión a Meta ligado al anuncio"
         },
         "condition": {
@@ -2074,7 +2094,7 @@
           "blurb": "Pasa la conversación a una persona"
         },
         "end": {
-          "label": "Fin → Agente de IA",
+          "label": "Agente de IA",
           "blurb": "Termina el flujo y libera el chat para el Agente DeepSeek"
         },
         "send_payment": {
@@ -2094,11 +2114,11 @@
           "blurb": "Asigna el chat a un área del equipo"
         },
         "http_request": {
-          "label": "Integración HTTP",
+          "label": "Integración",
           "blurb": "Llama a un servicio externo"
         },
         "payment_gateway": {
-          "label": "Pasarela de Pagos",
+          "label": "Pago",
           "blurb": "Cobra con Hotmart, Whop, Mercado Pago, Stripe o SPEI"
         },
         "ai_media": {
@@ -2106,8 +2126,36 @@
           "blurb": "Genera audio o imagen con IA"
         },
         "official_call": {
-          "label": "Llamada Oficial",
+          "label": "Llamar",
           "blurb": "Permiso de llamada con la API oficial de Meta"
+        },
+        "ai_block": {
+          "label": "Bloque de IA",
+          "blurb": "Una respuesta puntual con IA, guardada en una variable"
+        },
+        "connect_flow": {
+          "label": "Conexión de flujo",
+          "blurb": "Inicia otro flujo y termina este"
+        },
+        "manipulator": {
+          "label": "Manipulador",
+          "blurb": "Cambia un campo o variable del contacto"
+        },
+        "distributor": {
+          "label": "Distribuidor",
+          "blurb": "Reparte contactos entre varios caminos"
+        },
+        "notification": {
+          "label": "Notificación",
+          "blurb": "Avisa por WhatsApp a tu equipo"
+        },
+        "sale_approved": {
+          "label": "Venta aprobada",
+          "blurb": "Registra la venta con producto y monto"
+        },
+        "carousel": {
+          "label": "Carrusel",
+          "blurb": "Tarjetas con imagen y botón, una tras otra"
         }
       },
       "canvasEmptyHint": "Arrastra un bloque desde el panel o haz clic en uno para empezar.",
@@ -2150,7 +2198,17 @@
           "blurb": "Permiso oficial de llamada de WhatsApp"
         }
       },
-      "doneEditing": "Listo"
+      "doneEditing": "Listo",
+      "editNode": "Editar bloque",
+      "conditionFallback": "Si no se cumple la condición, el flujo continúa por aquí",
+      "editTitle": "Editar {block}",
+      "cancelEditing": "Cancelar",
+      "saveEditing": "Guardar",
+      "zoomOut": "Alejar",
+      "zoomIn": "Acercar",
+      "fitView": "Ajustar vista",
+      "resetView": "Restablecer vista",
+      "edgeClickToRemove": "Clic para quitar esta conexión"
     },
     "validation": {
       "noIssues": "Sin problemas. Listo para activar.",
@@ -2222,12 +2280,16 @@
       "listenAll": "Todas las conexiones",
       "listenConnection": "Escuchar solo esta conexión",
       "connectionUpdated": "Conexión del flujo actualizada",
-      "connectionUpdateFailed": "No se pudo cambiar la conexión"
+      "connectionUpdateFailed": "No se pudo cambiar la conexión",
+      "editName": "Editar título",
+      "pauseFlow": "Pausar flujo",
+      "archive": "Archivar",
+      "archiveFlow": "Archivar flujo"
     },
     "catalog": {
       "tabTools": "Herramientas",
       "tabSimulate": "Simular",
-      "search": "Buscar bloques...",
+      "search": "Buscar bloques…",
       "available": "Disponibles",
       "comingSoon": "Próximamente",
       "soon": "Pronto",
@@ -2285,7 +2347,7 @@
         "blurb": "Salta a otro flujo"
       },
       "pixel": {
-        "label": "Pixel (Meta CAPI)",
+        "label": "Pixel",
         "blurb": "Evento de conversión a Meta"
       },
       "intervalo": {
@@ -2317,9 +2379,11 @@
         "blurb": "Edita variables y campos"
       },
       "inicio": {
-        "label": "Inicio / Disparador",
+        "label": "Inicio",
         "blurb": "Palabra clave, cualquier mensaje o primer mensaje"
-      }
+      },
+      "simulatorTitle": "Simulador",
+      "simulatorHint": "Prueba local, sin WhatsApp y sin guardar"
     },
     "importChat": {
       "title": "Importar chat de WhatsApp",
@@ -2877,12 +2941,12 @@
       "security": "Acceso y seguridad",
       "appearance": "Apariencia",
       "whatsapp": "WhatsApp",
-      "templates": "Plantillas",
+      "templates": "Templates de WhatsApp",
       "quick-replies": "Respuestas rápidas",
-      "fields": "Campos y etiquetas",
+      "fields": "Campos personalizados",
       "deals": "Negocios y moneda",
       "inbox": "Bandeja de entrada",
-      "members": "Miembros del equipo",
+      "members": "Equipo",
       "api": "Claves de API",
       "tracking": "Seguimiento",
       "mcp": "Herramientas MCP",
@@ -2891,13 +2955,28 @@
       "payments": "Pagos",
       "ai-media": "IA multimedia",
       "calling": "Llamadas oficiales",
+      "integrations": "Integraciones",
       "http-credentials": "Credenciales HTTP",
-      "webhooks": "Webhooks"
+      "webhooks": "Webhooks",
+      "empresa": "Empresa",
+      "invitaciones": "Invitaciones a la plataforma",
+      "soporte": "Acceso de soporte",
+      "traducciones": "Traducciones de flujo",
+      "uso-ia": "Uso de IA",
+      "flujos-estandar": "Flujos estándar",
+      "envios": "Envíos masivos",
+      "variables": "Variables globales",
+      "tags": "Etiquetas",
+      "productos": "Productos"
     },
     "groups": {
       "account": "Cuenta",
       "workspace": "Espacio de trabajo",
-      "integrations": "Integraciones"
+      "integrations": "Integraciones",
+      "cuenta": "Cuenta",
+      "automatizacion": "Automatización",
+      "integraciones": "Integraciones",
+      "oculta": ""
     },
     "profile": {
       "title": "Tu perfil",
@@ -3967,7 +4046,9 @@
       "officialCallNeedsText": "Escribe el texto del permiso o elige una plantilla.",
       "officialCallNeedsMode": "Elige un modo válido.",
       "officialCallWaitRange": "La espera debe estar entre 1 y 7 días.",
-      "officialCallNeedsGranted": "Conecta la salida de permiso concedido."
+      "officialCallNeedsGranted": "Conecta la salida de permiso concedido.",
+      "saveReplyTimeoutEnds": "«Si no responde» no está conectado: al vencerse la espera, la conversación termina aquí.",
+      "saveReplyReplyEnds": "«Si contesta» no está conectado: si la persona responde, se guarda su respuesta y el flujo termina aquí (sigue el agente de IA)."
     },
     "automations": {
       "needsStep": "las automatizaciones activas necesitan al menos un paso",

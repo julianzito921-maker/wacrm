@@ -1622,7 +1622,27 @@
       "triggerFirstInbound": "Acionado pela primeira mensagem recebida de um contato",
       "triggerManual": "Acionamento manual",
       "cloneFailedStatus": "Falha ao clonar: {status}",
-      "importChat": "Importar chat (.zip)"
+      "importChat": "Importar chat (.zip)",
+      "folder": "Pasta",
+      "noFolder": "Sem pasta",
+      "folderPrompt": "Nome da nova pasta",
+      "movePrompt": "Mover para a pasta (vazio = sem pasta)",
+      "moveSuccess": "Fluxo movido",
+      "moveError": "Não foi possível mover o fluxo.",
+      "moveToFolder": "Mover para pasta",
+      "filterAll": "Todos",
+      "filterActive": "Ativos",
+      "filterPaused": "Pausados",
+      "filterArchived": "Arquivados",
+      "colName": "Nome",
+      "colStatus": "Status",
+      "colBlocks": "Blocos",
+      "colUpdated": "Atualizado",
+      "actions": "Ações",
+      "pause": "Pausar",
+      "activate": "Ativar",
+      "restore": "Restaurar",
+      "archiveError": "Não foi possível arquivar o fluxo."
     },
     "edit": {
       "notFound": "Fluxo não encontrado.",
@@ -2108,6 +2128,34 @@
         "official_call": {
           "label": "Official call",
           "blurb": "Call permission with the official Meta API"
+        },
+        "ai_block": {
+          "label": "Bloco de IA",
+          "blurb": "Uma resposta pontual com IA, salva em variável"
+        },
+        "connect_flow": {
+          "label": "Conexão de fluxo",
+          "blurb": "Inicia outro fluxo e encerra este"
+        },
+        "manipulator": {
+          "label": "Manipulador",
+          "blurb": "Altera um campo ou variável do contato"
+        },
+        "distributor": {
+          "label": "Distribuidor",
+          "blurb": "Distribui contatos entre vários caminhos"
+        },
+        "notification": {
+          "label": "Notificação",
+          "blurb": "Avisa sua equipe pelo WhatsApp"
+        },
+        "sale_approved": {
+          "label": "Venda aprovada",
+          "blurb": "Registra a venda com produto e valor"
+        },
+        "carousel": {
+          "label": "Carrossel",
+          "blurb": "Cartões com imagem e botão, um após o outro"
         }
       },
       "canvasEmptyHint": "Arraste um bloco do painel ou clique em um para começar.",
@@ -2150,7 +2198,17 @@
           "blurb": "Official WhatsApp call permission"
         }
       },
-      "doneEditing": "Pronto"
+      "doneEditing": "Pronto",
+      "editNode": "Editar bloco",
+      "conditionFallback": "Se a condição não for atendida, o fluxo continua por aqui",
+      "editTitle": "Editar {block}",
+      "cancelEditing": "Cancelar",
+      "saveEditing": "Salvar",
+      "zoomOut": "Afastar",
+      "zoomIn": "Aproximar",
+      "fitView": "Ajustar visualização",
+      "resetView": "Restaurar visualização",
+      "edgeClickToRemove": "Clique para remover esta conexão"
     },
     "validation": {
       "noIssues": "Nenhum problema. Pronto para ativar.",
@@ -2222,7 +2280,11 @@
       "listenAll": "All connections",
       "listenConnection": "Listen to this connection only",
       "connectionUpdated": "Flow connection updated",
-      "connectionUpdateFailed": "Could not change the connection"
+      "connectionUpdateFailed": "Could not change the connection",
+      "editName": "Editar título",
+      "pauseFlow": "Pausar fluxo",
+      "archive": "Arquivar",
+      "archiveFlow": "Arquivar fluxo"
     },
     "catalog": {
       "tabTools": "Ferramentas",
@@ -2319,7 +2381,9 @@
       "inicio": {
         "label": "Início / Gatilho",
         "blurb": "Palavra-chave, qualquer mensagem ou primeira mensagem"
-      }
+      },
+      "simulatorTitle": "Simulador",
+      "simulatorHint": "Teste local, sem WhatsApp e sem salvar"
     },
     "importChat": {
       "title": "Importar chat do WhatsApp",
@@ -2877,12 +2941,12 @@
       "security": "Login e segurança",
       "appearance": "Aparência",
       "whatsapp": "WhatsApp",
-      "templates": "Modelos",
+      "templates": "Templates do WhatsApp",
       "quick-replies": "Respostas rápidas",
-      "fields": "Campos e tags",
+      "fields": "Campos personalizados",
       "deals": "Negócios e moeda",
       "inbox": "Caixa de entrada",
-      "members": "Membros da equipe",
+      "members": "Equipe",
       "api": "Chaves de API",
       "tracking": "Rastreamento",
       "mcp": "Ferramentas MCP",
@@ -2891,13 +2955,28 @@
       "payments": "Payments",
       "ai-media": "AI media",
       "calling": "Official calls",
+      "integrations": "Integrações",
       "http-credentials": "HTTP credentials",
-      "webhooks": "Webhooks"
+      "webhooks": "Webhooks",
+      "empresa": "Empresa",
+      "invitaciones": "Convites para a plataforma",
+      "soporte": "Acesso de suporte",
+      "traducciones": "Traduções de fluxo",
+      "uso-ia": "Uso de IA",
+      "flujos-estandar": "Fluxos padrão",
+      "envios": "Disparos em massa",
+      "variables": "Variáveis globais",
+      "tags": "Etiquetas",
+      "productos": "Produtos"
     },
     "groups": {
       "account": "Conta",
       "workspace": "Espaço de trabalho",
-      "integrations": "Integrações"
+      "integrations": "Integrações",
+      "cuenta": "Conta",
+      "automatizacion": "Automação",
+      "integraciones": "Integrações",
+      "oculta": ""
     },
     "profile": {
       "title": "Seu perfil",
@@ -3967,7 +4046,9 @@
       "officialCallNeedsText": "Enter the permission text or pick a template.",
       "officialCallNeedsMode": "Pick a valid mode.",
       "officialCallWaitRange": "Wait must be between 1 and 7 days.",
-      "officialCallNeedsGranted": "Connect the permission-granted branch."
+      "officialCallNeedsGranted": "Connect the permission-granted branch.",
+      "saveReplyTimeoutEnds": "“Sem resposta” não está conectado: quando a espera vencer, a conversa termina aqui.",
+      "saveReplyReplyEnds": "“Respondeu” não está conectado: se a pessoa responder, a resposta é salva e o fluxo termina aqui (segue o agente de IA)."
     },
     "automations": {
       "needsStep": "automações ativas precisam de pelo menos uma etapa",

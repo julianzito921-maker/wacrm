@@ -17,37 +17,31 @@
  */
 
 import {
-  BadgeCheck,
   Bell,
   Bot,
   Building2,
+  Clock,
   CreditCard,
-  FileBadge,
+  DollarSign,
   FileText,
-  GitFork,
-  Headset,
+  GitBranch,
+  Globe,
   Image as ImageIcon,
-  Images,
-  Inbox,
-  KanbanSquare,
-  Link2,
-  ListChecks,
-  ListPlus,
+  Kanban,
+  LayoutGrid,
+  List,
   MessageCircle,
-  MessageSquareReply,
+  MessageSquare,
   Mic,
-  Paperclip,
-  Phone,
-  PlayCircle,
-  Plug,
-  Shuffle,
+  PhoneCall,
+  Play,
+  Save,
+  Share2,
   SlidersHorizontal,
   Sparkles,
   Tag,
   Target,
-  Timer,
   Video,
-  Wallet,
   Workflow,
 } from 'lucide-react';
 
@@ -138,55 +132,55 @@ export const NODE_META: Record<
 > = {
   start: {
     slugSeed: 'Start',
-    icon: PlayCircle,
+    icon: Play,
     color: 'text-emerald-400',
     category: 'flow',
   },
   send_message: {
     slugSeed: 'Send message',
-    icon: MessageCircle,
+    icon: MessageSquare,
     color: 'text-sky-400',
     category: 'messaging',
   },
   send_buttons: {
     slugSeed: 'Send buttons',
-    icon: ListChecks,
+    icon: List,
     color: 'text-primary',
     category: 'messaging',
   },
   send_list: {
     slugSeed: 'Send list',
-    icon: ListPlus,
+    icon: List,
     color: 'text-indigo-400',
     category: 'messaging',
   },
   send_media: {
     slugSeed: 'Send media',
-    icon: Paperclip,
+    icon: MessageSquare,
     color: 'text-cyan-400',
     category: 'messaging',
   },
   collect_input: {
     slugSeed: 'Collect input',
-    icon: Inbox,
+    icon: Save,
     color: 'text-teal-400',
     category: 'logic',
   },
   condition: {
     slugSeed: 'If / else',
-    icon: GitFork,
+    icon: GitBranch,
     color: 'text-fuchsia-400',
     category: 'logic',
   },
   wait: {
     slugSeed: 'Wait',
-    icon: Timer,
+    icon: Clock,
     color: 'text-orange-400',
     category: 'flow',
   },
   save_reply: {
     slugSeed: 'Save reply',
-    icon: MessageSquareReply,
+    icon: Save,
     color: 'text-teal-400',
     category: 'logic',
   },
@@ -204,25 +198,25 @@ export const NODE_META: Record<
   },
   send_template: {
     slugSeed: 'Template',
-    icon: FileBadge,
+    icon: FileText,
     color: 'text-violet-400',
     category: 'messaging',
   },
   move_kanban: {
     slugSeed: 'Kanban',
-    icon: KanbanSquare,
+    icon: Kanban,
     color: 'text-sky-400',
     category: 'logic',
   },
   connect_flow: {
     slugSeed: 'Connect flow',
-    icon: Link2,
+    icon: Share2,
     color: 'text-indigo-400',
     category: 'flow',
   },
   ai_block: {
     slugSeed: 'AI block',
-    icon: Sparkles,
+    icon: Bot,
     color: 'text-violet-400',
     category: 'logic',
   },
@@ -234,7 +228,7 @@ export const NODE_META: Record<
   },
   handoff: {
     slugSeed: 'Handoff to agent',
-    icon: Headset,
+    icon: MessageCircle,
     color: 'text-amber-400',
     category: 'flow',
   },
@@ -246,7 +240,7 @@ export const NODE_META: Record<
   },
   distributor: {
     slugSeed: 'Distribuidor',
-    icon: Shuffle,
+    icon: GitBranch,
     color: 'text-amber-400',
     category: 'flow',
   },
@@ -258,13 +252,13 @@ export const NODE_META: Record<
   },
   sale_approved: {
     slugSeed: 'Venta aprobada',
-    icon: BadgeCheck,
+    icon: DollarSign,
     color: 'text-emerald-400',
     category: 'logic',
   },
   carousel: {
     slugSeed: 'Carrusel',
-    icon: Images,
+    icon: LayoutGrid,
     color: 'text-blue-400',
     category: 'messaging',
   },
@@ -276,13 +270,13 @@ export const NODE_META: Record<
   },
   http_request: {
     slugSeed: 'Integracion HTTP',
-    icon: Plug,
+    icon: Globe,
     color: 'text-violet-400',
     category: 'logic',
   },
   payment_gateway: {
     slugSeed: 'Pasarela de pago',
-    icon: Wallet,
+    icon: CreditCard,
     color: 'text-emerald-400',
     category: 'messaging',
   },
@@ -294,7 +288,7 @@ export const NODE_META: Record<
   },
   official_call: {
     slugSeed: 'Llamada oficial',
-    icon: Phone,
+    icon: PhoneCall,
     color: 'text-sky-400',
     category: 'flow',
   },
@@ -338,36 +332,46 @@ export function groupNodeTypesByCategory(
 //   ámbar   → esperas y condiciones
 //   turquesa→ Meta CAPI / conversiones
 //   azul    → IA y control del chat
-const NODE_HUE: Record<NodeType, { l: number; c: number; h: number }> = {
-  start: { l: 0.66, c: 0.15, h: 155 }, // verde — el disparador
-  send_message: { l: 0.56, c: 0.24, h: 285 }, // morado #6C47FF
-  send_media: { l: 0.6, c: 0.21, h: 290 }, // morado
-  send_buttons: { l: 0.6, c: 0.2, h: 300 }, // morado rosado — menú
-  send_list: { l: 0.6, c: 0.2, h: 300 }, // morado rosado — menú
-  set_tag: { l: 0.64, c: 0.17, h: 320 }, // magenta — etiquetas
-  wait: { l: 0.76, c: 0.16, h: 70 }, // ámbar — intervalo inteligente
-  save_reply: { l: 0.76, c: 0.16, h: 70 }, // ámbar — esperar respuesta
-  collect_input: { l: 0.74, c: 0.15, h: 60 }, // ámbar
-  condition: { l: 0.74, c: 0.16, h: 55 }, // ámbar anaranjado — condicional
-  connect_flow: { l: 0.66, c: 0.15, h: 250 }, // azul — conexión
-  ai_block: { l: 0.62, c: 0.2, h: 300 }, // violeta — IA
-  meta_capi: { l: 0.72, c: 0.13, h: 180 }, // turquesa — conversiones
-  send_payment: { l: 0.7, c: 0.15, h: 165 }, // verde turquesa — cobro (conversión)
-  send_template: { l: 0.58, c: 0.22, h: 280 }, // morado — mensaje
-  move_kanban: { l: 0.66, c: 0.15, h: 240 }, // azul — CRM
-  handoff: { l: 0.66, c: 0.15, h: 230 }, // azul cielo — controlador de chat
-  manipulator: { l: 0.7, c: 0.18, h: 50 },
-  distributor: { l: 0.76, c: 0.16, h: 75 },
-  notification: { l: 0.7, c: 0.13, h: 175 },
-  sale_approved: { l: 0.72, c: 0.16, h: 150 },
-  carousel: { l: 0.68, c: 0.16, h: 250 },
-  department: { l: 0.7, c: 0.13, h: 200 },
-  http_request: { l: 0.62, c: 0.18, h: 285 },
-  payment_gateway: { l: 0.7, c: 0.15, h: 165 },
-  ai_media: { l: 0.64, c: 0.2, h: 320 },
-  official_call: { l: 0.67, c: 0.15, h: 235 },
-  end: { l: 0.62, c: 0.18, h: 258 }, // azul — pasa al Agente de IA
+/**
+ * Colores de cada bloque, iguales a Leona: degradado de izquierda a
+ * derecha en el marco y la cabecera de la tarjeta (`from` → `to`).
+ */
+export const LEONA_COLOR: Record<NodeType, { from: string; to: string }> = {
+  start: { from: '#22c55e', to: '#16a34a' }, // verde
+  send_message: { from: '#3b82f6', to: '#2563eb' }, // azul — Mensaje
+  send_media: { from: '#3b82f6', to: '#2563eb' },
+  send_template: { from: '#1d4ed8', to: '#1e40af' }, // azul profundo — Template
+  set_tag: { from: '#6366f1', to: '#4f46e5' }, // índigo — Etiquetas
+  send_payment: { from: '#10b981', to: '#059669' }, // esmeralda — Botón de pago
+  send_buttons: { from: '#a855f7', to: '#9333ea' }, // morado — Menú
+  send_list: { from: '#a855f7', to: '#9333ea' },
+  carousel: { from: '#0ea5e9', to: '#0284c7' }, // celeste — Carrusel
+  save_reply: { from: '#f97316', to: '#ea580c' }, // naranja — Esperar respuesta
+  collect_input: { from: '#f97316', to: '#ea580c' },
+  handoff: { from: '#64748b', to: '#475569' }, // pizarra — Controlador de chat
+  notification: { from: '#14b8a6', to: '#0d9488' }, // verde azulado — Notificación
+  condition: { from: '#38bdf8', to: '#0ea5e9' }, // celeste — Condicional
+  distributor: { from: '#f59e0b', to: '#d97706' }, // ámbar — Distribuidor
+  connect_flow: { from: '#f43f5e', to: '#e11d48' }, // rosa — Conexión de flujo
+  meta_capi: { from: '#eab308', to: '#ca8a04' }, // amarillo — Pixel
+  wait: { from: '#06b6d4', to: '#0891b2' }, // cian — Intervalo inteligente
+  department: { from: '#8b5cf6', to: '#7c3aed' }, // violeta — Departamento
+  http_request: { from: '#3b82f6', to: '#2563eb' }, // azul — Integración
+  ai_block: { from: '#10b981', to: '#059669' }, // esmeralda — Bloque de IA
+  end: { from: '#8b5cf6', to: '#7c3aed' }, // violeta — Agente de IA
+  move_kanban: { from: '#a855f7', to: '#9333ea' }, // morado — Kanban
+  manipulator: { from: '#f97316', to: '#ea580c' }, // naranja — Manipulador
+  sale_approved: { from: '#70f68d', to: '#22c55e' }, // verde neón — Venta aprobada
+  payment_gateway: { from: '#8b5cf6', to: '#7c3aed' }, // violeta — Pago
+  official_call: { from: '#14b8a6', to: '#0d9488' }, // verde azulado — Llamar
+  ai_media: { from: '#d946ef', to: '#c026d3' }, // fucsia — Multimedia IA
 };
+
+/** `linear-gradient(to right, from, to)` del bloque. */
+export function degradado(type: NodeType): string {
+  const c = LEONA_COLOR[type];
+  return `linear-gradient(to right, ${c.from}, ${c.to})`;
+}
 
 export interface NodeColors {
   /** Full-strength hue — icon glyph, selection ring, port fill. */
@@ -381,12 +385,11 @@ export interface NodeColors {
 }
 
 export function nodeColors(type: NodeType): NodeColors {
-  const t = NODE_HUE[type];
-  const solid = `oklch(${t.l} ${t.c} ${t.h})`;
+  const solid = LEONA_COLOR[type].from;
   return {
     solid,
-    soft: `oklch(${t.l} ${t.c} ${t.h} / 0.14)`,
-    ring: `oklch(${t.l} ${t.c} ${t.h} / 0.45)`,
+    soft: `color-mix(in srgb, ${solid} 14%, transparent)`,
+    ring: `color-mix(in srgb, ${solid} 45%, transparent)`,
     // Blend the hue toward the live --foreground token so the label
     // holds contrast in BOTH modes: in dark mode --foreground is
     // near-white (the label lightens to read on the dark card), in
@@ -776,33 +779,31 @@ export interface Bloque {
 }
 
 export const CATALOGO_BLOQUES: Bloque[] = [
-  { id: 'inicio', icon: PlayCircle, tipo: 'start', tono: 'azul' },
-  { id: 'mensaje', icon: MessageCircle, tipo: 'send_message', tono: 'violeta' },
-  { id: 'template', icon: FileBadge, tipo: 'send_template', tono: 'violeta' },
+  { id: 'mensaje', icon: MessageSquare, tipo: 'send_message', tono: 'violeta' },
+  { id: 'template', icon: FileText, tipo: 'send_template', tono: 'violeta' },
   { id: 'etiquetas', icon: Tag, tipo: 'set_tag', tono: 'violeta' },
   { id: 'pago', icon: CreditCard, tipo: 'send_payment', tono: 'violeta' },
-  { id: 'menu', icon: ListPlus, tipo: 'send_buttons', tono: 'violeta' },
-  { id: 'menu_lista', icon: ListChecks, tipo: 'send_list', tono: 'violeta' },
-  { id: 'esperar_respuesta', icon: MessageSquareReply, tipo: 'save_reply', tono: 'violeta' },
-  { id: 'capturar', icon: Inbox, tipo: 'collect_input', tono: 'violeta' },
-  { id: 'controlador', icon: Headset, tipo: 'handoff', tono: 'azul' },
-  { id: 'condicional', icon: GitFork, tipo: 'condition', tono: 'violeta' },
-  { id: 'distribuidor', icon: Shuffle, tipo: 'distributor', tono: 'violeta' },
-  { id: 'conexion', icon: Link2, tipo: 'connect_flow', tono: 'violeta' },
-  { id: 'pixel', icon: Target, tipo: 'meta_capi', tono: 'azul' },
+  { id: 'menu', icon: List, tipo: 'send_buttons', tono: 'violeta' },
+  { id: 'menu_lista', icon: List, tipo: 'send_list', tono: 'violeta' },
+  { id: 'carrusel', icon: LayoutGrid, tipo: 'carousel', tono: 'azul' },
+  { id: 'esperar_respuesta', icon: Save, tipo: 'save_reply', tono: 'violeta' },
+  { id: 'controlador', icon: MessageCircle, tipo: 'handoff', tono: 'azul' },
   { id: 'notificacion', icon: Bell, tipo: 'notification', tono: 'azul' },
-  { id: 'venta_aprobada', icon: BadgeCheck, tipo: 'sale_approved', tono: 'violeta' },
-  { id: 'carrusel', icon: Images, tipo: 'carousel', tono: 'azul' },
-  { id: 'intervalo', icon: Timer, tipo: 'wait', tono: 'violeta' },
+  { id: 'condicional', icon: GitBranch, tipo: 'condition', tono: 'violeta' },
+  { id: 'distribuidor', icon: GitBranch, tipo: 'distributor', tono: 'violeta' },
+  { id: 'conexion', icon: Share2, tipo: 'connect_flow', tono: 'violeta' },
+  { id: 'pixel', icon: Target, tipo: 'meta_capi', tono: 'azul' },
+  { id: 'intervalo', icon: Clock, tipo: 'wait', tono: 'violeta' },
   { id: 'departamento', icon: Building2, tipo: 'department', tono: 'azul' },
-  { id: 'integracion', icon: Plug, tipo: 'http_request', tono: 'azul' },
-  { id: 'pasarela', icon: Wallet, tipo: 'payment_gateway', tono: 'azul' },
-  { id: 'multimedia_ia', icon: Sparkles, tipo: 'ai_media', tono: 'violeta' },
-  { id: 'llamada', icon: Phone, tipo: 'official_call', tono: 'azul' },
-  { id: 'bloque_ia', icon: Sparkles, tipo: 'ai_block', tono: 'azul' },
+  { id: 'integracion', icon: Globe, tipo: 'http_request', tono: 'azul' },
+  { id: 'bloque_ia', icon: Bot, tipo: 'ai_block', tono: 'azul' },
   { id: 'agente_ia', icon: Bot, tipo: 'end', tono: 'azul' },
-  { id: 'kanban', icon: KanbanSquare, tipo: 'move_kanban', tono: 'azul' },
+  { id: 'kanban', icon: Kanban, tipo: 'move_kanban', tono: 'azul' },
   { id: 'manipulador', icon: SlidersHorizontal, tipo: 'manipulator', tono: 'violeta' },
+  { id: 'venta_aprobada', icon: DollarSign, tipo: 'sale_approved', tono: 'violeta' },
+  { id: 'pasarela', icon: CreditCard, tipo: 'payment_gateway', tono: 'azul' },
+  { id: 'llamada', icon: PhoneCall, tipo: 'official_call', tono: 'azul' },
+  { id: 'multimedia_ia', icon: Sparkles, tipo: 'ai_media', tono: 'violeta' },
 ];
 
 /** Atajos de multimedia dentro del bloque «Mensaje» (nodo send_media). */

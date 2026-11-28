@@ -1622,7 +1622,27 @@
       "triggerFirstInbound": "Triggers on a contact's first-ever inbound message",
       "triggerManual": "Manual trigger",
       "cloneFailedStatus": "Clone failed: {status}",
-      "importChat": "Import chat (.zip)"
+      "importChat": "Import chat (.zip)",
+      "folder": "Folder",
+      "noFolder": "No folder",
+      "folderPrompt": "New folder name",
+      "movePrompt": "Move to folder (empty = no folder)",
+      "moveSuccess": "Flow moved",
+      "moveError": "Could not move the flow.",
+      "moveToFolder": "Move to folder",
+      "filterAll": "All",
+      "filterActive": "Active",
+      "filterPaused": "Paused",
+      "filterArchived": "Archived",
+      "colName": "Name",
+      "colStatus": "Status",
+      "colBlocks": "Blocks",
+      "colUpdated": "Updated",
+      "actions": "Actions",
+      "pause": "Pause",
+      "activate": "Activate",
+      "restore": "Restore",
+      "archiveError": "Could not archive the flow."
     },
     "edit": {
       "notFound": "Flow not found.",
@@ -2108,6 +2128,34 @@
         "official_call": {
           "label": "Official call",
           "blurb": "Call permission with the official Meta API"
+        },
+        "ai_block": {
+          "label": "AI block",
+          "blurb": "One AI answer saved to a variable"
+        },
+        "connect_flow": {
+          "label": "Connect flow",
+          "blurb": "Starts another flow and ends this one"
+        },
+        "manipulator": {
+          "label": "Manipulator",
+          "blurb": "Changes a contact field or variable"
+        },
+        "distributor": {
+          "label": "Distributor",
+          "blurb": "Splits contacts across several paths"
+        },
+        "notification": {
+          "label": "Notification",
+          "blurb": "Alerts your team on WhatsApp"
+        },
+        "sale_approved": {
+          "label": "Approved sale",
+          "blurb": "Records the sale with product and amount"
+        },
+        "carousel": {
+          "label": "Carousel",
+          "blurb": "Cards with image and button, one after another"
         }
       },
       "canvasEmptyHint": "Drag a block from the panel or click one to start.",
@@ -2150,7 +2198,17 @@
           "blurb": "Official WhatsApp call permission"
         }
       },
-      "doneEditing": "Done"
+      "doneEditing": "Done",
+      "editNode": "Edit block",
+      "conditionFallback": "If the condition is not met, the flow continues here",
+      "editTitle": "Edit {block}",
+      "cancelEditing": "Cancel",
+      "saveEditing": "Save",
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "fitView": "Fit view",
+      "resetView": "Reset view",
+      "edgeClickToRemove": "Click to remove this connection"
     },
     "validation": {
       "noIssues": "No issues. Ready to activate.",
@@ -2222,7 +2280,11 @@
       "listenAll": "All connections",
       "listenConnection": "Listen to this connection only",
       "connectionUpdated": "Flow connection updated",
-      "connectionUpdateFailed": "Could not change the connection"
+      "connectionUpdateFailed": "Could not change the connection",
+      "editName": "Edit title",
+      "pauseFlow": "Pause flow",
+      "archive": "Archive",
+      "archiveFlow": "Archive flow"
     },
     "catalog": {
       "tabTools": "Tools",
@@ -2319,7 +2381,9 @@
       "inicio": {
         "label": "Start / Trigger",
         "blurb": "Keyword, any message or first message"
-      }
+      },
+      "simulatorTitle": "Simulator",
+      "simulatorHint": "Local test, no WhatsApp and nothing saved"
     },
     "importChat": {
       "title": "Import WhatsApp chat",
@@ -2877,12 +2941,12 @@
       "security": "Login & security",
       "appearance": "Appearance",
       "whatsapp": "WhatsApp",
-      "templates": "Templates",
+      "templates": "WhatsApp templates",
       "quick-replies": "Quick replies",
-      "fields": "Fields & tags",
+      "fields": "Custom fields",
       "deals": "Deals & currency",
       "inbox": "Inbox",
-      "members": "Team members",
+      "members": "Team",
       "api": "API keys",
       "tracking": "Tracking",
       "mcp": "MCP tools",
@@ -2891,13 +2955,28 @@
       "payments": "Payments",
       "ai-media": "AI media",
       "calling": "Official calls",
+      "integrations": "Integrations",
       "http-credentials": "HTTP credentials",
-      "webhooks": "Webhooks"
+      "webhooks": "Webhooks",
+      "empresa": "Company",
+      "invitaciones": "Platform invitations",
+      "soporte": "Support access",
+      "traducciones": "Flow translations",
+      "uso-ia": "AI usage",
+      "flujos-estandar": "Default flows",
+      "envios": "Broadcasts",
+      "variables": "Global variables",
+      "tags": "Tags",
+      "productos": "Products"
     },
     "groups": {
       "account": "Account",
       "workspace": "Workspace",
-      "integrations": "Integrations"
+      "integrations": "Integrations",
+      "cuenta": "Account",
+      "automatizacion": "Automation",
+      "integraciones": "Integrations",
+      "oculta": ""
     },
     "profile": {
       "title": "Your profile",
@@ -3967,7 +4046,9 @@
       "officialCallNeedsText": "Enter the permission text or pick a template.",
       "officialCallNeedsMode": "Pick a valid mode.",
       "officialCallWaitRange": "Wait must be between 1 and 7 days.",
-      "officialCallNeedsGranted": "Connect the permission-granted branch."
+      "officialCallNeedsGranted": "Connect the permission-granted branch.",
+      "saveReplyTimeoutEnds": "“No reply” is not connected: when the wait expires, the conversation ends here.",
+      "saveReplyReplyEnds": "“Replied” is not connected: if the person replies, the answer is saved and the flow ends here (the AI agent takes over)."
     },
     "automations": {
       "needsStep": "active automations need at least one step",

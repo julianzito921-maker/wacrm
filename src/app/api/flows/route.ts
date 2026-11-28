@@ -38,14 +38,23 @@ export async function GET() {
   }
   const { supabase } = guard
 
+  // `flow_nodes(count)`: la lista muestra cuántos bloques tiene cada flujo
+  // (columna BLOQUES, como en Leona).
   const { data, error } = await supabase
     .from('flows')
-    .select('*')
+    .select('*, flow_nodes(count)')
     .order('created_at', { ascending: false })
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  return NextResponse.json({ flows: data ?? [] })
+  const flows = (data ?? []).map((f: Record<string, unknown>) => {
+    const { flow_nodes, ...resto } = f
+    const conteo = Array.isArray(flow_nodes)
+      ? Number((flow_nodes[0] as { count?: number } | undefined)?.count ?? 0)
+      : 0
+    return { ...resto, node_count: conteo }
+  })
+  return NextResponse.json({ flows })
 }
 
 export async function POST(request: Request) {

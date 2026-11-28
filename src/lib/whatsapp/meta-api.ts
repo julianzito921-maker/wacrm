@@ -11,6 +11,7 @@
 
 import { isBusinessScopedUserId } from './wa-identity'
 import { getT } from '@/lib/i18n/translate'
+import * as dapi from './dapi'
 
 const ti = getT('Validation.interactive')
 
@@ -159,6 +160,8 @@ export async function getPhoneNumberHealth(
   args: VerifyPhoneNumberArgs
 ): Promise<MetaPhoneHealth> {
   const { phoneNumberId, accessToken } = args
+  // D-API no tiene calidad ni límites de Meta: la isla se reporta sana.
+  if (dapi.esDapi(phoneNumberId)) return { id: phoneNumberId, status: 'CONNECTED' }
   const headers = { Authorization: `Bearer ${accessToken}` }
   const [response, limitResponse] = await Promise.all([
     fetch(`${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,quality_rating,status,name_status,verified_name`, { headers }),
@@ -407,6 +410,9 @@ export async function sendTextMessage(
   args: SendTextMessageArgs
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, text, contextMessageId } = args
+  if (dapi.esDapi(phoneNumberId)) {
+    return dapi.enviarTexto({ apiKey: accessToken, phoneNumberId, to, text })
+  }
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
@@ -449,6 +455,9 @@ export async function sendCallPermissionRequest(
   args: SendCallPermissionRequestArgs
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, bodyText } = args
+  if (dapi.esDapi(phoneNumberId)) {
+    throw new Error('Las llamadas oficiales de Meta no existen en conexiones D-API (QR).')
+  }
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -586,6 +595,9 @@ export async function sendMediaMessage(
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, kind, link, caption, filename, contextMessageId } = args
   if (!link) throw new Error('sendMediaMessage requires a link.')
+  if (dapi.esDapi(phoneNumberId)) {
+    return dapi.enviarMedia({ apiKey: accessToken, phoneNumberId, to, kind, link, caption, filename })
+  }
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
 
   // Audio accepts neither caption nor filename per Meta's spec — adding
@@ -681,6 +693,9 @@ export async function sendTemplateMessage(
     messageParams,
     contextMessageId,
   } = args
+  if (dapi.esDapi(phoneNumberId)) {
+    throw new Error('Las plantillas de Meta no existen en conexiones D-API (QR): manda texto normal.')
+  }
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
 
   const templatePayload: Record<string, unknown> = {
@@ -974,6 +989,11 @@ export async function sendReactionMessage(
   args: SendReactionMessageArgs
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, targetMessageId, emoji } = args
+  if (dapi.esDapi(phoneNumberId)) {
+    return dapi.enviarReaccion({
+      apiKey: accessToken, phoneNumberId, to, messageId: targetMessageId, emoji,
+    })
+  }
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
   const response = await fetch(url, {
     method: 'POST',
@@ -1025,6 +1045,8 @@ export async function sendTypingIndicator(
   args: SendTypingIndicatorArgs
 ): Promise<void> {
   const { phoneNumberId, accessToken, messageId } = args
+  // D-API pide el destinatario para «escribiendo…»; aquí solo hay el id.
+  if (dapi.esDapi(phoneNumberId)) return
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
   const response = await fetch(url, {
     method: 'POST',
@@ -1136,6 +1158,18 @@ export async function sendInteractiveButtons(
         ti('buttonTitleTooLong', { title: btn.title, max: INTERACTIVE_LIMITS.buttonTitleMaxLength })
       )
     }
+  }
+
+  if (dapi.esDapi(phoneNumberId)) {
+    if (headerImageUrl) {
+      await dapi.enviarMedia({ apiKey: accessToken, phoneNumberId, to, kind: 'image', link: headerImageUrl })
+    }
+    return dapi.enviarTexto({
+      apiKey: accessToken,
+      phoneNumberId,
+      to,
+      text: dapi.textoDeMenu({ bodyText, headerText, footerText, opciones: buttons.map((b) => b.title) }),
+    })
   }
 
   const interactive: Record<string, unknown> = {
@@ -1265,6 +1299,20 @@ export async function sendInteractiveList(
     }
   }
 
+  if (dapi.esDapi(phoneNumberId)) {
+    return dapi.enviarTexto({
+      apiKey: accessToken,
+      phoneNumberId,
+      to,
+      text: dapi.textoDeMenu({
+        bodyText,
+        headerText,
+        footerText,
+        opciones: sections.flatMap((s) => s.rows.map((r) => r.title)),
+      }),
+    })
+  }
+
   const interactive: Record<string, unknown> = {
     type: 'list',
     body: { text: bodyText },
@@ -1355,6 +1403,11 @@ export async function getMediaUrl(
   args: GetMediaUrlArgs
 ): Promise<{ url: string; mimeType: string; fileSize: number | null }> {
   const { mediaId, accessToken } = args
+  if (dapi.esMediaIdDapi(mediaId)) {
+    const info = dapi.leerMediaIdDapi(mediaId)
+    if (!info) throw new Error('Media de D-API ilegible')
+    return { url: info.url, mimeType: info.mimeType, fileSize: null }
+  }
   const response = await fetch(`${META_API_BASE}/${mediaId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
@@ -1386,9 +1439,14 @@ export async function downloadMedia(
   args: DownloadMediaArgs
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const { downloadUrl, accessToken } = args
-  const response = await fetch(downloadUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
+  // El enlace de D-API ya trae su token y redirige a una URL firmada:
+  // no se le manda la API Key (ni un Bearer que rompa la firma).
+  const response = await fetch(
+    downloadUrl,
+    dapi.esUrlMediaDapi(downloadUrl)
+      ? undefined
+      : { headers: { Authorization: `Bearer ${accessToken}` } },
+  )
   if (!response.ok) {
     throw new Error(`Media download failed: ${response.status}`)
   }

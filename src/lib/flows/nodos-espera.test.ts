@@ -84,8 +84,10 @@ describe("nodos esperar y guardar respuesta", () => {
         no_contesto_next: "",
       },
     };
-    const campos = validateFlowForActivation(flow, nodos).map((i) => i.field);
-    expect(campos).toContain("no_contesto_next");
+    const issues = validateFlowForActivation(flow, nodos);
+    const timeout = issues.find((i) => i.field === "no_contesto_next");
+    // Como en Leona: sin «si no responde» se puede activar (aviso, no error).
+    expect(timeout?.severity).toBe("warning");
   });
 
   it("avisa si guardar respuesta no tiene variable", () => {

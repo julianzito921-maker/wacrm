@@ -7,6 +7,7 @@ import { AiError, type AiProvider } from '@/lib/ai/types'
 import { normalizeOpenAiCompatibleBaseUrl } from '@/lib/ai/providers/openai-compatible'
 import { canReuseStoredAiKey } from '@/lib/ai/stored-key'
 import { getT } from '@/lib/i18n/translate'
+import { esUrlOpenRouter, leerClaveIntegracion } from '@/lib/integraciones/store'
 
 const t = getT('Api')
 
@@ -72,6 +73,10 @@ export async function POST(request: Request) {
       baseUrl = candidate
     }
 
+    // OpenRouter conectado en Integraciones: la clave sale de ahí.
+    if (!apiKeyPlain && provider === 'openai_compatible' && esUrlOpenRouter(baseUrl)) {
+      apiKeyPlain = (await leerClaveIntegracion(accountId, 'openrouter')) ?? ''
+    }
     if (!apiKeyPlain) {
       if (!existing?.api_key || !canReuseStoredAiKey(existing, provider, baseUrl)) {
         return NextResponse.json(

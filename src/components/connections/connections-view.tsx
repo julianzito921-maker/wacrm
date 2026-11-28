@@ -8,6 +8,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   Trash2,
@@ -84,6 +85,11 @@ function calidadClase(q: string | null) {
   return 'border-slate-500/30 text-slate-300';
 }
 
+/** Isla D-API (WhatsApp Web por QR): phone_number_id = 'dapi:<sesion>'. */
+function esDapi(c: Pick<Connection, 'phone_number_id'>) {
+  return c.phone_number_id.startsWith('dapi:');
+}
+
 function tierTexto(t: string | null) {
   if (!t) return '—';
   return t.replace('TIER_', '').replace('_', ',');
@@ -119,6 +125,12 @@ export function ConnectionsView() {
   const [guardando, setGuardando] = useState(false);
   const [sincronizando, setSincronizando] = useState<string | null>(null);
   const [borrar, setBorrar] = useState<string | null>(null);
+  // Conectar por QR (D-API)
+  const [qrAbierto, setQrAbierto] = useState(false);
+  const [qrNombre, setQrNombre] = useState('');
+  const [qrConexion, setQrConexion] = useState<string | null>(null);
+  const [qrImagen, setQrImagen] = useState<string | null>(null);
+  const [qrCreando, setQrCreando] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -170,6 +182,76 @@ export function ConnectionsView() {
     }
   };
 
+
+  const abrirQr = (c?: Connection) => {
+    setQrNombre('');
+    setQrImagen(null);
+    setQrConexion(c ? c.id : null);
+    setQrAbierto(true);
+  };
+
+  const crearQr = async () => {
+    if (!qrNombre.trim()) {
+      toast.error(t('missingFields'));
+      return;
+    }
+    setQrCreando(true);
+    try {
+      const res = await fetch('/api/connections/dapi', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: qrNombre.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(
+          json.error === 'dapi_not_configured'
+            ? 'Primero guarda tu API Key de D-API en Configuración → Integraciones.'
+            : json.error === 'dapi_error'
+              ? `D-API: ${json.detail ?? ''}`
+              : t('genericError'),
+        );
+        return;
+      }
+      setQrConexion((json.connection as Connection).id);
+      await cargar();
+    } finally {
+      setQrCreando(false);
+    }
+  };
+
+  // Mientras el QR está abierto se pide cada 4 s (D-API lo renueva solo)
+  // hasta que el número quede conectado.
+  useEffect(() => {
+    if (!qrAbierto || !qrConexion) return;
+    let vivo = true;
+    const pedir = async () => {
+      try {
+        const res = await fetch(`/api/connections/${qrConexion}/qr`);
+        const json = await res.json().catch(() => ({}));
+        if (!vivo) return;
+        if (!res.ok) {
+          toast.error(json.detail ? `D-API: ${json.detail}` : t('genericError'));
+          return;
+        }
+        if (json.connected) {
+          toast.success('¡WhatsApp conectado!');
+          setQrAbierto(false);
+          await cargar();
+          return;
+        }
+        setQrImagen(json.qr_image ?? null);
+      } catch {
+        // se reintenta en la siguiente vuelta
+      }
+    };
+    void pedir();
+    const intervalo = setInterval(() => void pedir(), 4000);
+    return () => {
+      vivo = false;
+      clearInterval(intervalo);
+    };
+  }, [qrAbierto, qrConexion, cargar, t]);
 
   const conectadas = conexiones.filter((c) => c.status === 'connected').length;
   const desconectadas = conexiones.length - conectadas;
@@ -299,10 +381,16 @@ export function ConnectionsView() {
           <h1 className="text-xl font-semibold tracking-tight">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('description')}</p>
         </div>
-        <Button onClick={abrirNueva}>
-          <Plus className="size-4" />
-          {t('new')}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => abrirQr()}>
+            <QrCode className="size-4" />
+            Conectar por QR
+          </Button>
+          <Button onClick={abrirNueva}>
+            <Plus className="size-4" />
+            {t('new')}
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -399,12 +487,28 @@ export function ConnectionsView() {
                       </Badge>
                     </div>
                     <p className="mt-1 text-xs text-slate-400">
-                      {c.phone_number ?? '—'} · <span className="font-mono">{c.phone_number_id}</span>
+                      {c.phone_number ?? '—'} ·{' '}
+                      {esDapi(c) ? (
+                        <span>D-API · QR</span>
+                      ) : (
+                        <span className="font-mono">{c.phone_number_id}</span>
+                      )}
                     </p>
                     {c.waba_id && (
                       <p className="text-[11px] text-slate-500">WABA {c.waba_id}</p>
                     )}
                   </div>
+                  {esDapi(c) && c.status !== 'connected' ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-emerald-400/30 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                    onClick={() => abrirQr(c)}
+                  >
+                    <QrCode className="size-3.5" />
+                    Escanear QR
+                  </Button>
+                  ) : (
                   <Button
                     size="sm"
                     variant="outline"
@@ -419,8 +523,10 @@ export function ConnectionsView() {
                     )}
                     {t('sync')}
                   </Button>
+                  )}
                 </div>
 
+                {!esDapi(c) && (
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <div className="rounded-lg border border-indigo-400/20 bg-black/30 p-2.5">
                     <p className="text-[9px] tracking-wider text-slate-500 uppercase">
@@ -442,6 +548,7 @@ export function ConnectionsView() {
                     </p>
                   </div>
                 </div>
+                )}
 
                 <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-indigo-400/20 bg-black/30 p-2.5">
                   <div>
@@ -520,6 +627,63 @@ export function ConnectionsView() {
           ))}
         </div>
       )}
+
+      <Dialog open={qrAbierto} onOpenChange={setQrAbierto}>
+        <DialogContent className="border-border bg-popover sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Conectar WhatsApp por QR</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              API Web (D-API). En tu celular: WhatsApp → Dispositivos vinculados → Vincular un
+              dispositivo, y escanea el código.
+            </DialogDescription>
+          </DialogHeader>
+          {qrConexion ? (
+            <div className="flex flex-col items-center gap-3 py-2">
+              {qrImagen ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={qrImagen}
+                  alt="Código QR de WhatsApp"
+                  className="size-64 rounded-lg bg-white p-2"
+                />
+              ) : (
+                <div className="bg-muted flex size-64 items-center justify-center rounded-lg">
+                  <Loader2 className="text-muted-foreground size-6 animate-spin" />
+                </div>
+              )}
+              <p className="text-muted-foreground text-center text-[11px]">
+                El código se renueva solo. Esta ventana se cierra cuando el número quede
+                conectado.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <Label className="text-muted-foreground mb-1 block text-xs">{t('name')}</Label>
+              <Input
+                value={qrNombre}
+                onChange={(e) => setQrNombre(e.target.value)}
+                className="bg-muted"
+                placeholder="WhatsApp Ventas"
+              />
+              <p className="text-muted-foreground mt-2 text-[10px]">
+                Conexión no oficial (WhatsApp Web): úsala con mensajes humanos, sin envíos
+                masivos. Las plantillas y la calidad de Meta no aplican aquí.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setQrAbierto(false)}>
+              {t('cancel')}
+            </Button>
+            {!qrConexion && (
+              <Button onClick={() => void crearQr()} disabled={qrCreando}>
+                {qrCreando && <Loader2 className="size-4 animate-spin" />}
+                Generar QR
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={abierto} onOpenChange={setAbierto}>
         <DialogContent className="border-border bg-popover sm:max-w-lg">

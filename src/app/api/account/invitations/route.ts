@@ -139,19 +139,22 @@ function getBaseUrl(request: Request): string {
 
 const MAX_LABEL_LEN = 80;
 
-export async function GET() {
+export async function GET(request?: Request) {
   try {
     const ctx = await requireRole("admin");
+    // `?all=1`: también aceptadas y vencidas (Configuración → Invitaciones).
+    const todas = request ? new URL(request.url).searchParams.get("all") === "1" : false;
 
-    const { data, error } = await ctx.supabase
+    let consulta = ctx.supabase
       .from("account_invitations")
       .select(
         "id, role, label, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id",
       )
-      .eq("account_id", ctx.accountId)
-      .is("accepted_at", null)
-      .gt("expires_at", new Date().toISOString())
-      .order("created_at", { ascending: false });
+      .eq("account_id", ctx.accountId);
+    if (!todas) {
+      consulta = consulta.is("accepted_at", null).gt("expires_at", new Date().toISOString());
+    }
+    const { data, error } = await consulta.order("created_at", { ascending: false });
 
     if (error) {
       console.error("[GET /api/account/invitations] fetch error:", error);

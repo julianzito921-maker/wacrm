@@ -96,6 +96,8 @@ async function ritmoHumano(
 }
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { enviarEventoMeta, guardarValor } from "@/lib/ventas/conversiones";
+import { enviarVentaLowtrack } from "@/lib/integraciones/lowtrack";
+import { sumarVariablesGlobales } from "./globales";
 import { etiquetar, leerComprobanteDeMedio } from "@/lib/ventas/comprobante";
 import { combinarCondiciones, destinoBloqueIa, parsearSalidaIa, promptSistemaBloqueIa, puedeTransferir, reglasDeCondicion } from "./bloques-avanzados";
 import { esperaProgramadaSegundos } from "./agenda";
@@ -1068,6 +1070,7 @@ async function advanceFromNodeKey(
   startNodeKey: string,
   nodes: Map<string, FlowNodeRow>,
 ): Promise<{ outcome: "advanced" | "completed" | "handed_off" }> {
+  await sumarVariablesGlobales(db, run);
   let currentKey: string | null = startNodeKey;
   // Último nodo ejecutado: decide si una salida vacía es un fin de rama
   // limpio o un error.
@@ -2051,7 +2054,13 @@ export async function resumeSaveReplyTimeout(
   // 30 s de tolerancia: next_run_at se calcula unos milisegundos antes
   // que last_advanced_at al estacionar la corrida.
   if (!(espera > 0) || minutos < espera - 0.5) return false;
-  if (!cfg.no_contesto_next) return false;
+  // Sin salida «si no responde» (válido, como en Leona): se vence la
+  // espera y la conversación termina aquí, en vez de quedar estacionada.
+  if (!cfg.no_contesto_next) {
+    await logEvent(db, run.id, "completed", nodo.node_key, { reason: "timeout_sin_salida" });
+    await endRun(db, run.id, "completed", "timeout_sin_salida");
+    return true;
+  }
   if (await cerrarSiFueraDeVentana(db, run, nodo.node_key, now)) return true;
   if (!(await claimReplyTransition(db, run, cfg.no_contesto_next))) return false;
 
@@ -2112,7 +2121,14 @@ export async function resumeReplyBuffer(
       .eq("transition_seq", run.transition_seq ?? 0);
     return false;
   }
-  if (!cfg.var_key || !cfg.contesto_next) return false;
+  if (!cfg.var_key) return false;
+  if (!cfg.contesto_next) {
+    // Búfer con «si contesta» sin conectar: se guarda y termina (Leona).
+    const guardado = { ...vars, [cfg.var_key]: textos.join(" ") };
+    await db.from("flow_runs").update({ vars: guardado }).eq("id", run.id);
+    await endRun(db, run.id, "completed", "contesto_sin_salida");
+    return true;
+  }
 
   const capturado = textos.join("\n");
   vars[cfg.var_key] = capturado;
@@ -3007,6 +3023,20 @@ async function handleReplyForActiveRun(
   ) {
     const cfg = currentNode.config as unknown as SaveReplyNodeConfig;
     const capturado = message.text.trim();
+    // Como en Leona: «si contesta» sin conectar = la respuesta se guarda,
+    // el flujo termina aquí y el mensaje sigue al agente de IA.
+    if (capturado.length > 0 && !cfg.contesto_next) {
+      if (cfg.var_key) {
+        const vars = { ...run.vars, [cfg.var_key]: capturado };
+        await db.from("flow_runs").update({ vars }).eq("id", run.id);
+        run.vars = vars;
+      }
+      if (cfg.campo_contacto) await guardarEnContacto(db, run, cfg.campo_contacto, capturado);
+      if (cfg.reaccionar) await reaccionarAlMensaje(db, run, message.meta_message_id);
+      await logEvent(db, run.id, "completed", currentNode.node_key, { reason: "contesto_sin_salida" });
+      await endRun(db, run.id, "completed", "contesto_sin_salida");
+      return { consumed: false, flow_run_id: run.id, outcome: "no_match" };
+    }
     if (capturado.length > 0 && cfg.var_key && cfg.contesto_next) {
       const vars = { ...run.vars, [cfg.var_key]: capturado };
       if (cfg.citar_respuesta && message.meta_message_id) {
@@ -3668,6 +3698,15 @@ async function registrarVenta(
     }
   }
 
+  // Sin CAPI, LowTrack igual recibe la venta (con CAPI la manda
+  // enviarEventoMeta con el mismo event_id).
+  if (!cfg.send_capi && amount > 0) {
+    await enviarVentaLowtrack({
+      accountId: run.account_id, contactId: run.contact_id,
+      transactionId: override?.eventId ?? `sale-${run.id}-${run.current_node_key}`,
+      amount, currency, producto: title,
+    });
+  }
   if (cfg.send_capi && amount > 0) {
     try {
       await enviarEventoMeta({

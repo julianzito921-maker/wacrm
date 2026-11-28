@@ -5,6 +5,7 @@ import { getPhoneNumberHealth } from '@/lib/whatsapp/meta-api';
 import { parseQualityRating } from '@/lib/whatsapp/phone-health';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { CAMPOS_CONEXION_PUBLICOS } from '@/lib/whatsapp/connections';
+import { esDapi, obtenerQr, sesionDe } from '@/lib/whatsapp/dapi';
 
 export async function POST(
   _request: Request,
@@ -21,6 +22,33 @@ export async function POST(
       .maybeSingle();
     if (!conexion?.access_token) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    }
+
+    if (esDapi(conexion.phone_number_id as string)) {
+      let estado;
+      try {
+        estado = await obtenerQr({
+          apiKey: decrypt(conexion.access_token as string),
+          sessionId: sesionDe(conexion.phone_number_id as string),
+        });
+      } catch (err) {
+        return NextResponse.json(
+          { error: 'meta_error', detail: err instanceof Error ? err.message : String(err) },
+          { status: 502 },
+        );
+      }
+      const { data, error } = await supabaseAdmin()
+        .from('whatsapp_connections')
+        .update({
+          status: estado.status === 'connected' ? 'connected' : 'disconnected',
+          last_synced_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .eq('account_id', ctx.accountId)
+        .select(CAMPOS_CONEXION_PUBLICOS)
+        .single();
+      if (error) throw new Error(error.message);
+      return NextResponse.json({ connection: data });
     }
 
     let health;
