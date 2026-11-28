@@ -212,6 +212,19 @@ describe("motor con flujos estándar del número", () => {
     expect(h.tables.flow_runs.filter((r) => r.flow_id === ID.promo)).toHaveLength(1);
   });
 
+  it("la palabra del anuncio devuelve al bot una conversación tomada por una persona", async () => {
+    h.tables.conversations = [{ id: "cv-1", account_id: "acct-1", state: "HUMAN_HANDOFF" }];
+    await entrar("Hola! info de la promo");
+    expect(enviado()).toBe("promo");
+    expect(h.tables.conversations[0].state).toBe("ACTIVE");
+  });
+
+  it("la baja voluntaria se respeta aunque mande la palabra clave", async () => {
+    h.tables.conversations = [{ id: "cv-1", account_id: "acct-1", state: "OPT_OUT" }];
+    await entrar("Hola! info de la promo");
+    expect(h.tables.conversations[0].state).toBe("OPT_OUT");
+  });
+
   it("Atención finalizada arranca su flujo", async () => {
     const r = await iniciarFlujoAtencionFinalizada({
       accountId: "acct-1",

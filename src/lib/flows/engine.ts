@@ -98,6 +98,7 @@ import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { enviarEventoMeta, guardarValor } from "@/lib/ventas/conversiones";
 import { enviarVentaLowtrack } from "@/lib/integraciones/lowtrack";
 import { sumarVariablesGlobales } from "./globales";
+import { fijarEstadoDeConversacion, leerEstado } from "@/lib/messaging/estado";
 import {
   candidatosEstandar,
   flujoPorPalabraClave,
@@ -2944,6 +2945,25 @@ export async function dispatchInboundToFlows(
       input.contactId,
     );
 
+    // Palabra clave de Flujos estándar del número (la que trae el anuncio).
+    const flujoPalabra = input.connectionId
+      ? await flujoPorPalabraClaveDelNumero(
+          db,
+          input.accountId,
+          input.connectionId,
+          entryTriggerTexts(input.message),
+        )
+      : null;
+    // La palabra del anuncio es la clienta pidiendo ese embudo: si una
+    // persona había tomado la conversación (traspaso), vuelve al bot. La
+    // baja voluntaria NO se toca.
+    if (flujoPalabra && input.conversationId) {
+      const estado = await leerEstado(input.conversationId);
+      if (estado === "HUMAN_HANDOFF" || estado === "PAUSED") {
+        await fijarEstadoDeConversacion(input.conversationId, "ACTIVE");
+      }
+    }
+
     // Idempotency — only matters if there's already a run for this
     // contact. For new runs, the partial unique index catches duplicate
     // starts at INSERT time.
@@ -2964,13 +2984,8 @@ export async function dispatchInboundToFlows(
       }
       // Palabra clave de OTRO flujo (anuncio de otro producto): cierra el
       // embudo en curso y arranca el de esa palabra, como en Leona.
-      if (input.connectionId) {
-        const otro = await flujoPorPalabraClaveDelNumero(
-          db,
-          input.accountId,
-          input.connectionId,
-          entryTriggerTexts(input.message),
-        );
+      {
+        const otro = flujoPalabra;
         if (otro && otro.id !== activeRun.flow_id && otro.entry_node_id) {
           await endRun(db, activeRun.id, "cancelled", "palabra_clave_otro_flujo");
           ownedRunId = null;
