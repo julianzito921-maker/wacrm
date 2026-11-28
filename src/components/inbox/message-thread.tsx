@@ -763,6 +763,10 @@ export function MessageThread({
         .eq("id", conversation.id);
 
       onStatusChange(conversation.id, status);
+      // Flujo estándar «Atención finalizada» del número (si lo tiene).
+      if (status === "closed") {
+        void fetch(`/api/conversations/${conversation.id}/atencion-finalizada`, { method: "POST" }).catch(() => {});
+      }
     },
     [conversation, onStatusChange]
   );

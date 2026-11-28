@@ -1186,7 +1186,8 @@ async function processMessage(
   // separate conditional statement rather than a `status` field on the
   // update above so the write can be gated on the row's CURRENT status in
   // SQL — see the helper for why that matters.
-  await reopenClosedConversation(supabaseAdmin(), conversation)
+  // `reabierta` alimenta el flujo estándar «Conversación finalizada».
+  const reabierta = await reopenClosedConversation(supabaseAdmin(), conversation)
 
   // If this contact was a recent broadcast recipient, flag the reply
   // so the broadcast's `replied_count` advances (via the aggregate
@@ -1239,6 +1240,7 @@ async function processMessage(
       parseado.callPermission,
     ),
     isFirstInboundMessage,
+    isReopenedConversation: reabierta,
   })
   if (flujoEsDuenoDelMensaje(flowResult)) {
     console.info(

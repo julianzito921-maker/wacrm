@@ -98,6 +98,12 @@ import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { enviarEventoMeta, guardarValor } from "@/lib/ventas/conversiones";
 import { enviarVentaLowtrack } from "@/lib/integraciones/lowtrack";
 import { sumarVariablesGlobales } from "./globales";
+import {
+  candidatosEstandar,
+  HORAS_PREDETERMINADA,
+  normalizarFlujosEstandar,
+  tieneFlujosEstandar,
+} from "./estandar";
 import { etiquetar, leerComprobanteDeMedio } from "@/lib/ventas/comprobante";
 import { combinarCondiciones, destinoBloqueIa, parsearSalidaIa, promptSistemaBloqueIa, puedeTransferir, reglasDeCondicion } from "./bloques-avanzados";
 import { esperaProgramadaSegundos } from "./agenda";
@@ -444,6 +450,7 @@ async function findEntryFlow(
   message: ParsedInbound,
   isFirstInbound: boolean,
   connectionId?: string | null,
+  reabierta = false,
 ): Promise<FlowRow | null> {
   // A tap used to be rejected outright here, on the reasoning that
   // interactive replies are responses to existing prompts. That holds
@@ -454,6 +461,22 @@ async function findEntryFlow(
   // whose keyword matches that button never starts. Retyping the label
   // by hand worked, which is the tell — same words, different envelope.
   const candidates = entryTriggerTexts(message);
+
+  // Flujos estándar del número (Configuración → Flujos estándar, como
+  // Leona): palabras clave → bienvenida → conversación finalizada →
+  // respuesta predeterminada. Si no aplica ninguno, siguen los
+  // disparadores de cada flujo.
+  if (connectionId) {
+    const estandar = await flujoEstandarDeEntrada(db, {
+      accountId,
+      contactId,
+      connectionId,
+      textos: candidates,
+      primerMensaje: isFirstInbound,
+      reabierta,
+    });
+    if (estandar) return estandar;
+  }
 
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
@@ -506,6 +529,110 @@ async function findEntryFlow(
   }
   // 'manual' triggers do not auto-start from inbound messages.
   return null;
+}
+
+/** Flujo estándar que toca, o null. Nunca lanza. */
+async function flujoEstandarDeEntrada(
+  db: AdminClient,
+  args: {
+    accountId: string;
+    contactId: string;
+    connectionId: string;
+    textos: string[];
+    primerMensaje: boolean;
+    reabierta: boolean;
+  },
+): Promise<FlowRow | null> {
+  try {
+    const { data: conn } = await db
+      .from("whatsapp_connections")
+      .select("standard_flows")
+      .eq("id", args.connectionId)
+      .eq("account_id", args.accountId)
+      .maybeSingle();
+    const cfg = normalizarFlujosEstandar((conn as { standard_flows?: unknown } | null)?.standard_flows);
+    if (!tieneFlujosEstandar(cfg)) return null;
+    for (const c of candidatosEstandar(cfg, args)) {
+      const { data: flow } = await db
+        .from("flows")
+        .select("*")
+        .eq("id", c.flowId)
+        .eq("account_id", args.accountId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (!flow) continue;
+      if (c.motivo === "default_reply") {
+        // Una vez por contacto en la ventana de inactividad (24 h por defecto).
+        const horas = cfg.default_reply_hours ?? HORAS_PREDETERMINADA;
+        if (horas > 0) {
+          const desde = new Date(Date.now() - horas * 3_600_000).toISOString();
+          const { data: reciente } = await db
+            .from("flow_runs")
+            .select("id")
+            .eq("flow_id", c.flowId)
+            .eq("contact_id", args.contactId)
+            .gte("started_at", desde)
+            .limit(1);
+          if (reciente && reciente.length > 0) continue;
+        }
+      }
+      return flow as FlowRow;
+    }
+  } catch (err) {
+    console.warn("[flows] flujos estándar no disponibles:", err instanceof Error ? err.message : err);
+  }
+  return null;
+}
+
+/**
+ * Flujo estándar «Atención finalizada»: al marcar la conversación como
+ * completada arranca el flujo configurado en su número (si el contacto
+ * no está ya en otro flujo). Nunca lanza.
+ */
+export async function iniciarFlujoAtencionFinalizada(args: {
+  accountId: string;
+  userId: string;
+  contactId: string;
+  conversationId: string;
+  connectionId: string | null;
+}): Promise<{ iniciado: boolean; motivo?: string }> {
+  const db = supabaseAdmin();
+  try {
+    if (!args.connectionId) return { iniciado: false, motivo: "sin_conexion" };
+    const { data: conn } = await db
+      .from("whatsapp_connections")
+      .select("standard_flows")
+      .eq("id", args.connectionId)
+      .eq("account_id", args.accountId)
+      .maybeSingle();
+    const cfg = normalizarFlujosEstandar((conn as { standard_flows?: unknown } | null)?.standard_flows);
+    if (!cfg.attendance_finished_flow_id) return { iniciado: false, motivo: "sin_flujo" };
+    if (await loadActiveRunForContact(db, args.accountId, args.contactId)) {
+      return { iniciado: false, motivo: "ya_en_flujo" };
+    }
+    const flow = await loadFlow(db, cfg.attendance_finished_flow_id);
+    if (!flow || flow.status !== "active" || flow.account_id !== args.accountId || !flow.entry_node_id) {
+      return { iniciado: false, motivo: "flujo_inactivo" };
+    }
+    const nodes = await loadAllNodes(db, flow.id);
+    const r = await startNewRun(
+      db,
+      flow,
+      {
+        accountId: args.accountId,
+        userId: args.userId,
+        contactId: args.contactId,
+        conversationId: args.conversationId,
+        connectionId: args.connectionId,
+        message: { kind: "text", text: "", meta_message_id: `atencion-finalizada-${Date.now()}` },
+      },
+      nodes,
+    );
+    return { iniciado: r.consumed };
+  } catch (err) {
+    console.error("[flows] atención finalizada:", err instanceof Error ? err.message : err);
+    return { iniciado: false, motivo: "error" };
+  }
 }
 
 // ============================================================
@@ -2834,6 +2961,7 @@ export async function dispatchInboundToFlows(
       input.message,
       input.isFirstInboundMessage,
       input.connectionId ?? null,
+      Boolean(input.isReopenedConversation),
     );
     if (!flow || !flow.entry_node_id) {
       return { consumed: false, outcome: "no_match" };

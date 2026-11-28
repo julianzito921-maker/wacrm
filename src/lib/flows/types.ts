@@ -712,6 +712,9 @@ export interface DispatchInboundInput {
   /** Conexión de WhatsApp de la conversación (migración 089). */
   connectionId?: string | null;
   message: ParsedInbound;
+  /** El cliente volvió a escribir en una conversación ya completada
+   *  (flujo estándar «Conversación finalizada»). */
+  isReopenedConversation?: boolean;
 }
 
 export interface DispatchInboundResult {
